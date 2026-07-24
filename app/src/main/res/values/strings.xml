@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FoldWindow</string>
+    <string name="probe_title">FoldWindow Probe</string>
+    <string name="probe_service_label">FoldWindow Probe</string>
+    <string name="probe_service_desc">Phase 0 진단용. 창 구성과 화면 종횡비를 측정합니다. 측정 결과는 기기 내부에만 저장됩니다.</string>
+</resources>

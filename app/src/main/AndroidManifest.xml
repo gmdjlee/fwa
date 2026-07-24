@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Phase 3 에서 플로팅 버블에 필요. Phase 0 에서는 미사용 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FoldWindow">
+
+        <activity
+            android:name=".probe.ProbeActivity"
+            android:exported="true"
+            android:label="@string/probe_title"
+            android:resizeableActivity="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".probe.ProbeAccessibilityService"
+            android:exported="true"
+            android:label="@string/probe_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/probe_accessibility_config" />
+        </service>
+
+        <!-- Phase 0 진단 전용: adb 브로드캐스트로 프로브 트리거.
+             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다.
+             디버그 진단 도구이므로 허용한다. Phase 0 이후 제거 예정. -->
+        <receiver
+            android:name=".probe.ProbeTriggerReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.dj.foldwindow.probe.RUN_PROBE" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>
