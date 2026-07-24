@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -30,6 +31,11 @@ android {
 
     buildFeatures { compose = true }
 
+    sourceSets {
+        // config/window_profiles.json 이 SSOT. 복제하지 않고 assets 로 직접 노출한다.
+        named("main") { assets.srcDirs("../config") }
+    }
+
     testOptions {
         unitTests {
             isReturnDefaultValues = true
@@ -48,6 +54,7 @@ dependencies {
     implementation(libs.androidx.window)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

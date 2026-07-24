@@ -2,9 +2,9 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-25 (P1-1·P1-4·Detector v2 완료, qa-verifier 통과)
-**현재 Phase:** Phase 1 — 도메인 확정 (진행 중)
-**다음 행동:** P1-2(window_profiles.json 스키마+로더)·P1-3(AspectResolver 3단 폴백) 착수
+**최종 갱신:** 2026-07-25 (P1-2·P1-3 완료, qa-verifier PASS — Phase 1 완료 기준 전부 충족)
+**현재 Phase:** Phase 1 완료 → Phase 2 — 액추에이터 착수 대기
+**다음 행동:** P2-1(ArrangerAccessibilityService)·P2-2(DividerLocator)·P2-3(SplitEntry, Recents 폴백 경로) 착수
 
 ---
 
@@ -15,7 +15,7 @@
 | Day 0 수동 검증 | ✅ 완료 | #1·#2·#3 통과, #4는 대체 불가로 판정 |
 | 부트스트랩 | ✅ 완료 | AGP 8.11.1 / Kotlin 2.1.0 / Gradle 8.13 wrapper / compileSdk 36. assembleDebug·testDebugUnitTest 통과 (32/32) |
 | Phase 0 프로브 | ✅ 완료 | 3회 실행(전체화면/분할활성/가로영상). #5 ✅ #6 ❌ #7 ✅(분할 중에만). E는 유튜브 앰비언트 모드로 미검출 → Detector v2 필요. `docs/DEVICE_FACTS.md` 확정 |
-| Phase 1 도메인 | 🔄 진행 중 | P1-1 ✅ / P1-4 ✅ / Detector v2 ✅ (전체 68 테스트 통과, qa-verifier 승인). 남은 것: P1-2, P1-3 |
+| Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
 | Phase 2 액추에이터 | ⬜ 미착수 | |
 | Phase 3 UI | ⬜ 미착수 | |
 | Phase 4 확장 | ⬜ 조건부 | #5 판정에 따라 범위 결정 |
@@ -27,6 +27,9 @@
 | `domain/SplitPlanner.kt` | ✅ P1-1 반영. `foldSevenLandscape()` = divider 14px / minPane 181px (실측). 테스트 22개 |
 | `domain/LetterboxDetector.kt` | ✅ v2 하이브리드. 순흑(0.97) 우선 → luma 통계 기반 적응 폴백(`ADAPTIVE_*` 상수 4종). `resolveAspect` 진입점 불변. 테스트 26개 |
 | `domain/ArrangeStateMachine.kt` | ✅ P1-4 신규. 순수 리듀서 `reduce(state, event, config)`. 상태 8종·실패 사유 7종 전부 테스트 커버. 시간은 이벤트 nowMs로만 유입(ADR-2). 스크린샷 백오프(`MeasureLetterbox.notBeforeMs`) 도메인 강제. 테스트 20개 |
+| `domain/Profiles.kt` | ✅ P1-2 신규. `AspectSource`/`PartnerMode`/모델 4종 + `validate()` 위치 특정 에러. 순수 Kotlin |
+| `domain/AspectResolver.kt` | ✅ P1-3 신규. ADR-1 3단 폴백(PROFILE→MEASURED→PRESET). `DEFAULT_MIN_MEASUREMENT_CONFIDENCE=0.25f`(미검증). 테스트 9개 |
+| `data/WindowProfilesParser.kt` | ✅ P1-2 신규. kotlinx-serialization DTO→domain 매핑, 예외 누출 없이 `ProfilesParseResult`. 테스트 14개(실제 SSOT 파일 파싱 포함) |
 | `platform/ScreenshotSampler.kt` | ✅ v2 확장. 행별 luma 평균/분산 산출 추가. 실기기 미검증 |
 | `probe/ProbeAccessibilityService.kt` | ✅ 실기기 검증 완료 (3회 실행) |
 | `probe/ProbeReport.kt` | ✅ 완성 |
@@ -42,6 +45,7 @@
 4. ~~minPaneHeight 실측~~ → 세로 좌우 분할 181px 확정. 가로 상하 분할은 미검증 (DEVICE_FACTS 참조)
 5. ~~LetterboxDetector v2 설계~~ → 구현 완료. 남은 것: `ADAPTIVE_*` 상수(분산≤400, luma≤90, ref±28)의 실기기 재검증 — 앰비언트 영상에서 프로브 E 재실행해 16:9 스냅 확인. 순흑 조건(넷플릭스 등) E 실측도 아직 0건. `ScreenshotSampler`의 luma 통계 산출도 실기기 미검증
 6. Recents 분할 진입 셀렉터의 다국어 안정성 (한국어만 검증됨)
+7. `AspectResolver.DEFAULT_MIN_MEASUREMENT_CONFIDENCE = 0.25f` — 실기기 미검증. ADAPTIVE 경로 신뢰도 상한이 0.6이므로 그 이하로 유지해야 함. 실사용 데이터로 튜닝
 
 ## 결정 로그
 
@@ -56,3 +60,7 @@
 | 2026-07-25 | ArrangeStateMachine: 검증 실패는 Failed가 아니라 `Done(verified=false)` | 드래그까지 성공한 배치를 측정 실패 때문에 버리지 않는다. verified=false로 노출해 조용한 실패 금지 원칙 유지 |
 | 2026-07-25 | ADR-5 보정은 정확히 1회, 이후 잔여값 보고하고 종료 | 무한 보정 루프 방지. 스크린샷 레이트 리밋(~1회/초)과도 정합 |
 | 2026-07-25 | Detector v2 폴백은 위아래 띠 모두 존재할 때만 유효 판정 | 한쪽만 어두운 UI 요소 오검출 방지. 전면 저디테일 장면은 MIN_CONTENT_FRACTION 가드로 거부 |
+| 2026-07-25 | kotlinx-serialization은 `data/` 에만 격리, domain 모델은 순수 데이터 클래스 + DTO 매핑 | domain 순수성 철칙(kotlin-stdlib only) 유지. DTO 중복 비용보다 회귀 방어선 가치가 큼 |
+| 2026-07-25 | assets srcDir을 `../config` 로 직결 | `config/window_profiles.json` SSOT를 복제 없이 APK에 탑재. 리포지토리 추적 파일 1개 유지 |
+| 2026-07-25 | 시드 JSON에서 `aspectSource=MEASURED` 는 aspect null 강제 | 시드 의미론 단순화. 측정값 캐싱은 Phase 3 DataStore에서 재검토 |
+| 2026-07-25 | 실측 채택 최소 신뢰도 0.25 (파라미터화, 기본값) | 순흑(≈1.0)·ADAPTIVE(≤0.6) 둘 다 통과 가능한 보수적 하한. 실기기 튜닝 대상 |
