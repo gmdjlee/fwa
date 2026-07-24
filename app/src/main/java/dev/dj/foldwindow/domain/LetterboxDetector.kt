@@ -11,24 +11,41 @@ import kotlin.math.abs
  */
 
 /**
- * @param rowDarkRatio index = 행 번호(위→아래), value = 그 행에서 어두운 픽셀이 차지하는 비율 0..1
- * @param width        원본 프레임의 가로 픽셀 수 (종횡비 역산에 필요)
+ * @param rowDarkRatio     index = 행 번호(위→아래), value = 그 행에서 어두운 픽셀이 차지하는 비율 0..1
+ * @param width            원본 프레임의 가로 픽셀 수 (종횡비 역산에 필요)
+ * @param rowMeanLuma      행별 평균 휘도 0..255. 순흑 검출이 실패했을 때의 적응형 폴백에만 쓰인다
+ * @param rowLumaVariance  행별 휘도 분산. 낮을수록 "저디테일" (띠 후보의 필요조건)
  */
 class LetterboxScan(
     val rowDarkRatio: FloatArray,
     val width: Int,
+    val rowMeanLuma: FloatArray? = null,
+    val rowLumaVariance: FloatArray? = null,
 ) {
     val height: Int get() = rowDarkRatio.size
+
+    /** 적응형 검출에 필요한 휘도 통계가 모두 채워져 있는가 */
+    val hasLumaStats: Boolean get() = rowMeanLuma != null && rowLumaVariance != null
 
     init {
         require(width > 0) { "width must be positive" }
         require(rowDarkRatio.isNotEmpty()) { "rowDarkRatio must not be empty" }
+        require(rowMeanLuma == null || rowMeanLuma.size == rowDarkRatio.size) {
+            "rowMeanLuma size must match rowDarkRatio size"
+        }
+        require(rowLumaVariance == null || rowLumaVariance.size == rowDarkRatio.size) {
+            "rowLumaVariance size must match rowDarkRatio size"
+        }
     }
 }
+
+/** 콘텐츠 밴드를 어떤 경로로 검출했는지. 신뢰도 해석과 디버깅에 쓰인다 */
+enum class DetectionMethod { PURE_BLACK, ADAPTIVE }
 
 /**
  * @param top/bottom    콘텐츠 밴드의 시작/끝 행 (bottom exclusive)
  * @param confidence    0..1. 띠가 얼마나 깨끗하게 검고 경계가 얼마나 뚜렷한가
+ * @param method        PURE_BLACK(순흑 임계) 또는 ADAPTIVE(균일도/휘도 폴백)
  */
 data class ContentBand(
     val top: Int,
@@ -36,6 +53,7 @@ data class ContentBand(
     val topBarPx: Int,
     val bottomBarPx: Int,
     val confidence: Float,
+    val method: DetectionMethod = DetectionMethod.PURE_BLACK,
 ) {
     val height: Int get() = bottom - top
 }
@@ -50,6 +68,21 @@ object LetterboxDetector {
 
     /** 이 비율 이상 콘텐츠면 애초에 띠가 없는 것으로 본다 */
     const val NO_LETTERBOX_FRACTION = 0.99f
+
+    // ── 적응형 검출(ADAPTIVE) 튜닝 상수 ──────────────────────────
+    // 앰비언트 모드 등 띠가 순흑이 아니라 영상 색으로 은은하게 채워지는 경우의 폴백.
+
+    /** 띠 후보 행이 허용하는 휘도 분산 상한 (표준편차 ≈ 20) */
+    const val ADAPTIVE_MAX_VARIANCE = 400f
+
+    /** 띠 후보 행의 평균 휘도 상한. 글로우여도 콘텐츠보다는 어두운 편이다 */
+    const val ADAPTIVE_MAX_BAR_LUMA = 90f
+
+    /** 기준 행(상/하단 가장자리) 평균 휘도와의 허용 편차. 그라디언트 오검출 방지용 */
+    const val ADAPTIVE_REF_DELTA = 28f
+
+    /** 기준 휘도를 계산할 때 사용하는 가장자리 행 개수 */
+    const val ADAPTIVE_REF_ROWS = 3
 
     /** 흔한 영상 종횡비 프리셋. 역산값을 여기로 스냅해 잡음을 제거한다 */
     val KNOWN_ASPECTS = floatArrayOf(
@@ -126,6 +159,83 @@ object LetterboxDetector {
             .coerceIn(0f, 1f)
     }
 
+    /**
+     * 하이브리드 검출: 순흑 임계를 먼저 시도하고, 실패하면(앰비언트 글로우 등) 균일도/휘도
+     * 기반 적응형 검출로 폴백한다. 넷플릭스류 순흑 띠는 그대로 [detect] 경로만 탄다.
+     *
+     * @return 콘텐츠 밴드. 둘 다 실패하면 null
+     */
+    fun detectHybrid(
+        scan: LetterboxScan,
+        darkRowThreshold: Float = DEFAULT_DARK_ROW_THRESHOLD,
+    ): ContentBand? {
+        detect(scan, darkRowThreshold)?.let { return it }
+        if (!scan.hasLumaStats) return null
+        return adaptiveDetect(scan)
+    }
+
+    /**
+     * 순흑이 아닌 띠(예: 앰비언트 모드 글로우)를 위한 폴백 검출.
+     * 행의 "저디테일 + 상대적으로 어두움 + 가장자리 기준색과 유사함" 을 띠의 조건으로 본다.
+     * 기준색 근접 조건(ADAPTIVE_REF_DELTA)이 서서히 밝아지는 그라디언트 배경을
+     * 콘텐츠까지 파고들며 오검출하는 것을 막는 핵심 가드다.
+     */
+    private fun adaptiveDetect(scan: LetterboxScan): ContentBand? {
+        val meanLuma = scan.rowMeanLuma ?: return null
+        val variance = scan.rowLumaVariance ?: return null
+        val h = scan.height
+
+        val refRows = ADAPTIVE_REF_ROWS.coerceAtMost(h)
+        val refTop = averageOf(meanLuma, 0, refRows)
+        val refBottom = averageOf(meanLuma, h - refRows, h)
+
+        fun isBarLike(i: Int, ref: Float): Boolean =
+            variance[i] <= ADAPTIVE_MAX_VARIANCE &&
+                meanLuma[i] <= ADAPTIVE_MAX_BAR_LUMA &&
+                abs(meanLuma[i] - ref) <= ADAPTIVE_REF_DELTA
+
+        var top = 0
+        while (top < h && isBarLike(top, refTop)) top++
+
+        var bottomExclusive = h
+        while (bottomExclusive > top && isBarLike(bottomExclusive - 1, refBottom)) bottomExclusive--
+
+        // 영상 레터박스는 위아래 모두 존재한다. 한쪽만 검출되면 UI 요소 오검출일 가능성이 커 거부한다.
+        if (top == 0 || bottomExclusive == h) return null
+
+        val contentH = bottomExclusive - top
+        if (contentH <= 0) return null
+
+        val fraction = contentH.toFloat() / h
+        if (fraction < MIN_CONTENT_FRACTION) return null                // 콘텐츠가 너무 작음 = 오탐
+        if (fraction >= NO_LETTERBOX_FRACTION) return null              // 띠가 사실상 없음
+
+        var varSum = 0f
+        var barRows = 0
+        for (i in 0 until top) { varSum += variance[i]; barRows++ }
+        for (i in bottomExclusive until h) { varSum += variance[i]; barRows++ }
+        val avgBarVariance = if (barRows == 0) 0f else varSum / barRows
+
+        // 순흑 검출보다 근본적으로 불확실하므로 신뢰도 상한을 낮춘다(×0.6).
+        val confidence = (1f - avgBarVariance / ADAPTIVE_MAX_VARIANCE).coerceIn(0f, 1f) * 0.6f
+
+        return ContentBand(
+            top = top,
+            bottom = bottomExclusive,
+            topBarPx = top,
+            bottomBarPx = h - bottomExclusive,
+            confidence = confidence,
+            method = DetectionMethod.ADAPTIVE,
+        )
+    }
+
+    private fun averageOf(values: FloatArray, fromInclusive: Int, toExclusive: Int): Float {
+        var sum = 0f
+        val n = toExclusive - fromInclusive
+        for (i in fromInclusive until toExclusive) sum += values[i]
+        return if (n <= 0) 0f else sum / n
+    }
+
     /** 콘텐츠 밴드로부터 실제 영상 종횡비를 역산 */
     fun impliedAspect(band: ContentBand, frameWidth: Int): Float {
         require(band.height > 0) { "content band height must be positive" }
@@ -155,7 +265,7 @@ object LetterboxDetector {
      * @return 스냅 성공 시 프리셋 값, 실패 시 원본 역산값, 감지 실패 시 null
      */
     fun resolveAspect(scan: LetterboxScan): AspectMeasurement? {
-        val band = detect(scan) ?: return null
+        val band = detectHybrid(scan) ?: return null
         val raw = impliedAspect(band, scan.width)
         val snapped = snapToKnownAspect(raw)
         return AspectMeasurement(
@@ -175,4 +285,5 @@ data class AspectMeasurement(
 ) {
     val confidence: Float get() = band.confidence
     val isSnapped: Boolean get() = snapped != null
+    val method: DetectionMethod get() = band.method
 }

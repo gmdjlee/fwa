@@ -187,7 +187,7 @@
 
 ## Phase 1·2 권고
 
-### P1-1 — SplitPlanner 기본값 반영 (제안 diff)
+### P1-1 — SplitPlanner 기본값 반영 (제안 diff) — ✅ 2026-07-25 반영 완료 (`foldSevenLandscape()`)
 
 `app/src/main/java/dev/dj/foldwindow/domain/SplitPlanner.kt` 의 `foldSevenLandscapePlaceholder()`.
 `SplitPlannerTest` 은 자체 `fold7()` 헬퍼(divider=0/minPane=0)를 쓰므로 이 팩토리 변경은 기존 테스트를 깨지 않는다. P1-1에서 대응 테스트를 추가하며 반영할 것.

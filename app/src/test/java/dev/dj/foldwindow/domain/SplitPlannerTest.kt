@@ -185,4 +185,69 @@ class SplitPlannerTest {
             }
         }
     }
+
+    // ── Fold 7 실측 기하 (P1-1) ──────────────────────────────────
+
+    /**
+     * Fold 7 실측값 팩토리(dividerThickness=14, minPaneHeight=181)
+     */
+    private fun foldSevenLandscapeGeom() = WindowGeometry.foldSevenLandscape()
+
+    @Test
+    fun `foldSevenLandscape with 16 to 9 gives exact fit`() {
+        val geom = foldSevenLandscapeGeom()
+        val plan = SplitPlanner.plan(geom, ASPECT_16_9, Placement.TOP)
+
+        // allocatable = 1968 - 14 = 1954
+        // idealVideoH = round(2184 / 1.7778) = 1229
+        // videoH = 1229.coerceIn(181, 1773) = 1229
+        assertEquals(1229, plan.videoPaneHeight)
+        assertEquals(0, plan.residualLetterboxPx)
+        assertEquals(0, plan.residualPillarboxPx)
+        assertTrue(plan.exact)
+        assertNull(plan.clampReason)
+    }
+
+    @Test
+    fun `foldSevenLandscape 16 to 9 TOP placement has correct divider positioning`() {
+        val geom = foldSevenLandscapeGeom()
+        val plan = SplitPlanner.plan(geom, ASPECT_16_9, Placement.TOP)
+
+        assertEquals(1229 + 14, plan.panelRect.top)
+        assertEquals(1229 + 7, plan.dividerCenterY)
+        assertEquals(1968 - 1229 - 14, plan.panelRect.height)
+    }
+
+    @Test
+    fun `foldSevenLandscape with 21 to 9 exact fit with minPane not triggered`() {
+        val geom = foldSevenLandscapeGeom()
+        val plan = SplitPlanner.plan(geom, ASPECT_21_9, Placement.TOP)
+
+        // allocatable = 1954, idealVideoH = round(2184 / 2.3704) = 921
+        // videoH = 921.coerceIn(181, 1773) = 921
+        assertEquals(921, plan.videoPaneHeight)
+        assertTrue(plan.exact)
+        assertNull(plan.clampReason)
+    }
+
+    @Test
+    fun `foldSevenLandscape with extreme 20 to 1 hits minPaneHeight floor`() {
+        val geom = foldSevenLandscapeGeom()
+        val plan = SplitPlanner.plan(geom, 20f, Placement.TOP)
+
+        // idealVideoH = round(2184 / 20) = 109
+        // videoH = 109.coerceIn(181, 1773) = 181 (hit floor)
+        assertEquals(181, plan.videoPaneHeight)
+        assertEquals(ClampReason.HIT_MIN_PANE_FLOOR, plan.clampReason)
+        assertEquals(181 - 109, plan.residualLetterboxPx)  // 72px residual letterbox
+    }
+
+    @Test
+    fun `foldSevenLandscape constants match measured values`() {
+        val geom = foldSevenLandscapeGeom()
+
+        // [측정] DEVICE_FACTS.md 2026-07-25
+        assertEquals(14, geom.dividerThickness)
+        assertEquals(181, geom.minPaneHeight)
+    }
 }

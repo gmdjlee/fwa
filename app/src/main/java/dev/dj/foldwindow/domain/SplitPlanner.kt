@@ -48,17 +48,16 @@ data class WindowGeometry(
 
     companion object {
         /**
-         * Galaxy Z Fold 7 내부 화면 가로 모드 기준값.
-         * ⚠ dividerThickness / minPaneHeight / 인셋은 Phase 0 프로브로 실측 후 교체할 것.
-         *   docs/DEVICE_FACTS.md 참조.
+         * Galaxy Z Fold 7 내부 화면 가로(상하 분할). DEVICE_FACTS.md 2026-07-25 실측.
+         * ⚠ 이 수치는 실기기 측정값이다. 바꾸려면 새 측정 근거를 DEVICE_FACTS.md에 기록할 것.
          */
-        fun foldSevenLandscapePlaceholder() = WindowGeometry(
+        fun foldSevenLandscape() = WindowGeometry(
             usableLeft = 0,
-            usableTop = 0,
+            usableTop = 0,          // 상태바 인셋 실측 전 0 유지 (미확정)
             usableWidth = 2184,
             usableHeight = 1968,
-            dividerThickness = 0,
-            minPaneHeight = 0,
+            dividerThickness = 14,  // [측정] 세로 좌우분할 시각 간격. 가로 대칭 가정 [미검증]
+            minPaneHeight = 181,    // [측정] 세로 좌우분할. 가로 상하분할 [미검증]
         )
     }
 }
