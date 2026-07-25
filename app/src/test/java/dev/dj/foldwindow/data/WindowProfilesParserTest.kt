@@ -30,6 +30,8 @@ class WindowProfilesParserTest {
         assertEquals(true, config.defaults.requireMeasurementAgreement)
         // SSOT 시드에는 cacheMeasuredAspect 키도 없다 — 부재 시 기본 true 로 동작해야 한다(DESIGN #12 §6).
         assertEquals(true, config.defaults.cacheMeasuredAspect)
+        // SSOT 시드에는 flexAutoTopPlacement 키도 없다 — 부재 시 기본 true 로 동작해야 한다(P3-5).
+        assertEquals(true, config.defaults.flexAutoTopPlacement)
         assertEquals(6, config.presets.size)
         assertEquals(5, config.profiles.size)
 
@@ -239,6 +241,24 @@ class WindowProfilesParserTest {
         assertEquals(true, success.config.defaults.cacheMeasuredAspect)
     }
 
+    // ── flexAutoTopPlacement 토글 (P3-5) ──────────────────────────
+
+    @Test
+    fun `flexAutoTopPlacement defaults to true when the key is omitted`() {
+        val result = WindowProfilesParser.parse(validJson())
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(true, success.config.defaults.flexAutoTopPlacement)
+    }
+
+    @Test
+    fun `flexAutoTopPlacement explicit false is honored`() {
+        val result = WindowProfilesParser.parse(validJson(flexAutoTopPlacement = false))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(false, success.config.defaults.flexAutoTopPlacement)
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────
 
     private fun assertFailure(result: ProfilesParseResult): ProfilesParseResult.Failure {
@@ -254,6 +274,7 @@ class WindowProfilesParserTest {
      * 유효한 최소 JSON을 만들고 필요한 부분만 오버라이드한다.
      * @param requireMeasurementAgreement null 이면 키 자체를 생략한다(부재 시 기본값 검증용).
      * @param cacheMeasuredAspect null 이면 키 자체를 생략한다(부재 시 기본값 검증용, DESIGN #12 §6).
+     * @param flexAutoTopPlacement null 이면 키 자체를 생략한다(부재 시 기본값 검증용, P3-5).
      */
     private fun validJson(
         schema: String = "fold-window-profiles/1",
@@ -262,6 +283,7 @@ class WindowProfilesParserTest {
         defaultsResidualTolerancePx: Int = 8,
         requireMeasurementAgreement: Boolean? = null,
         cacheMeasuredAspect: Boolean? = null,
+        flexAutoTopPlacement: Boolean? = null,
         presetsJson: String = """[ { "id": "16:9", "aspect": 1.7778, "label": "16:9" } ]""",
         profilesJson: String = "[]",
     ): String {
@@ -271,6 +293,9 @@ class WindowProfilesParserTest {
         val cacheMeasuredAspectField = cacheMeasuredAspect
             ?.let { ""","cacheMeasuredAspect": $it""" }
             ?: ""
+        val flexAutoTopPlacementField = flexAutoTopPlacement
+            ?.let { ""","flexAutoTopPlacement": $it""" }
+            ?: ""
         return """
         {
           "schema": "$schema",
@@ -279,7 +304,7 @@ class WindowProfilesParserTest {
             "placement": "$defaultsPlacement",
             "partner": "$defaultsPartner",
             "closedLoopCorrection": true,
-            "residualTolerancePx": $defaultsResidualTolerancePx$requireMeasurementAgreementField$cacheMeasuredAspectField
+            "residualTolerancePx": $defaultsResidualTolerancePx$requireMeasurementAgreementField$cacheMeasuredAspectField$flexAutoTopPlacementField
           },
           "presets": $presetsJson,
           "profiles": $profilesJson

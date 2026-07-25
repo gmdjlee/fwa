@@ -389,3 +389,40 @@
 | (c) 하이브리드 | 순흑(0.97) 우선 → 실패 시 (a)/(b) | 넷플릭스 등 안전 + 폴백 | 복잡도 |
 
 - **권고:** (c) 하이브리드. 순흑 경로(넷플릭스/티빙 등 대다수)는 그대로 두고, 미검출 시에만 (a)+(b) 폴백. `domain/` 순수성 유지 위해 입력은 행별 통계(밝기/분산)로 추상화해 넘길 것.
+
+---
+
+## P3-5 FoldingFeature (미검증)
+
+구현 완료(코드 리뷰 + 단위 테스트 220개 통과 + assembleDebug 통과), **실기기 미검증**. 아래 항목은
+Fold 7 실기기에서 확인 전까지 [미검증]으로 유지한다.
+
+### 컴파일타임에 이미 해소된 사항 (참고 — 아래 실기기 항목과 구분할 것)
+
+- androidx.window 1.3.0 sources jar 직접 확인 결과: `WindowInfoTracker.windowLayoutInfo(Context)` 의
+  `@UiContext` 파라미터 애너테이션은 `@Retention(SOURCE)` 수준의 문서화/린트 마커이며 Kotlin
+  `@RequiresOptIn` 마커가 아니다. 따라서 `@OptIn` 없이 정상 컴파일된다 — 브리프가 조건부로 언급한
+  "experimental 이면 opt-in" 분기는 발동하지 않았다(코드에 opt-in 없음, 의도적).
+- `FoldingFeature.bounds`(→ `DisplayFeature.bounds`)는 `android.graphics.Rect` — `platform/FoldStateMonitor`
+  의 힌지 좌표 로그(`hingeBounds=...`)가 그대로 실좌표로 쓸 수 있다.
+
+### 실기기 검증 대상
+
+| # | 항목 | 확인 방법 |
+|---|---|---|
+| 1 | `windowLayoutInfo()` 가 접근성 서비스 컨텍스트(`AccessibilityService` 자신)를 `@UiContext` 로 수용하는가. 거부되면 `createWindowContext(TYPE_ACCESSIBILITY_OVERLAY)` 폴백이 실제로 방출을 받는가. 둘 다 실패하면 `FoldStateMonitor` 가 크래시 없이 `Log.w` 만 남기고 기능이 조용히 꺼지는지 | logcat `FWFoldStateMonitor` 태그로 후보 실패/성공 로그 확인 (`onServiceConnected` 직후) |
+| 2 | One UI 8 노트북 자세(책상에 세워 반접기, 힌지 수평)에서 실제로 `FoldingFeature.state=HALF_OPENED` + `orientation=HORIZONTAL` 이 방출되는가 + 힌지 `bounds` 실측값 | 노트북 자세로 접고 logcat `fold posture changed: ... -> HALF_OPENED_HORIZONTAL hingeBounds=...` 확인 |
+| 3 | 기기를 완전히 닫는 동작이 HALF_OPENED(수평) 상태를 일시 통과하는 시간이 `FlexModePolicy.DEFAULT_STABILITY_MS`(800ms) 미만인지 — 즉 완전히 닫을 때 자동 배치가 오발화하지 않는지. 닫은 뒤 화면이 꺼지면서 방출이 끊기는지, 아니면 마지막 값이 고착되는지(4번 게이트 `display-off` 가 실제로 오발화를 막아주는지) | 완전히 닫는 동작을 반복하며 `flex auto-arrange trigger`/`skipped: reason=display-off` 로그 유무 확인 |
+| 4 | E2E: 유튜브 가로 전체화면 재생 → 노트북 자세로 반접기 → 800ms 안정화 후 자동 상단 배치(검은 띠 제거) | logcat `flex auto-arrange trigger: target=com.google.android.youtube` → `arrange decision: ... placementSource=FLEX` → `arrange done` 확인 + 육안 검은 띠 |
+| 5 | FLEX 로 결정된 세션이 `store.saveLastSuccessfulPlacement` 를 호출하지 않는 회귀(4번 세션 직후 수동 트리거 시 `placementSource=LAST_SUCCESS` 로 과거 값이 나오는지, FLEX 값으로 오염되지 않는지) | 4번 E2E 직후 평지로 펴고 버블/broadcast 로 수동 무override 트리거 → `placementSource` 가 FLEX 이전의 값(또는 PROFILE/DEFAULTS/FALLBACK)인지 확인 |
+
+### 설계상 알려진 잔여 (v1.5 후보, 코드 변경 아님)
+
+- 자동 트리거 게이트 2(busy)와 실제 `startArrange()` 재검사 사이에는 `loadProfilesConfig()` 의
+  IO 서스펜드 지점(설정 최초 로드시에만 실제 IO, 이후는 캐시)이 끼어 있어 이론상 TOCTOU 레이스가
+  있다 — 동시에 수동 트리거가 먼저 세션을 잡으면 자동 트리거는 `startArrange()` 내부의 기존
+  "이미 배치 진행 중" 토스트로 조용히 실패한다(FlexModePolicy 는 disarm 되지 않은 채로 남을 수
+  있음). 발생 확률이 매우 낮고(설정 캐시 후에는 게이트가 사실상 동기적으로 이어짐) 브리프의
+  게이트 순서를 그대로 따른 결과라 v1 범위에서는 손대지 않았다.
+- 기존 분할이 활성 상태에서 플렉스로 접는 경우(게이트 3 `split-already-active`)의 재배치는 v1.5
+  범위로 명시적으로 보류했다(브리프 지시).

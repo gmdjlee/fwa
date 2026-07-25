@@ -3,8 +3,10 @@ package dev.dj.foldwindow.service
 import android.accessibilityservice.AccessibilityService
 import android.app.ActivityManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -25,6 +27,8 @@ import dev.dj.foldwindow.domain.AspectResolver
 import dev.dj.foldwindow.domain.AspectSource
 import dev.dj.foldwindow.domain.ConfirmOutcome
 import dev.dj.foldwindow.domain.FailureReason
+import dev.dj.foldwindow.domain.FlexModePolicy
+import dev.dj.foldwindow.domain.FoldPosture
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
 import dev.dj.foldwindow.domain.MeasurementConsensus
@@ -43,6 +47,7 @@ import dev.dj.foldwindow.platform.DividerPopupRotator
 import dev.dj.foldwindow.platform.DragStrategy
 import dev.dj.foldwindow.platform.EntryContext
 import dev.dj.foldwindow.platform.EntryRecipe
+import dev.dj.foldwindow.platform.FoldStateMonitor
 import dev.dj.foldwindow.platform.PaneSwapper
 import dev.dj.foldwindow.platform.ResizeModeDetector
 import dev.dj.foldwindow.platform.SplitEntry
@@ -105,11 +110,27 @@ class ArrangerAccessibilityService : AccessibilityService() {
     @Volatile
     private var dismissInFlight = false
 
+    // ── P3-5 FoldingFeature 연동 (서비스 수명 전체 유지 — cleanupSession() 이 건드리지 않는다.
+    // sessionPlacementSource 만 예외로 세션 필드다, 아래 세션 컨텍스트 블록 참고) ──
+    private val flexPolicy = FlexModePolicy()
+    private var foldMonitor: FoldStateMonitor? = null
+    private var flexCheckJob: Job? = null
+
+    /** 기본 런처 패키지. onServiceConnected() 에서 1회 해석 — 자동 트리거 게이트 5(포그라운드 부적합)의 제외 대상 */
+    private var homePackage: String? = null
+
     // ── 세션 컨텍스트 (터미널 상태에서 cleanupSession() 이 초기화한다) ──
     private var targetPackage: String? = null
     private var targetLabel: String? = null
     private var desiredPlacement: Placement = Placement.TOP
     private var effectivePlacement: Placement = Placement.TOP
+
+    /**
+     * P3-5 저장 억제 판정용. placementSource 체인의 최종 결정값 스냅샷
+     * ("OVERRIDE"/"FLEX"/"LAST_SUCCESS"/"PROFILE"/"DEFAULTS"/"FALLBACK"). FLEX 는 사용자가 고른
+     * 값이 아니라 자세 자동 결정이므로 reportTerminal 의 last-success 저장에서 제외한다.
+     */
+    private var sessionPlacementSource: String = "FALLBACK"
     private var plan: SplitPlan? = null
     private var resolvedAspect: ResolvedAspect? = null
 
@@ -160,12 +181,26 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // 있다(함정 #25). platform 계층은 service/ 를 몰라야 하므로 람다로 주입한다.
         splitEntry = SplitEntry(this) { FloatingLauncherService.hasAttachedOverlayWindow() }
         popupRotator = DividerPopupRotator(this)
+
+        // P3-5: 기본 런처 패키지를 1회 해석해둔다 — 자동 트리거 게이트에서 "포그라운드가 런처"(배치할
+        // 대상 앱이 없는 상태)를 걸러내는 데 쓴다. 실패해도 크래시하지 않고 null 로 안전 폴백한다.
+        homePackage = runCatching {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        }.onFailure { Log.w(TAG, "onServiceConnected: 기본 런처 패키지 조회 실패", it) }.getOrNull()
+
+        // P3-5: 폴드 상태 구독 시작. 콜백은 scope(Main.immediate)에서 호출된다(FoldStateMonitor 계약).
+        foldMonitor = FoldStateMonitor(this).also { monitor ->
+            monitor.start(scope) { posture -> onFoldPosture(posture) }
+        }
+
         Log.i(TAG, "arranger service connected")
     }
 
     override fun onDestroy() {
         instance = null
         tickJob?.cancel()
+        foldMonitor?.stop()
         scope.cancel()
         screenshotExecutor.shutdown()
         super.onDestroy()
@@ -399,6 +434,87 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     // ══════════════════════════════════════════════════════════
+    // P3-5: 플렉스(노트북 자세) 자동 트리거
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * [FoldStateMonitor] 콜백. 매 자세 방출마다 호출되지만 실제 스케줄은 [FlexModePolicy] 가
+     * HALF_OPENED_HORIZONTAL "진입"에서만 발급한다(동일 자세 중복 방출은 흡수됨).
+     *
+     * ADR-2 예외 허용 지점(브리프 근거): 이 delay 는 폴딩 센서 신호의 디바운스다 — "UI 상태가
+     * 갖춰졌을 것"을 가정하는 고정 지연이 아니다. delay 후에도 [FlexModePolicy.shouldTriggerNow] 가
+     * 자세가 여전히 HALF_OPENED_HORIZONTAL 로 유지됐는지 재검증하고, 그걸 통과해야만
+     * [evaluateFlexAutoTrigger] 의 게이트 체인이 최종 발화 여부를 판정한다 — delay 자체는 성공을
+     * 가정하지 않는다.
+     */
+    private fun onFoldPosture(posture: FoldPosture) {
+        val checkAtMs = flexPolicy.onPosture(posture, SystemClock.uptimeMillis()) ?: return
+        flexCheckJob?.cancel()
+        flexCheckJob = scope.launch {
+            delay((checkAtMs - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            if (flexPolicy.shouldTriggerNow(SystemClock.uptimeMillis())) {
+                evaluateFlexAutoTrigger()
+            }
+        }
+    }
+
+    /**
+     * 자동 발화 게이트 체인. 순서대로 검사하고 첫 실패에서 [FlexModePolicy.disarm] + 사유 로그 후
+     * 반환한다 — 이번 플렉스 진입에서는 재발화하지 않는다(재접기만이 재무장 경로).
+     *
+     * 자동 스킵은 토스트를 띄우지 않는다: "조용한 실패 금지" 원칙은 *사용자가 시작한 행위*의 실패를
+     * 사용자가 알 수 있게 하자는 것인데, 이 트리거는 사용자 조작이 아니라 센서 이벤트로 자동
+     * 발화되는 것이라 매 스킵마다 토스트를 띄우면 오히려 사용자를 방해한다(원칙 비대상 — 대신
+     * Log.i 로 사유를 항상 남겨 디버깅 가능성은 유지한다).
+     */
+    private suspend fun evaluateFlexAutoTrigger() {
+        val flexLeverOn = loadProfilesConfig()?.defaults?.flexAutoTopPlacement ?: true
+        if (!flexLeverOn) {
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=lever-off")
+            return
+        }
+
+        if (machineState != ArrangeState.Idle || sessionInFlight || dismissInFlight) {
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=busy")
+            return
+        }
+
+        if (dividerLocator.isSplitActive(safeWindows(), screenRect())) {
+            // 기존 분할 재배치(예: 위/아래 재조정)는 v1.5 범위 — 여기서는 새 분할 진입만 다룬다.
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=split-already-active")
+            return
+        }
+
+        // 닫는 동작의 오발화 2차 방어: 화면이 꺼져 있으면(완전히 접히는 도중/직후) 자동 배치를 하지 않는다.
+        val displayManager = getSystemService(DISPLAY_SERVICE) as? DisplayManager
+        val displayState = displayManager?.getDisplay(Display.DEFAULT_DISPLAY)?.state
+        if (displayState != Display.STATE_ON) {
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=display-off")
+            return
+        }
+
+        val foregroundPkg = activeAppPackage() ?: lastForegroundPkg
+        val unsuitable = foregroundPkg == null ||
+            foregroundPkg == packageName ||
+            foregroundPkg == homePackage ||
+            foregroundPkg in EXCLUDED_FOREGROUND_PACKAGES
+        if (unsuitable) {
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=foreground-unsuitable pkg=$foregroundPkg")
+            return
+        }
+
+        Log.i(TAG, "flex auto-arrange trigger: target=$foregroundPkg")
+        // placement 는 여기서 넘기지 않는다 — beginSession 의 placement 체인(FLEX 티어)이
+        // flexPolicy.posture 를 직접 참조해 TOP 을 강제한다(자동·수동 단일 메커니즘, 브리프 근거).
+        startArrange(placementOverride = null, aspectOverride = null)
+    }
+
+    // ══════════════════════════════════════════════════════════
     // 세션 시작 (ADR-1 3단 폴백 결정 + Start 디스패치)
     // ══════════════════════════════════════════════════════════
 
@@ -487,6 +603,17 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 placement = placementOverride
                 placementSource = "OVERRIDE"
             }
+            // [P3-5] 플렉스(노트북 자세, 힌지 수평 반접힘) 중에는 명시 override 를 제외한 모든
+            // placement 결정보다 TOP 이 우선한다 — 하단 페인이 책상 면에 눕는 물리적 이유다.
+            // 순간 자세(flexPolicy.posture)를 그대로 쓴다: 접는 도중 수동 탭은 물리적으로
+            // 비현실적이고, 자동 트리거 자체는 이미 FlexModePolicy 의 안정화(디바운스)를 거쳤으므로
+            // 여기서 다시 안정화를 요구할 필요가 없다. 레버(flexAutoTopPlacement=false)로 이
+            // 티어 전체를 끌 수 있다.
+            (config?.defaults?.flexAutoTopPlacement ?: true) &&
+                flexPolicy.posture == FoldPosture.HALF_OPENED_HORIZONTAL -> {
+                placement = Placement.TOP
+                placementSource = "FLEX"
+            }
             lastSuccessPlacement != null -> {
                 placement = lastSuccessPlacement
                 placementSource = "LAST_SUCCESS"
@@ -506,6 +633,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
         desiredPlacement = placement
         effectivePlacement = placement
+        // [P3-5] 저장 억제(reportTerminal) 판정용 스냅샷 — cleanupSession() 이 세션 종료 시 리셋한다.
+        sessionPlacementSource = placementSource
 
         val computedPlan = SplitPlanner.plan(geometry, resolved.aspect, placement)
         plan = computedPlan
@@ -708,6 +837,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         lastHandle = null
         desiredPlacement = Placement.TOP
         effectivePlacement = Placement.TOP
+        sessionPlacementSource = "FALLBACK"
         entryRecipe = EntryRecipe.DRAG
         preMeasurement = null
         sessionPresetAspect = DEFAULT_ASPECT
@@ -1156,9 +1286,11 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // #19/#20, 위치 전환 실패 실측 근거). verified(측정 검증) 여부는 배치 자체의 성공과
                 // 무관하므로 저장 조건에 넣지 않는다. cleanupSession() 이 targetPackage 를 곧
                 // null 로 되돌리므로 지역 변수로 캡처한 뒤 기존 서비스 스코프에서 저장한다.
+                // [P3-5] FLEX(자세 자동 결정) placement 도 동일 논리로 제외한다 — 사용자가 고른
+                // 값이 아닌 자동화 결과가 last-success 를 조용히 오염시키면 안 된다.
                 val pkg = targetPackage
                 val placementToPersist = effectivePlacement
-                if (pkg != null && effectivePlacement == desiredPlacement) {
+                if (pkg != null && effectivePlacement == desiredPlacement && sessionPlacementSource != "FLEX") {
                     // fire-and-forget — ProfileStore.saveLastSuccessfulPlacement 이 내부에서
                     // IOException 을 잡아 Log.w 로 드러내므로(safeWrite) 여기서 scope 예외 처리가
                     // 필요 없다. 이 launch 는 startArrange 의 바깥 try/catch 범위 밖(별도 코루틴)이라

@@ -37,6 +37,13 @@ data class ProfileDefaults(
      * 전부 끄고 종전 동작(3단 폴백만)으로 되돌린다.
      */
     val cacheMeasuredAspect: Boolean = true,
+    /**
+     * P3-5 롤백 레버. true(기본) 면 플렉스(노트북 자세, HALF_OPENED_HORIZONTAL) 감지 시 자동
+     * 상단 배치 트리거와 placement 체인의 FLEX 티어(명시 override 다음 우선순위)가 전부 켜진다.
+     * false 면 자동 트리거 자체가 발화하지 않고(게이트 최우선 검사) FLEX 티어도 평가되지 않아
+     * 종전 동작(수동 트리거 + LAST_SUCCESS/PROFILE/DEFAULTS/FALLBACK 체인)으로 되돌아간다.
+     */
+    val flexAutoTopPlacement: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */
