@@ -197,6 +197,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
     // ══════════════════════════════════════════════════════════
 
     private suspend fun beginSession(target: String, placementOverride: Placement?, aspectOverride: Float?) {
+        // [실측 2026-07-25, A/B 실험] 버블 오버레이 창이 떠 있는 동안 분할 진입을 실행하면
+        // SplitEntry step3 피커發 PanelActivity 가 분할 페인이 아니라 전체화면으로 낙착해
+        // 자가 가드 즉시 종료 → 분할 쌍 미수렴 → ENTRY_STEP_FAILED 로 귀결됨이 재현됐다
+        // (버블 ON 2회 실패, 동일 빌드·경로에서 버블 OFF 는 즉시 성공). 세션 시작 시점에
+        // 버블 창을 완전히 제거한다 — 복원은 cleanupSession() 이 모든 종료 경로(Done/Failed/
+        // Cancel)에서 공통으로 수행한다.
+        FloatingLauncherService.instance?.setBubbleHiddenForArrange(true)
+
         targetPackage = target
         targetLabel = runCatching {
             val appInfo = packageManager.getApplicationInfo(target, 0)
@@ -411,6 +419,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * 세션 종료 공통 경로. [dispatch] 가 Done/Failed 터미널 상태에 도달할 때마다 부른다 —
+     * [cancelArrange] 도 내부적으로 Cancel 이벤트를 dispatch 해 Failed(CANCELLED) 를 거치므로
+     * Done·Failed·Cancel 세 종료 경로 모두 이 함수 하나로 수렴한다. 버블 재표시 복원을
+     * 여기 한 곳에 두면 세 경로 전부를 자동으로 커버한다.
+     */
     private fun cleanupSession() {
         tickJob?.cancel()
         tickJob = null
@@ -423,6 +437,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
         desiredPlacement = Placement.TOP
         effectivePlacement = Placement.TOP
         entryRecipe = EntryRecipe.DRAG
+        // 세션 시작 시 숨긴 버블을 복원한다 (beginSession 의 setBubbleHiddenForArrange(true) 짝).
+        FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
     }
 
     // ══════════════════════════════════════════════════════════

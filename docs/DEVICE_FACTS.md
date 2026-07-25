@@ -154,7 +154,27 @@
 - **재생 중 메뉴 진입 → 재생 세션이 "최소화된 플레이어" 팝업으로 분리** (3회+ 재현). 반대로 **분할 페인 안에서 재생 시작 → 분할 유지** (실측). Day 0 "수동 분할 유지 가능" 관측과 정합 — **순서가 결정 변수**. v1 넷플릭스 사용법 = 원터치 배치 → 페인에서 재생.
 - **잔존 패널 태스크 함정:** 프로세스 강제 종료(재설치 등)로 `finishAndRemoveTask` 가드가 못 돌면 피커 "최근 앱"에 죽은 FW Panel 카드가 남고, 셀렉터가 그걸 탭 → 자가 가드 즉시 종료 → 3회 소진 `ENTRY_STEP_FAILED` (실측). 해소: `purgeStalePanelTasks()` 세션 시작 시 자기 태스크 청소 — 적용 후 1개 제거·1차 성공 실측.
 - **측정 오염 2종 실측:** ① pre-measure 전체 화면 스캔이 분할/홈 UI 를 띠로 오인 — aspect 1.14(conf 0.91)/2.95(conf 0.97) 고신뢰 오측 → 페인 크롭으로 수정 + 넷플릭스 프로파일 PROFILE 1.7778 고정. ② 드래그 직후 재측정이 플레이어 컨트롤 오버레이 오염 residual 122~224 → **PROFILE 소스는 ADR-5 보정 생략**(잔여값 보고만). `defaults.closedLoopCorrection` JSON 토글 배선 완료.
-- step2/3 오탐 보강(`isSplitSelectTopPane` 전폭≥90%·상단 도킹≤40px)은 MENU 경로 E2E 로 간접 검증. DRAG 레시피(유튜브) 회귀 재확인은 [미검증] 잔여 — `EDGE_DOCK_TOLERANCE_PX=40` 포함.
+- step2/3 오탐 보강(`isSplitSelectTopPane` 전폭≥90%·상단 도킹≤40px)은 MENU 경로 E2E 로 간접 검증. DRAG 레시피(유튜브) 회귀는 아래 별도 절 — **1차 실패 후 수정, 2차 통과**.
+
+### [측정] DRAG 레시피 유튜브 회귀 (2026-07-25 오후 2차 세션, E2E 2회)
+
+- **1차 실행 = ENTRY_STEP_FAILED(step2) — 그러나 드래그는 물리적으로 성공해 있었다** (스크린샷 확인: 분할-선택 상태 도달). 판정/재시도 설계 버그 2종 실측:
+  1. **유령 매치 즉시 실패**: `structural-clickable-label` 셀렉터가 bounds 조회 불가 노드를 매치 → 시도가 수 ms 만에 소진 (시도 1·3). 매치는 됐는데 `getBoundsInScreen` 이 빈 rect.
+  2. **성공 미인지 재시도**: 시도 2 드래그 성공 후 폴링 잔여 예산 ~370ms(시도 예산 2.6s − 노드 탐색 1.1s − 드래그 1.1s) 안에 전환 애니메이션 미정착 → 실패 판정. 다음 시도는 이미 사라진 Recents 카드를 재탐색 → 영원히 실패.
+- **수정** (`SplitEntry.kt`): ① step2 폴링 루프가 매 주기 "분할-선택 상태 이미 도달" 을 먼저 확인(이전 시도의 늦은 정착 흡수), ② bounds 빈 매치는 시도 종료가 아니라 재폴링, ③ 동일 패턴 선체크를 step3·menuStep3~5 에도 추가. 타임아웃/기하 상수는 무변경.
+- **2차 실행 = 통과**: 트리거→Done 4.2초, `verified=true residual=0px`, 육안 검은띠 0. 시도 1이 정착 지연으로 실패했으나 시도 2가 선체크로 즉시 성공 — 수정 로직이 설계 그대로 발동.
+- **분할-선택 상단 페인 ground truth** (dumpsys window, 정착 후): 대상(유튜브) frame `[0,0][2184,977]` = **전폭 100%·상단 도킹 0px**, 피커(FromRecentActivity) `[0,991][2184,1968]`, 간격 14px. → `isSplitSelectTopPane` 임계(전폭≥90%, `EDGE_DOCK_TOLERANCE_PX=40`) **[검증]** — 가로 상하 문맥에서 간격 14px 대칭 가정도 추가 근거 확보.
+- **Detector v2 ADAPTIVE 경로 실기기 첫 실증**: 유튜브 앰비언트 글로우 띠(순흑 아님)에서 pre-measure 가 **1.7778 정확 측정** (conf 0.57~0.60, 2회 재현). E 재검증 조건 ② 충족 — v2 폴백이 실전에서 작동함을 확인.
+- **MEASURED 소스 폐루프 최초 무오염 성공**: verify 단계 residual=0px — 넷플릭스 세션의 오염(residual 122~224)과 달리 유튜브 전체화면→분할 경로에서는 폐루프 보정이 정상 동작.
+- **structural 셀렉터 함정 2종 추가 실측**: ① bounds 조회 불가 유령 노드 매치 (수 ms 시도 소진), ② **유효 bounds 의 대형 오매치** — Recents 카드 본체(중심 1092,833)를 아이콘으로 오인해 오드래그, 세션 파괴. 대응 = 빈 bounds 재폴링 + **크기 가드** (bounds ≤ 화면폭/10 ≈218px. 실측 아이콘 ~90px, 카드 본체 수백 px).
+
+### [측정] 버블 오버레이 × 분할 피커 상호작용 (2026-07-25, Phase 3 P3-1)
+
+- **오버레이 창(TYPE_APPLICATION_OVERLAY, 버블)이 떠 있는 동안 분할 피커에서 파트너를 탭하면 PanelActivity 가 분할 페인이 아니라 전체화면으로 launch 된다.** A/B 실측: 버블 ON = 실패 2회 (자가 가드 "fullscreen 감지 종료" 발화, 쌍 미수렴 ×3) / 버블 OFF 동일 빌드·경로 = 즉시 성공(160ms 수렴). 메커니즘 불명 (One UI WM 라우팅 추정) — 경험 법칙으로 대응.
+- 참고: 버블 창은 접근성 창 목록에 **TYPE_SYSTEM**(wm type 2038)으로 보고됨 — `TYPE_APPLICATION` 필터 기반 기하 판정은 오염하지 않는다.
+- **대응 (실기기 검증 완료)**: 액추에이터 세션 시작(beginSession) 시 `FloatingLauncherService.setBubbleHiddenForArrange(true)` 로 버블 창 자체를 removeView, 세션 종료(cleanupSession — Done/Failed/Cancel 수렴점)에서 복원 + 버블 쪽 30s 안전 타이머. 적용 후 버블 탭 E2E 통과 (4.1초, verified=true).
+- **파생 함정**: 피커 셀렉터 후보에 앱 서랍 노출 라벨("FoldWindow" = OnboardingActivity)이 있으면 재시도가 온보딩을 오클릭해 분할-선택을 파괴 (실측 1회). `PANEL_LABEL_CANDIDATES` 는 "FW Panel" 단독으로 축소.
+- 유튜브 영상 시작 직후 버블 탭 시 pre-measure 오측 실측 1건: 추천 화면/인트로 프레임 오염으로 aspect 1.6 (conf 0.60) — divider 1372 로 과소 배치, verify 는 어두운 장면이라 residual=0 오판. 열린 질문 #12(신뢰도 필터) 근거 보강.
 
 > 셀렉터 문자열은 **한국어 로케일 실측값**. 다국어 [미검증].
 

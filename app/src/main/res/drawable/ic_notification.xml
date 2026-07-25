@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P3-1 포그라운드 알림 small icon. ic_bubble 과 동일 모티프(분할 창 아이콘), 상태바 흰색 실루엣 규칙 준수. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4h16v6h-2V6H6v12h6v2H4z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13,13h7v7h-7z" />
+</vector>

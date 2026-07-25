@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- P3-1 BootReceiver: 콜드 부팅 후 버블 자동 복귀 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Android 11+ 패키지 가시성: 대상 앱 라벨 조회(PackageManager.getApplicationLabel)에 필요.
          라벨은 SplitEntry 의 Recents 카드 셀렉터 정밀도를 높인다 (라벨 없으면 "고급 옵션" 단독 매칭 → 다중 카드 오탐 위험). -->
@@ -101,6 +103,43 @@
                 <action android:name="dev.dj.foldwindow.ARRANGE" />
             </intent-filter>
         </receiver>
+
+        <!-- P3-1: 사용자용 플로팅 버블 런처. 원터치로 ArrangerAccessibilityService.startArrange 를 호출한다.
+             foregroundServiceType="specialUse" — Android 14+ (API 34) 타겟 요건. PROPERTY_SPECIAL_USE_FGS_SUBTYPE
+             로 용도를 명시한다 (오버레이 버블 원터치 배치 트리거). -->
+        <service
+            android:name=".service.FloatingLauncherService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="overlay_bubble_arrange_launcher" />
+        </service>
+
+        <!-- P3-1 보조: 콜드 부팅 후 버블 자동 복귀. bubble_enabled prefs + 오버레이 권한 확인 후에만 시작한다
+             (BootReceiver.onReceive). exported="true" 는 시스템이 보내는 BOOT_COMPLETED 브로드캐스트를
+             받기 위한 표준 요건이다 — 이 액션은 보호된 브로드캐스트라 제3자 앱이 스푸핑할 수 없다. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- P3-4: 앱의 실제 진입점(온보딩). 권한 유도 + 버블 시작/중지 + 사용 안내.
+             probe.ProbeActivity 의 LAUNCHER 필터는 Phase 0 도구로 그대로 유지한다(추후 제거 예정). -->
+        <activity
+            android:name=".ui.OnboardingActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:resizeableActivity="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <provider
             android:name="androidx.core.content.FileProvider"

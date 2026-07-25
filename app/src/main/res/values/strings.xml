@@ -11,4 +11,33 @@
 
     <string name="arranger_service_label">FoldWindow 배치</string>
     <string name="arranger_service_desc">현재 보고 있는 앱을 감지해 화면을 분할하고, 영상 종횡비에 맞춰 화면 위/아래 남는 공간을 한쪽으로 모아줍니다. 화면 캡처·창 정보 조회·터치 제스처 권한을 사용하며, 수집한 정보는 기기 밖으로 전송하지 않습니다.</string>
+
+    <!-- P3-1: FloatingLauncherService 알림/토스트 -->
+    <string name="floating_notification_channel_name">FoldWindow 버블</string>
+    <string name="floating_notification_title">FoldWindow 버블 실행 중</string>
+    <string name="floating_notification_text">탭하여 설정 열기</string>
+    <string name="bubble_content_description">FoldWindow 배치 버블</string>
+    <string name="toast_accessibility_off">접근성 서비스가 꺼져 있습니다</string>
+    <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
+
+    <!-- P3-4: OnboardingActivity -->
+    <string name="onboarding_title">FoldWindow 시작하기</string>
+    <string name="onboarding_permission_overlay_title">다른 앱 위에 표시</string>
+    <string name="onboarding_permission_overlay_desc">화면 위에 버블을 띄우기 위해 필요합니다.</string>
+    <string name="onboarding_permission_accessibility_title">접근성 서비스</string>
+    <string name="onboarding_permission_accessibility_desc">화면을 분할하고 영상 비율에 맞춰 재배치하기 위해 필요합니다.</string>
+    <string name="onboarding_permission_notification_title">알림 (선택)</string>
+    <string name="onboarding_permission_notification_desc">버블 실행 중 상태 알림을 표시합니다. 버블 동작에 필수는 아닙니다.</string>
+    <string name="onboarding_action_grant">권한 설정으로 이동</string>
+    <string name="onboarding_action_granted">허용됨</string>
+    <string name="onboarding_action_required">권한 필요</string>
+    <string name="onboarding_bubble_start">버블 시작</string>
+    <string name="onboarding_bubble_stop">버블 중지</string>
+    <string name="onboarding_bubble_running">버블 실행 중</string>
+    <string name="onboarding_bubble_stopped">버블 꺼짐</string>
+    <string name="onboarding_guide_title">사용 방법</string>
+    <string name="onboarding_guide_usage">영상 앱에서 전체화면 재생 중 버블을 탭하면 화면이 영상 비율에 맞게 재배치됩니다.</string>
+    <string name="onboarding_guide_netflix_title">넷플릭스 주의</string>
+    <string name="onboarding_guide_netflix">넷플릭스 등 일부 앱은 먼저 버블로 배치한 뒤 페인 안에서 재생을 시작하세요. 재생 중에 배치하면 영상이 별도 팝업으로 분리됩니다.</string>
+    <string name="onboarding_guide_reenable">앱을 업데이트하면 접근성 서비스가 꺼집니다. 이 화면에서 다시 켜 주세요.</string>
 </resources>

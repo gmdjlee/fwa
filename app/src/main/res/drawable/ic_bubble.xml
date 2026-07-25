@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P3-1 버블 아이콘. 큰 창 + 작은 창 두 사각형으로 "분할 재배치"를 상징한다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4h16v6h-2V6H6v12h6v2H4z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13,13h7v7h-7z" />
+</vector>

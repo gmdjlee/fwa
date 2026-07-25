@@ -2,12 +2,13 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-25 오후 (넷플릭스 MENU 레시피 **실기기 E2E 완료** — 트리거→배치 4.7초, 디바이더 1235 정확. Phase 2 DoD ② 달성. 131 테스트 통과)
-**현재 Phase:** Phase 2 **완료** → Phase 3 (플로팅 UI + 프로파일) 착수 대기
-**다음 행동 (새 세션 착수 목록):**
-1. 유튜브 DRAG 레시피 회귀 확인 1회 (step2 강화 조건 `isSplitSelectTopPane` — `EDGE_DOCK_TOLERANCE_PX=40` [미검증]. 오늘 세션은 넷플릭스만 돌림)
-2. Phase 3 착수: P3-1 플로팅 버블 (adb 트리거 → 버블 대체), P3-4 온보딩. 설계 시 오늘 발견 반영 — 넷플릭스류는 "배치 후 재생" 순서 안내 필요 (재생 중 진입 시 팝업 분리, DEVICE_FACTS 참조)
-3. Phase 3 중 검토: 회전×2 폴백 실기기 검증 기회 확보, "창 전환" 무효 원인 탐구 (열린 질문 참조)
+**최종 갱신:** 2026-07-25 오후 2차 (① 유튜브 DRAG 회귀 1차 실패→수정→통과 ② **P3-1 플로팅 버블 + P3-4 온보딩 구현 + 실기기 E2E 통과** — 버블 탭→배치 4.1초. 신규 함정 2종 실측·해소: 오버레이×피커 상호작용, structural 대형 오매치. 131 테스트 유지)
+**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 **완료(실기기 1회 검증)**, 잔여 P3-2·P3-3·P3-5
+**다음 행동 (착수 목록):**
+1. 미커밋 변경 커밋 (SplitEntry 회귀 수정 + P3-1/P3-4 신규 파일 + 문서 — 사용자 승인 후)
+2. P3-1 잔여 실기기 검증: 부팅 후 버블 자동 복귀(BootReceiver [미검증]), 버블 드래그/스냅/롱프레스 실사용감, 알림 권한 플로우
+3. Phase 3 계속: P3-2 버블 확장 메뉴(위/아래/해제/비율 프리셋), P3-3 DataStore 프로파일 (버블 prefs 이관 포함), P3-5 FoldingFeature. **#12 신뢰도 필터 우선 검토** — 영상 시작 직후 탭 시 1.6 오측 실측 (DEVICE_FACTS 참조)
+4. Phase 3 중 검토: 회전×2 폴백 실기기 검증 기회 확보, "창 전환" 무효 원인 탐구 (열린 질문 참조)
 **다음 행동:** 실기기 검증 절차:
 
 ```bash
@@ -30,8 +31,8 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | 부트스트랩 | ✅ 완료 | AGP 8.11.1 / Kotlin 2.1.0 / Gradle 8.13 wrapper / compileSdk 36. assembleDebug·testDebugUnitTest 통과 (32/32) |
 | Phase 0 프로브 | ✅ 완료 | 3회 실행(전체화면/분할활성/가로영상). #5 ✅ #6 ❌ #7 ✅(분할 중에만). E는 유튜브 앰비언트 모드로 미검출 → Detector v2 필요. `docs/DEVICE_FACTS.md` 확정 |
 | Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
-| Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 잔여: 유튜브 회귀 1회 확인, 회전×2 폴백 미발동(미검증) |
-| Phase 3 UI | ⬜ 미착수 | |
+| Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
+| Phase 3 UI | 🔄 진행 중 | P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). 잔여: P3-2 확장 메뉴 / P3-3 DataStore / P3-5 FoldingFeature. 부팅 복귀 [미검증] |
 | Phase 4 확장 | ⬜ 조건부 | #5 판정에 따라 범위 결정 |
 
 ## 작성된 코드
@@ -49,12 +50,15 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | `platform/DividerLocator.kt` | ✅ P2-2. `TYPE_SPLIT_SCREEN_DIVIDER` 핸들 중심 1차 → PaneGeometry 간격 휴리스틱 폴백. 실기기 미검증 |
 | `platform/DividerDragger.kt` | ✅ P2-4 **실기기 검증**. SINGLE_STROKE 기본(확정). HOLD_THEN_MOVE 는 GestureDrags 위임 |
 | `platform/PaneSwapper.kt` | ⚠️ 유튜브 세션 실기기 성공 / **넷플릭스 회전 직후 컨텍스트에선 "창 전환" ACTION_CLICK 무효 2회 실측** (원인 미상). 핸들 탭 재시도 3회 도입. 실패 시 서비스가 회전×2 폴백 |
-| `platform/SplitEntry.kt` | ✅ P2-3 **실기기 검증**. `EntryRecipe` 분기: DRAG 3단계 / MENU 5단계(UNRESIZEABLE 전용, E2E 6회 성공). step2/3 성공 조건 PaneGeometry 도메인 판정. 회전은 `DividerPopupRotator` 위임 |
+| `platform/SplitEntry.kt` | ✅ P2-3 **실기기 검증** (DRAG·MENU 양 경로). `EntryRecipe` 분기: DRAG 3단계(유튜브 회귀 E2E 통과) / MENU 5단계(UNRESIZEABLE 전용, E2E 6회 성공). 2026-07-25 오후 2차: step2 유령 매치 재폴링 + 목표 상태 선체크(정착 지연 흡수) 수정, 동일 선체크를 step3·menuStep3~5 에 보강 |
 | `platform/ResizeModeDetector.kt` | ✅ 신규 **실기기 검증**. `privateFlags` 필드 리플렉션 allowed / 상수 리플렉션 denied(max-target-o) → 폴백 비트 **1<<11** (0x8c000910 교차 검증). 실패 시 null → DRAG 폴백 |
 | `platform/DividerPopupRotator.kt` | ✅ 신규. 핸들 탭→"시계 방향으로 회전" 클릭 공용화 (MENU step5 + 서비스 회전×2 폴백). step5 경로 실기기 검증, 회전×2 폴백은 미발동 **미검증** |
 | `platform/GestureDrags.kt` | ✅ 신규·실기기 검증. 2-페이즈 홀드드래그(1px 드리프트 홀드 + continueStroke 이동, 타이밍 가드). API 함정 4종 문서화 |
 | `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드 |
-| `service/ArrangeTriggerReceiver.kt` | ✅ adb 디버그 트리거 (`dev.dj.foldwindow.ARRANGE`). Phase 3에서 플로팅 버블로 대체 |
+| `service/ArrangeTriggerReceiver.kt` | ✅ adb 디버그 트리거 (`dev.dj.foldwindow.ARRANGE`). 버블 도입 후에도 회귀용으로 유지 |
+| `service/FloatingLauncherService.kt` | ✅ P3-1 신규 **실기기 검증**. specialUse FGS + TYPE_APPLICATION_OVERLAY 버블 (탭=배치, 드래그=이동+가장자리 스냅, 롱프레스=온보딩). 배치 세션 중 `setBubbleHiddenForArrange` 로 창 제거·복원 (+30s 안전 타이머) — 오버레이 존재 시 피커發 PanelActivity 전체화면 낙착 실측 대응. 위치/켬 상태 SharedPreferences (P3-3 에서 DataStore 이관) |
+| `service/BootReceiver.kt` | ✅ P3-1 신규. BOOT_COMPLETED 시 bubble_enabled+오버레이 권한 확인 후 FGS 재기동. **[미검증]** 실부팅 |
+| `ui/OnboardingActivity.kt` | ✅ P3-4 신규 **실기기 검증** (권한 감지·버블 토글·안내 렌더 확인). 권한 카드 3종 + 버블 시작/중지 + 사용 안내 (넷플릭스 "배치 후 재생" 포함). MAIN/LAUNCHER 진입점 |
 | `ui/PanelActivity.kt` | ✅ P2-5. 검정 배경+시계 파트너 창. 라벨 "FW Panel" = SplitEntry 피커 셀렉터 계약. MAIN/LAUNCHER 노출은 Phase 3 재검토 |
 | `probe/ProbeAccessibilityService.kt` | ✅ 실기기 검증 완료 (3회 실행) |
 | `probe/ProbeReport.kt` | ✅ 완성 |
@@ -75,16 +79,18 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 9. ~~step 파트너 경로~~ → **피커 노드 탭이 1차 확정**. LAUNCH_ADJACENT 는 분할 선택 상태를 파괴(전체화면 강탈)해 최후 폴백으로 강등
 10. ~~`defaults.closedLoopCorrection` JSON 토글 미배선~~ → **배선 완료** (2026-07-25 오후). 추가 규칙: aspectSource=PROFILE 이면 무조건 보정 생략 (오염 측정이 프로파일을 덮어쓰는 실측 사고 2회 대응)
 11. 대상 앱 라벨 조회 — `<queries>` 블록으로 실기기 정상 동작 확인 (label=YouTube 조회 성공)
-12. 사전 실측 오염: 플레이어 컨트롤 오버레이/앰비언트 글로우가 떠 있으면 종횡비 오측 (1.333/1.12 관측). 신뢰도 필터 또는 이중 샷 비교 검토 — Phase 3
+12. 사전 실측 오염: 플레이어 컨트롤 오버레이/앰비언트 글로우가 떠 있으면 종횡비 오측 (1.333/1.12 관측. **추가 실측 2026-07-25 오후 2차: 영상 시작 직후 탭 → 추천화면/인트로 오염 1.6 오측(conf 0.60), 어두운 장면이라 verify residual=0 오판**). 신뢰도 필터 또는 이중 샷 비교 검토 — Phase 3 우선순위 상향
 13. 필러박스 맹점: 과소 이동 시 `residualBars=0` 으로 verified 오판 가능. 열 방향 잔여 검출 추가 검토 — Phase 3
 14. BOTTOM 배치 최적화: 현재 상단 도킹 후 "창 전환" 스왑. step2 드롭 지점을 하단 가장자리로 바꾸면 스왑 생략 가능한지 실기기 확인 — Phase 3
-15. step2 성공 조건 폴링 예산: 드래그가 1.1s 소모해 잔여 폴링 ~1.4s. 전환 애니메이션이 길면 재시도 낭비 — 예산 분리 검토
+15. ~~step2 성공 조건 폴링 예산~~ → **실질 해소** (2026-07-25 오후 2차). 실측: 잔여 폴링 ~370ms 로 애니메이션 정착 불가 → 실패 판정. 예산 분리 대신 **다음 시도의 목표 상태 선체크**가 늦은 정착을 흡수하는 설계 채택 — 회귀 E2E 에서 시도1 실패→시도2 선체크 즉시 성공 실증. 타임아웃 값 무변경
 16. ~~넷플릭스(UNRESIZEABLE) 분기 자동화~~ → **완료 + 실기기 E2E 검증** (2026-07-25 오후, 6회). 감지 = privateFlags 필드 리플렉션 + 폴백 비트 1<<11 (실측 교차 검증)
 17. ~~넷플릭스 재생-분할 관계~~ → **특성 규명 완료**: 분할 페인 안에서 재생 시작 = 유지 / 재생 중 메뉴 진입 = 재생 세션이 "최소화된 플레이어" 팝업으로 분리 (3회+ 재현, One UI 동작). v1 지침 = "배치 후 재생". Phase 3 온보딩/토스트에 안내 반영
-18. ~~step2/3 성공 조건 오탐~~ → **강화 완료 + MENU 경로로 간접 검증**. 잔여: 유튜브 DRAG 회귀 1회 확인 (`EDGE_DOCK_TOLERANCE_PX=40` [미검증])
+18. ~~step2/3 성공 조건 오탐~~ → **완결** (2026-07-25 오후 2차). 유튜브 DRAG 회귀 E2E 통과. `isSplitSelectTopPane` 임계(전폭≥90%, `EDGE_DOCK_TOLERANCE_PX=40`) 는 ground truth(대상 페인 `[0,0][2184,977]`, 도킹 0px)로 **[검증]**. 회귀에서 발견된 실버그 2종(유령 매치/성공 미인지)은 SplitEntry 수정 완료
 19. 회전 결과 페인 위치 비결정 (넷플릭스 상단 3회/하단 2회) — 원인 미상. 하단 낙착 시 교정 체인: PaneSwapper(재시도 3회) → 회전×2 폴백(**미발동·미검증**) → 실패 시 하단 유지+토스트
 20. "창 전환" ACTION_CLICK 무효 (회전 직후 컨텍스트 2회 실측, 유튜브 세션에선 성공) — 원인 탐구 필요. 좌표 탭 제스처로 대체 시도 검토
 21. PROFILE 보정 생략으로 verify 측정값(residual 122~224)은 보고 전용 — 컨트롤 오버레이 오염이라 신뢰 낮음. Phase 3 신뢰도 필터(#12)와 함께 재설계
+22. 버블 오버레이 존재 시 피커發 파트너가 전체화면 낙착하는 **메커니즘 불명** (One UI WM 라우팅 추정) — 현재 경험 법칙(세션 중 버블 숨김)으로 해소. One UI 업데이트 시 재검증 필요
+23. P3-1 잔여 [미검증]: BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용, 버블 제스처 임계값 실사용감, 30s 안전 타이머 vs 최장 세션(교정 체인 포함) 여유
 
 ## 결정 로그
 
@@ -127,3 +133,10 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | 2026-07-25 오후 | 세션 시작 시 `purgeStalePanelTasks()` | 프로세스 강제 종료로 자가 가드 미실행 시 잔존 태스크 카드가 피커 탭 무력화 → ENTRY_STEP_FAILED (실측). 자기 앱 태스크만 선별 제거라 안전 |
 | 2026-07-25 오후 | 스왑 실패 대응 = PaneSwapper 탭 재시도 3회 → 회전×2 폴백 → 하단 유지+토스트 | "창 전환" ACTION_CLICK 무효 2회 실측. 회전 노드 클릭은 6회 전부 동작해 신뢰 가능한 대체 수단 |
 | 2026-07-25 오후 | 세션 `dragTimeoutMs=12s` 오버라이드 (도메인 기본값 3s 불변) | 위치 교정 체인(스왑 3s+회전×2)이 Dragging 상태 안에서 실행돼 기본 예산으로 DRAG_TIMEOUT (실측) |
+| 2026-07-25 오후 2차 | 진입 스텝 재시도 = "목표 상태 선체크 우선" 설계 (타임아웃 증액 대신) | 유튜브 DRAG 회귀 실측: 드래그 성공 후 정착이 폴링 잔여(~370ms)를 초과하면 실패 판정 → 다음 시도가 성공을 몰라봄. 선체크가 늦은 정착을 흡수하면 실패 보고 지연 없이 해소. E2E 실증 |
+| 2026-07-25 오후 2차 | 셀렉터 매치는 유효 bounds 확보까지 불인정 (step2) | `structural-clickable-label` 이 bounds 조회 불가 유령 노드를 매치해 시도가 수 ms 만에 소진 (실측 2회). 빈 bounds 는 재폴링 계속 |
+| 2026-07-25 오후 2차 | structural 셀렉터에 크기 가드 (bounds ≤ 화면폭/10) | 유효 bounds 의 대형 오매치(카드 본체 중심 1092,833) → 오드래그로 세션 파괴 실측. 아이콘 ~90px vs 카드 수백 px |
+| 2026-07-25 오후 2차 | 버블 = 독립 specialUse FGS + TYPE_APPLICATION_OVERLAY, 접근성 서비스에 얹지 않음 | 접근성 꺼진 상태에서도 버블이 온보딩 유도 가능해야 함. Freecess 동결 근본 해결 겸함 (DEVICE_FACTS) |
+| 2026-07-25 오후 2차 | 배치 세션 중 버블 창 제거(removeView), 세션 종료 시 복원 | A/B 실측: 오버레이 존재 시 피커發 PanelActivity 전체화면 낙착 (ON 실패 2회 / OFF 즉시 성공). 숨김 소유자 = 액추에이터 세션 (모든 트리거 경로 커버) |
+| 2026-07-25 오후 2차 | `PANEL_LABEL_CANDIDATES` = "FW Panel" 단독 | "FoldWindow" 후보가 P3-4 온보딩 라벨과 충돌 — 피커 오클릭으로 분할-선택 파괴 실측 |
+| 2026-07-25 오후 2차 | 버블 오버레이엔 클래식 View, 온보딩엔 Compose | 오버레이 창에 Compose 는 lifecycle owner 함정. service/ 레이어라 Compose 규칙 비대상 |

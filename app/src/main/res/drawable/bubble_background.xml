@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P3-1 플로팅 버블 배경. 반투명 원형 + 흰 테두리로 어떤 앱 화면 위에서도 시인성을 확보한다. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#CC1565C0" />
+    <stroke
+        android:width="1.5dp"
+        android:color="#FFFFFFFF" />
+</shape>
