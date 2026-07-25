@@ -178,6 +178,15 @@
 
 > 셀렉터 문자열은 **한국어 로케일 실측값**. 다국어 [미검증].
 
+### [측정] P3-2 확장 메뉴·분할 해제 실기기 검증 (2026-07-25 오후 4차)
+
+1. **분할 해제는 디바이더 드래그로 불가** — `dispatchGesture` SINGLE_STROKE 로 디바이더를 화면끝−40px 까지 드래그하면 `onCompleted` 콜백은 정상 수신되지만 디바이더가 원위치로 스냅백하고 분할이 유지된다 (가로 1928@622ms · 세로 2144@652ms, 2/2 재현). **완전히 동일한 기하·시간의 `adb input swipe` 는 3/3 해제 성공** (가로 1960@800ms·1928@610ms, 세로 2144@650ms). 판정: One UI 가 dismiss 깊이의 디바이더 드래그에서만 접근성 주입 제스처를 거부한다 (원인 불명, 경험 법칙). dismiss 깊이 미만의 배치 드래그는 dispatchGesture 로 계속 정상 동작.
+2. **패널 finish → 분할 해소**: 분할 활성 중 PanelActivity 를 finish 하면 (BACK 키 실측) 분할이 즉시 해소되고 상대 앱이 전체화면으로 자동 복귀한다. dismissSplit v2 = `PanelActivity.instance.finishAndRemoveTask()` + `isSplitActive` 폴링으로 재구현, E2E 성공 ("dismissSplit: 성공", divider 창 0, 유튜브 전체화면 복귀). 인텐트 폴백 경로(instance null 시 EXTRA_FINISH_PANEL)는 [미검증].
+3. **ACTION_OUTSIDE 디스패치 순서**: 메뉴 창(FLAG_WATCH_OUTSIDE_TOUCH)의 ACTION_OUTSIDE 가 버블 창의 ACTION_DOWN 보다 **먼저** 디스패치된다 (실측: 재탭 시 DOWN 스냅샷 방어 무력 → 닫기 대신 startArrange 오발화 / 재롱프레스 → 닫힘+재열림 2회). 대응: 메뉴를 풀스크린 투명 스크림 창으로 재구성해 경합 클래스 자체를 제거 — 재탭 = 닫기만 E2E 확인.
+4. **풀스크린 터치 가능 오버레이 = a11y 창 목록 가림-제외**: 스크림이 떠 있는 동안 하위 창들이 서비스 `getWindows()` 에서 제외되고, removeView 직후에도 스냅샷이 잠시 유지된다. **재구축은 비원자적** — TYPE_APPLICATION 이 먼저 돌아오고 TYPE_SPLIT_SCREEN_DIVIDER 는 나중 (실측: "APPLICATION ≥1" 게이트 통과 직후에도 `isSplitActive` false-negative 2/2, 같은 순간 dumpsys accessibility 는 정상). 대응: dismiss 진입 체크를 `isSplitActive` 자체의 2s 조건 폴링으로 교체 후 E2E 통과. 소형(WRAP_CONTENT) 창이던 구 메뉴에선 미발생 — 가림 면적이 원인.
+5. **step3 피커 탭 변동성 (#20 확장)**: 메뉴發 배치 4회 중 2회가 step3 3연속 실패 → ENTRY_STEP_FAILED (직후 재시도는 성공). events 버퍼 실측: 실패 시 클릭이 무효(액티비티 생성 이벤트 자체 없음, 2회)이거나 `startActivityFromRecents` 로 오라우팅(전체화면 낙착, 1회), 성공 시엔 `startActivityAsUser:com.sec.android.app.launcher` (정상 파트너 배치). "창 전환" ACTION_CLICK 무효(#20)와 동일 계열 — 좌표 탭 제스처 대체 검토 근거 보강.
+6. 개발 편의: `adb input swipe x y x y 700` 롱프레스 시뮬레이션은 발화 경계에 걸림 (1/3 발화) — **1200ms 권장**. 실손가락 홀드는 무관. 세로(포트레이트) 방향에서도 배치 파이프라인 정상 동작 실측 (verified=true, residual=0).
+
 ---
 
 ## 검은 띠 실측 (프로브 E) — 실패 + 근본 원인

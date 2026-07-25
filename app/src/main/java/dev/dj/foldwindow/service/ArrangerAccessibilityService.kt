@@ -201,7 +201,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * [미검증, P3-2] 현재 활성 분할 화면을 해제해 대상 앱을 전체화면으로 복귀시킨다.
+     * [실측 확인, 결함 #24① 수정] 현재 활성 분할 화면을 해제해 대상 앱을 전체화면으로 복귀시킨다.
      * 진행 중인 배치 세션의 취소([cancelArrange])와는 다른 경로다 — 세션이 없어도(과거에
      * 배치된 분할이 그대로 남아 있는 경우 포함) 활성 분할 자체를 푸는 기능이다.
      *
@@ -236,15 +236,41 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * [미검증] dismissSplit() 의 실제 로직. 자기 패키지([PanelActivity]) 페인이 있는 쪽
-     * 가장자리로 디바이더를 드래그해 그 페인을 접는다 — One UI 는 디바이더가 최소 스냅에 닿으면
-     * 분할 자체를 해제하고 남은 페인을 전체화면으로 되돌린다(DEVICE_FACTS.md 의 "최소 스냅 슬라이드"
-     * 함정과 동일 메커니즘을 의도적으로 이용한다). 자기 페인을 못 찾으면 하단 가장자리로
-     * 폴백한다(조용한 실패 금지: 로그로 드러냄).
+     * dismissSplit() 의 실제 로직.
+     *
+     * [실측 2026-07-25, 결함 #24①] 원래는 자기 패키지([PanelActivity]) 페인 쪽 가장자리로
+     * 디바이더를 dispatchGesture SINGLE_STROKE 드래그해 분할을 해제하려 했으나, 실기기에서
+     * 디바이더가 스냅백해 분할이 풀리지 않는 현상이 재현됐다(가로/세로 2회, onCompleted 콜백은
+     * 정상 도착). 완전히 동일한 기하·시간을 `adb input swipe` 로 주입하면 3/3 성공 — One UI 가
+     * dismiss 깊이의 드래그만 접근성 주입 제스처를 거부하는 것으로 추정된다(원인 불명, 경험 법칙).
+     * 반면 [PanelActivity] 를 BACK 으로 finish 시키면 분할이 즉시 해소되고 상대 앱(유튜브)이
+     * 전체화면으로 자동 복귀함이 실측 확인됐다 — 이 함수는 그 경로를 그대로 쓴다.
+     *
+     * [실측 2026-07-25, 추가 결함] 메뉴 "분할 해제" 탭 직후 `isSplitActive` 오판정(false-negative)이
+     * 2/2 재현됐다 — dumpsys 로는 TYPE_SPLIT_SCREEN_DIVIDER a11y 창이 실제로 존재하는데도 이
+     * 체크가 못 봤고, 1분 뒤 같은 체크는 정상이었다. 원인은 풀스크린 스크림(확장 메뉴 오버레이)이
+     * 떠 있는 동안 시스템이 "가림(터치 영역 차감)" 기준으로 하위 창들을 접근성 창 목록에서
+     * 제외하고, `dismissMenu()` 의 removeView 직후에도 그 스냅샷이 잠시 유지되기 때문으로
+     * 추정된다(소형 WRAP_CONTENT 였던 구 메뉴 창에서는 디바이더 영역을 가리지 않아 미발생).
+     *
+     * [실측 2026-07-25, 재검증] 위 대응으로 넣은 [awaitWindowsSettled](APPLICATION 창 1개 이상
+     * 관측) 게이트만으로는 불충분함이 재현됐다 — 게이트는 타임아웃 로그 없이 통과했는데도
+     * `isSplitActive` 는 여전히 false-negative, 그 직후 dumpsys 는 TYPE_APPLICATION 3개 +
+     * TYPE_SPLIT_SCREEN_DIVIDER 1개로 정상이었다. 즉 스크림 제거 후 a11y 창 목록 재구축이
+     * 원자적이지 않다 — 앱 창 일부가 먼저 돌아오고(그래서 게이트는 통과) 디바이더 창/나머지
+     * 페인은 나중에 온다. 그래서 "APPLICATION 존재" 라는 약한 조건 대신, 여기서는 직접
+     * `isSplitActive` 자체를 조건으로 폴링한다 — 분할이 실제로 있으면 목록이 정착되는 즉시
+     * 진행하고, 정말 없으면 [SPLIT_STATE_SETTLE_TIMEOUT_MS] 뒤 정직하게 실패를 보고한다.
      */
     private suspend fun performDismissSplit() {
         val screen = screenRect()
-        if (!dividerLocator.isSplitActive(safeWindows(), screen)) {
+        val active = withTimeoutOrNull(SPLIT_STATE_SETTLE_TIMEOUT_MS) {
+            while (!dividerLocator.isSplitActive(safeWindows(), screen)) {
+                delay(DISMISS_POLL_INTERVAL_MS)
+            }
+            true
+        } ?: false
+        if (!active) {
             Log.i(TAG, "dismissSplit: 분할 화면이 아님")
             toast("분할 화면이 아닙니다")
             return
@@ -254,34 +280,31 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // 메뉴를 거치지 않는 adb 트리거 경로 등에도 동일하게 대응해야 한다).
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(true)
         try {
-            val handle = dividerLocator.locate(safeWindows(), screen)
-            if (handle == null) {
-                Log.w(TAG, "dismissSplit: 디바이더 핸들 미발견")
-                toast("분할 해제 실패: 디바이더를 찾지 못함")
+            // 우리가 만든 FoldWindow 분할인지 먼저 확인한다 — 자기 패키지([PanelActivity]) 페인이
+            // 없으면 이 분할은 우리가 배치한 것이 아니므로(다른 앱/시스템이 만든 분할) 손대지 않는다.
+            if (actualVideoPaneRect(packageName, screen) == null) {
+                Log.w(TAG, "dismissSplit: 자기 패널 페인 미발견 — FoldWindow 분할이 아님으로 판단, 중단")
+                toast("FoldWindow 분할이 아닙니다")
                 return
             }
 
-            val selfPaneCenterY = actualVideoPaneRect(packageName, screen)
-                ?.let { (it.top + it.bottom) / 2 }
-            val collapseTowardTop = if (selfPaneCenterY != null) {
-                selfPaneCenterY < (screen.top + screen.bottom) / 2
+            val panel = PanelActivity.instance
+            if (panel != null) {
+                panel.finishAndRemoveTask()
             } else {
-                Log.w(TAG, "dismissSplit: 자기 패널 페인 미발견 — 하단 가장자리 폴백")
-                false
-            }
-            // 화면 크기 비율/실측 핸들 기준으로만 계산한다(좌표 하드코딩 금지) — DividerDragger 가
-            // 핸들 크기만큼의 화면 경계 여유(EDGE_MARGIN_PX)로 다시 클램프해준다.
-            val dismissTargetY = if (collapseTowardTop) screen.top else screen.bottom
-
-            val dragCompleted = suspendCancellableCoroutine<Boolean> { cont ->
-                dividerDragger.drag(handle, dismissTargetY, screen, DragStrategy.SINGLE_STROKE) { completed ->
-                    if (cont.isActive) cont.resume(completed)
-                }
-            }
-            if (!dragCompleted) {
-                Log.w(TAG, "dismissSplit: 드래그 제스처 실패/취소")
-                toast("분할 해제 실패: 드래그 실패")
-                return
+                // 프로세스는 살아 있는데 액티비티 인스턴스만 없는 희귀 경로 폴백 — 태스크를 다시
+                // 전면으로 가져와 onCreate/onNewIntent 에서 즉시 finish 시킨다.
+                Log.w(TAG, "dismissSplit: PanelActivity.instance null — 인텐트 폴백 경로 사용")
+                startActivity(
+                    Intent(this, PanelActivity::class.java).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                        )
+                        putExtra(PanelActivity.EXTRA_FINISH_PANEL, true)
+                    },
+                )
             }
 
             val settled = withTimeoutOrNull(DISMISS_POLL_TIMEOUT_MS) {
@@ -303,11 +326,47 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * [실측 2026-07-25, 추가 결함] 풀스크린 스크림(확장 메뉴, 터치 가능 오버레이)이 떠 있는 동안
+     * 시스템이 "가림(터치 영역 차감)" 기준으로 하위 창을 접근성 창 목록에서 제외한다.
+     * `dismissMenu()` 의 removeView 직후에도 그 스냅샷이 잠시 유지돼 `windows` 가 디바이더/앱
+     * 창을 못 보는 현상이 실측됐다 — dismissSplit false-negative 2/2 재현("분할 화면이 아님"
+     * 오판정), 1분 뒤 동일 체크는 active=true 로 정상. 소형(WRAP_CONTENT) 구 메뉴 창에서는
+     * 디바이더 영역을 가리지 않아 미발생했다. 메뉴 경유 dismissSplit 뿐 아니라 배치 세션 시작
+     * ([beginSession])도 같은 위험(직전에 [FloatingLauncherService.dismissMenuThenArrange] 가
+     * 스크림을 제거함)이 있어 공용 헬퍼로 분리한다.
+     *
+     * ADR-2 준수: 고정 지연이 아니라 APPLICATION 창이 최소 1개 관측될 때까지의 조건 폴링이다
+     * ([DISMISS_POLL_INTERVAL_MS] 간격 재사용). 타임아웃([WINDOWS_SETTLE_TIMEOUT_MS])에 도달해도
+     * 예외를 던지지 않고 그냥 리턴한다 — 이후 로직(예: isSplitActive, activeAppPackage)이 스스로
+     * 실패를 노출하므로 여기서 강제로 세션을 끊지 않는다(조용한 실패 금지는 타임아웃 로그로 충족).
+     */
+    private suspend fun awaitWindowsSettled() {
+        val settled = withTimeoutOrNull(WINDOWS_SETTLE_TIMEOUT_MS) {
+            while (safeWindows().none { runCatching { it.type }.getOrNull() == AccessibilityWindowInfo.TYPE_APPLICATION }) {
+                delay(DISMISS_POLL_INTERVAL_MS)
+            }
+            true
+        }
+        if (settled == null) {
+            Log.w(
+                TAG,
+                "awaitWindowsSettled: ${WINDOWS_SETTLE_TIMEOUT_MS}ms 내 APPLICATION 창 미관측 — 진행은 계속함",
+            )
+        }
+    }
+
     // ══════════════════════════════════════════════════════════
     // 세션 시작 (ADR-1 3단 폴백 결정 + Start 디스패치)
     // ══════════════════════════════════════════════════════════
 
     private suspend fun beginSession(target: String, placementOverride: Placement?, aspectOverride: Float?) {
+        // [실측 2026-07-25, 추가 결함] 메뉴 경유 트리거([FloatingLauncherService.dismissMenuThenArrange])
+        // 직후에는 방금 제거된 풀스크린 스크림 탓에 접근성 창 목록 스냅샷이 잠시 불완전할 수 있다
+        // (위 [awaitWindowsSettled] KDoc 실측 근거 참고). 세션이 windows 를 쓰기 시작하기 전
+        // 최전방에서 선대기한다.
+        awaitWindowsSettled()
+
         // [실측 2026-07-25, A/B 실험] 버블 오버레이 창이 떠 있는 동안 분할 진입을 실행하면
         // SplitEntry step3 피커發 PanelActivity 가 분할 페인이 아니라 전체화면으로 낙착해
         // 자가 가드 즉시 종료 → 분할 쌍 미수렴 → ENTRY_STEP_FAILED 로 귀결됨이 재현됐다
@@ -1002,10 +1061,29 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         /**
          * P3-2 dismissSplit() 조건 폴링 파라미터. DividerPopupRotator/PaneSwapper 와 같은 관례
-         * (150ms 간격)를 따른다. 실기기 미검증 신규 경로라 여유 있는 타임아웃(3s)으로 시작한다.
+         * (150ms 간격)를 따른다. [PanelActivity] finish → 분할 해소는 실기기에서 즉시 반영됨이
+         * 확인됐지만(결함 #24① 수정), 여유 있는 타임아웃(3s)은 유지한다.
          */
         private const val DISMISS_POLL_INTERVAL_MS = 150L
         private const val DISMISS_POLL_TIMEOUT_MS = 3_000L
+
+        /**
+         * [실측 2026-07-25, 추가 결함] [awaitWindowsSettled] 타임아웃. 풀스크린 스크림 제거 직후
+         * 접근성 창 목록 스냅샷이 정상화될 때까지의 여유 — dismissSplit false-negative 재현(2/2)
+         * 대응. 정상 케이스는 훨씬 짧게 끝날 것으로 예상되나(경험적 관측 없음), 세션 시작 경로에
+         * 부담을 주지 않도록 짧게(1.2s) 잡는다.
+         */
+        private const val WINDOWS_SETTLE_TIMEOUT_MS = 1_200L
+
+        /**
+         * [실측 2026-07-25, 재검증] [awaitWindowsSettled] 만으로는 불충분함이 재현됐다 — 게이트가
+         * 타임아웃 없이 통과한 뒤에도 `isSplitActive` false-negative 가 재현됐고(직후 dumpsys 는
+         * TYPE_APPLICATION 3 + TYPE_SPLIT_SCREEN_DIVIDER 1 로 정상), 목록 재구축 비원자적 —
+         * 앱 창이 먼저, 디바이더가 나중이라는 것으로 해석된다. [performDismissSplit] 진입 시
+         * `isSplitActive` 자체를 조건으로 삼아 최대 이 시간만큼 폴링한다 — 분할이 있으면 목록이
+         * 정착되는 즉시 통과하고, 정말 없으면 이 시간 뒤 정직하게 "분할 화면이 아닙니다".
+         */
+        private const val SPLIT_STATE_SETTLE_TIMEOUT_MS = 2_000L
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",

@@ -11,6 +11,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -23,6 +24,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -46,12 +48,14 @@ import kotlin.math.abs
  * 포그라운드 서비스. Phase 2 의 adb 트리거([ArrangeTriggerReceiver])를 사용자용으로 대체한다.
  *
  * 동작:
- * - 탭: 메뉴가 열려 있으면 닫기 토글만 한다. 닫혀 있으면 접근성 서비스 인스턴스가 있을 때
- *   `startArrange(null, null)` (프로파일/기본값 적용), 없으면 토스트 안내 후 [OnboardingActivity] 로 유도.
+ * - 탭: 접근성 서비스 인스턴스가 있을 때 `startArrange(null, null)` (프로파일/기본값 적용),
+ *   없으면 토스트 안내 후 [OnboardingActivity] 로 유도. 메뉴가 열려 있는 동안은 버블이 풀스크린
+ *   스크림 아래 깔려 터치를 아예 받지 못하므로(아래 [showMenu] KDoc 참고), 이 분기는 메뉴가
+ *   닫혀 있을 때만 실행될 수 있다.
  * - 드래그: 버블 이동. 손을 떼면 가까운 좌/우 가장자리로 스냅. 드래그가 시작되면 열려 있던
  *   확장 메뉴는 닫는다(옛 위치에 뜬 메뉴가 무의미해지므로).
- * - 롱프레스(드래그 없이 유지): 확장 메뉴([showMenu]) 토글 — 위/아래 배치, 분할 해제, 종횡비
- *   프리셋, 설정(온보딩) 진입점을 제공한다(P3-2). 이미 열려 있으면 닫기 토글.
+ * - 롱프레스(드래그 없이 유지): 확장 메뉴([showMenu]) 를 연다 — 위/아래 배치, 분할 해제, 종횡비
+ *   프리셋, 설정(온보딩) 진입점을 제공한다(P3-2). 메뉴를 닫으려면 메뉴 바깥(스크림)을 탭한다.
  *
  * ADR-2 참고: 이 서비스가 쓰는 지연(Handler.postDelayed 롱프레스 감지, ValueAnimator 스냅 애니메이션)은
  * 전부 표준 UI 제스처 인식/화면 전환 애니메이션이며 액추에이터 상태 대기가 아니다. 실제 배치 진행은
@@ -73,6 +77,14 @@ import kotlin.math.abs
  * 항목 클릭 경로는 [dismissMenu] 를 동기 호출한 뒤에만 `startArrange`/`dismissSplit` 을 부르고
  * ([dismissMenuThenArrange], [dismissMenuThenDismissSplit]), adb 트리거 등 메뉴를 거치지 않는
  * 경로에 대비해 [setBubbleHiddenForArrange] 도 hidden=true 일 때 메뉴를 함께 제거한다.
+ *
+ * [실측 2026-07-25, 결함 #24③ 수정] 예전에는 메뉴 창에 FLAG_WATCH_OUTSIDE_TOUCH 를 걸고
+ * ACTION_OUTSIDE 로 바깥 탭을 감지해 닫았는데, 이 ACTION_OUTSIDE 가 버블 창의 ACTION_DOWN 보다
+ * *먼저* 디스패치됨이 실측됐다 — 그 결과 재탭 시 `menuWasOpenAtDown` 스냅샷이 이미 null 을 읽어
+ * "닫기만" 이 아니라 "닫기 + startArrange 오발화" 로, 재롱프레스는 "닫힘+재열림" 으로 오동작했다.
+ * 지금은 메뉴를 화면 전체를 덮는 투명 스크림 창 하나로 재구성해 이 경합 클래스 자체를 구조적으로
+ * 없앴다 — 스크림이 모든 터치를 먼저 받으므로 메뉴가 열려 있는 동안 버블 창은 어떤 터치 이벤트도
+ * 받을 수 없다(자세한 내용은 [showMenu] KDoc 참고).
  */
 class FloatingLauncherService : Service() {
 
@@ -321,23 +333,12 @@ class FloatingLauncherService : Service() {
         private var dragging = false
         private var longPressFired = false
 
-        /**
-         * ACTION_DOWN 시점에 메뉴가 열려 있었는지 스냅샷. 메뉴 창은 FLAG_WATCH_OUTSIDE_TOUCH 로
-         * 바깥 탭에도 스스로 닫히므로(showMenu() 의 ACTION_OUTSIDE 처리), ACTION_UP 시점에 다시
-         * `menuView` 를 읽으면 이미 null 로 바뀌어 있을 수 있어 "메뉴 재탭 = 닫기만" 요구사항이
-         * "닫기 + 배치 트리거" 로 오작동할 위험이 있다. DOWN 시점 스냅샷으로 이 경합을 막는다.
-         */
-        private var menuWasOpenAtDown = false
-
+        // [결함 #24③ 수정] 메뉴가 열려 있으면 풀스크린 스크림이 모든 터치를 가로채므로 이
+        // 리스너는 그 동안 어떤 이벤트도 받지 않는다 — "메뉴 열림 스냅샷"을 따로 둘 필요가 없다.
         private val longPressRunnable = Runnable {
             longPressFired = true
-            if (menuWasOpenAtDown) {
-                Log.i(TAG, "bubble long-press — 메뉴 재진입 닫기 토글")
-                dismissMenu()
-            } else {
-                Log.i(TAG, "bubble long-press — 확장 메뉴 열기")
-                showMenu()
-            }
+            Log.i(TAG, "bubble long-press — 확장 메뉴 열기")
+            showMenu()
         }
 
         override fun onTouch(v: View, event: MotionEvent): Boolean {
@@ -349,7 +350,6 @@ class FloatingLauncherService : Service() {
                     initialTouchY = event.rawY
                     dragging = false
                     longPressFired = false
-                    menuWasOpenAtDown = menuView != null
                     handler.postDelayed(longPressRunnable, longPressTimeoutMs)
                     return true
                 }
@@ -378,7 +378,6 @@ class FloatingLauncherService : Service() {
                     when {
                         longPressFired -> Unit // 이미 롱프레스 콜백에서 처리됨
                         dragging -> snapToEdge(view, params)
-                        menuWasOpenAtDown -> dismissMenu() // 메뉴 열려 있을 때 탭 재진입 = 닫기 토글
                         else -> onBubbleTap()
                     }
                     return true
@@ -442,6 +441,18 @@ class FloatingLauncherService : Service() {
      *
      * 위치: 버블 근처에 붙이되 화면 경계를 넘지 않게 클램프한다. 화면 크기는 매번
      * `windowManager.currentWindowMetrics` 를 재조회한다(좌표 하드코딩 금지, CLAUDE.md 함정 #2).
+     *
+     * [실측 2026-07-25, 결함 #24③ 수정] 예전에는 [buildMenuContent] 결과(LinearLayout)를 그
+     * 자체로 WRAP_CONTENT 창에 얹고 FLAG_WATCH_OUTSIDE_TOUCH 의 ACTION_OUTSIDE 로 바깥 탭을
+     * 감지했다. 그런데 이 ACTION_OUTSIDE 가 버블 창의 ACTION_DOWN 보다 *먼저* 디스패치됨이
+     * 실측돼, 재탭/재롱프레스 스냅샷 방어(`menuWasOpenAtDown`)가 경합에서 졌다(재탭 → 닫기 +
+     * startArrange 오발화, 재롱프레스 → 닫힘+재열림). 지금은 화면 전체(MATCH_PARENT)를 덮는
+     * 투명 스크림 [FrameLayout] 을 루트 창으로 쓰고, 실제 메뉴 내용([buildMenuContent])은 그
+     * 안에 `leftMargin`/`topMargin` 으로 배치한다(계산 로직은 그대로 재사용). 스크림이 모든
+     * 터치를 먼저 받으므로 버블 창은 메뉴가 열려 있는 동안 어떤 터치도 받지 못한다 — "메뉴 열린
+     * 채 버블 재탭/재롱프레스" 라는 경합 클래스 자체가 구조적으로 사라진다. 메뉴 항목(TextView)은
+     * `isClickable = true` 라 자기 터치를 소비하므로 그대로 동작하고, 스크림 자체를 탭하면
+     * [dismissMenu] 가 불린다.
      */
     private fun showMenu() {
         if (menuView != null) return
@@ -473,38 +484,44 @@ class FloatingLauncherService : Service() {
         menuX = menuX.coerceIn(0, (bounds.width() - menuWidth).coerceAtLeast(0))
         menuY = menuY.coerceIn(0, (bounds.height() - menuHeight).coerceAtLeast(0))
 
+        // 스크림(루트) 자체를 탭하면 메뉴를 닫는다. 메뉴 항목(TextView, isClickable=true)은
+        // 자기 터치를 먼저 소비하므로 이 클릭 리스너까지 전파되지 않는다.
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            setOnClickListener { dismissMenu() }
+        }
+        scrim.addView(
+            content,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                leftMargin = menuX
+                topMargin = menuY
+            },
+        )
+
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = menuX
-            y = menuY
         }
 
-        content.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-                dismissMenu()
-                true
-            } else {
-                false
-            }
-        }
-
-        runCatching { windowManager.addView(content, params) }
-            .onSuccess { menuView = content }
+        runCatching { windowManager.addView(scrim, params) }
+            .onSuccess { menuView = scrim }
             .onFailure { e -> Log.e(TAG, "메뉴 뷰 attach 실패", e) }
     }
 
     /**
-     * 메뉴 오버레이 창을 제거한다. 이미 닫혀 있으면 무시(멱등). 배치/분할 해제 트리거 직전에는
-     * 반드시 이 함수를 거쳐야 한다 — CLAUDE.md 함정 #22: 오버레이 창이 떠 있는 채로 배치가
-     * 돌면 피커發 파트너 창이 전체화면으로 낙착해 세션이 실패한다(실측).
+     * 메뉴 오버레이 창(풀스크린 스크림 루트)을 제거한다. 이미 닫혀 있으면 무시(멱등).
+     * 배치/분할 해제 트리거 직전에는 반드시 이 함수를 거쳐야 한다 — CLAUDE.md 함정 #22:
+     * 오버레이 창이 떠 있는 채로 배치가 돌면 피커發 파트너 창이 전체화면으로 낙착해 세션이
+     * 실패한다(실측).
      */
     private fun dismissMenu() {
         val view = menuView ?: return

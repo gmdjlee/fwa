@@ -1,5 +1,6 @@
 package dev.dj.foldwindow.ui
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
@@ -48,7 +49,25 @@ class PanelActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
+        if (intent.requestsFinish()) {
+            // 결함 #24① 수정: dismissSplit() 이 이 액티비티를 finish 시키는 것이 분할 해제
+            // 트리거다(아래 companion object KDoc의 실측 근거 참고). UI를 전혀 구성하지 않고
+            // 즉시 종료해 깜빡임을 없앤다.
+            finishAndRemoveTask()
+            return
+        }
         setContent { MaterialTheme { Surface { PanelScreen() } } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // dismissSplit() 폴백 경로([ArrangerAccessibilityService.performDismissSplit] 참고):
+        // instance 가 이미 null(액티비티 인스턴스는 죽었지만 프로세스는 살아 있는 희귀 경로)일 때
+        // FLAG_ACTIVITY_SINGLE_TOP 으로 기존 태스크를 재사용하며 여기로 들어온다.
+        if (intent.requestsFinish()) {
+            finishAndRemoveTask()
+        }
     }
 
     override fun onResume() {
@@ -92,8 +111,31 @@ class PanelActivity : ComponentActivity() {
         super.onPause()
     }
 
-    private companion object {
-        const val TAG = "PanelActivity"
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
+
+    private fun Intent?.requestsFinish(): Boolean =
+        this?.getBooleanExtra(EXTRA_FINISH_PANEL, false) == true
+
+    companion object {
+        private const val TAG = "PanelActivity"
+
+        /**
+         * [실측 2026-07-25, 결함 #24①] dispatchGesture 로 디바이더를 가장자리까지 SINGLE_STROKE
+         * 드래그하면 One UI 가 스냅백한다(재현 2회, onCompleted 콜백은 옴). 완전히 동일한 기하·
+         * 시간을 `adb input swipe` 로 주입하면 분할 해제 성공(3/3) — 접근성 주입 제스처만 dismiss
+         * 깊이에서 거부되는 것으로 추정된다(원인 불명, 경험 법칙). 반면 이 액티비티를 BACK 으로
+         * finish 하면 분할이 즉시 해소되고 상대 앱(유튜브)이 전체화면으로 자동 복귀함이 실측
+         * 확인됐다 — [ArrangerAccessibilityService.performDismissSplit] 이 이 인텐트 extra 로
+         * finishAndRemoveTask() 를 원격 트리거한다.
+         */
+        const val EXTRA_FINISH_PANEL = "dev.dj.foldwindow.EXTRA_FINISH_PANEL"
+
+        /** ArrangerAccessibilityService.instance 와 동일한 패턴 — dismissSplit() 이 이 인스턴스를 직접 finish 시킨다. */
+        var instance: PanelActivity? = null
+            private set
     }
 }
 

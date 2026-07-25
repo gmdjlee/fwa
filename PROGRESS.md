@@ -2,14 +2,14 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-25 오후 3차 (**P3-2 버블 확장 메뉴 구현** — 롱프레스=메뉴(위/아래 배치·분할 해제·프리셋 SSOT·설정), `dismissSplit()` 신규 [실기기 미검증]. 131 테스트·빌드 통과, Advisor 독립 재검증)
-**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 완료(실기기 1회 검증), P3-2 **구현 완료(실기기 미검증)**, 잔여 P3-3·P3-5
+**최종 갱신:** 2026-07-25 오후 4차 (**P3-2 실기기 검증 완료 + 결함 3건 수정** — ① dismissSplit 드래그 가설 반증→패널 finish 방식 재구현·E2E 성공 ② 메뉴 재탭 경합 실측→풀스크린 스크림 재구성 ③ 스크림發 a11y 창 목록 false-negative→isSplitActive 자체 폴링. 131 테스트·빌드 통과, 전 결함 실기기 E2E 재검증)
+**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 완료, P3-2 **완료(실기기 E2E 검증)**, 잔여 P3-3·P3-5
 **다음 행동 (착수 목록):**
-1. 미커밋 변경 커밋 (P3-2 확장 메뉴 + 이전 미커밋분 — 사용자 승인 후)
-2. **P3-2 실기기 검증**: 롱프레스→메뉴 열림/바깥탭 닫힘, 위/아래/프리셋 배치, `dismissSplit()` 동작 (디바이더→패널쪽 가장자리 드래그로 분할 해제되는지 — 열린 질문 #24), 메뉴 열린 채 버블 재탭 토글
-3. P3-1 잔여 실기기 검증: 부팅 후 버블 자동 복귀(BootReceiver [미검증]), 알림 권한 플로우
-4. Phase 3 계속: P3-3 DataStore 프로파일 (버블 prefs 이관 포함), P3-5 FoldingFeature. **#12 신뢰도 필터 우선 검토** — 영상 시작 직후 탭 시 1.6 오측 실측 (DEVICE_FACTS 참조)
-5. Phase 3 중 검토: 회전×2 폴백 실기기 검증 기회 확보, "창 전환" 무효 원인 탐구 (열린 질문 참조)
+1. 미커밋 변경 커밋 (P3-2 검증 수정 3건: ArrangerAccessibilityService/FloatingLauncherService/PanelActivity + 문서 — 사용자 승인 후)
+2. P3-1 잔여 실기기 검증: 부팅 후 버블 자동 복귀(BootReceiver [미검증]), 알림 권한 플로우. P3-2 잔여: dismissSplit 인텐트 폴백(instance null) [미검증], "분할 없음" 2s 대기 체감 확인
+3. Phase 3 계속: P3-3 DataStore 프로파일 (버블 prefs 이관 포함), P3-5 FoldingFeature. **#12 신뢰도 필터 우선 검토** — 영상 시작 직후 탭 시 1.6 오측 실측 (DEVICE_FACTS 참조)
+4. **#20/#25 step3 피커 탭 변동성**: 메뉴發 배치 4회 중 2회 step3 3연속 실패 실측 (클릭 무효/오라우팅, DEVICE_FACTS P3-2 절 참조) — 좌표 탭 제스처 대체 검토
+5. Phase 3 중 검토: 회전×2 폴백 실기기 검증 기회 확보
 **다음 행동:** 실기기 검증 절차:
 
 ```bash
@@ -33,7 +33,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | Phase 0 프로브 | ✅ 완료 | 3회 실행(전체화면/분할활성/가로영상). #5 ✅ #6 ❌ #7 ✅(분할 중에만). E는 유튜브 앰비언트 모드로 미검출 → Detector v2 필요. `docs/DEVICE_FACTS.md` 확정 |
 | Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
 | Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
-| Phase 3 UI | 🔄 진행 중 | P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ 구현 [실기기 미검증]. 잔여: P3-3 DataStore / P3-5 FoldingFeature. 부팅 복귀 [미검증] |
+| Phase 3 UI | 🔄 진행 중 | P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). 잔여: P3-3 DataStore / P3-5 FoldingFeature. 부팅 복귀 [미검증] |
 | Phase 4 확장 | ⬜ 조건부 | #5 판정에 따라 범위 결정 |
 
 ## 작성된 코드
@@ -55,12 +55,12 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | `platform/ResizeModeDetector.kt` | ✅ 신규 **실기기 검증**. `privateFlags` 필드 리플렉션 allowed / 상수 리플렉션 denied(max-target-o) → 폴백 비트 **1<<11** (0x8c000910 교차 검증). 실패 시 null → DRAG 폴백 |
 | `platform/DividerPopupRotator.kt` | ✅ 신규. 핸들 탭→"시계 방향으로 회전" 클릭 공용화 (MENU step5 + 서비스 회전×2 폴백). step5 경로 실기기 검증, 회전×2 폴백은 미발동 **미검증** |
 | `platform/GestureDrags.kt` | ✅ 신규·실기기 검증. 2-페이즈 홀드드래그(1px 드리프트 홀드 + continueStroke 이동, 타이밍 가드). API 함정 4종 문서화 |
-| `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드. P3-2: `dismissSplit()` 신규 **[미검증]** — Idle 가드, 디바이더를 자기 패널 페인 쪽 가장자리로 SINGLE_STROKE 드래그, 150ms/3s 조건 폴링으로 `isSplitActive=false` 확인, 실패 전부 토스트 노출 |
+| `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드. P3-2 `dismissSplit()` **실기기 E2E 검증**: 디바이더 드래그 아님(반증) — `PanelActivity.instance.finishAndRemoveTask()` + 인텐트 폴백[미검증], 진입 체크 = `isSplitActive` 자체 2s 조건 폴링(스크림發 a11y 목록 비원자 재구축 대응), 150ms/3s 해소 폴링, 실패 전부 토스트. `awaitWindowsSettled()` = beginSession freshness 게이트 |
 | `service/ArrangeTriggerReceiver.kt` | ✅ adb 디버그 트리거 (`dev.dj.foldwindow.ARRANGE`). 버블 도입 후에도 회귀용으로 유지 |
-| `service/FloatingLauncherService.kt` | ✅ P3-1 실기기 검증 + P3-2 확장 메뉴 [메뉴는 실기기 미검증]. 탭=배치, 드래그=이동+스냅, **롱프레스=메뉴 토글**(위/아래 배치·분할 해제·프리셋(JSON SSOT 파싱 캐시)·설정). 메뉴 = 별도 TYPE_APPLICATION_OVERLAY 클래식 View, ACTION_OUTSIDE 닫힘, `menuWasOpenAtDown` 스냅샷으로 재탭 경합 방어. 함정 #22: 모든 트리거 직전 + `setBubbleHiddenForArrange(true)` 시 메뉴 제거. 위치/켬 상태 SharedPreferences (P3-3 에서 DataStore 이관) |
+| `service/FloatingLauncherService.kt` | ✅ P3-1 + P3-2 확장 메뉴 **실기기 E2E 검증**. 탭=배치, 드래그=이동+스냅, **롱프레스=메뉴 열기**(위/아래 배치·분할 해제·프리셋(JSON SSOT 파싱 캐시)·설정). 메뉴 = **풀스크린 투명 스크림** FrameLayout 창 (ACTION_OUTSIDE 방식은 디스패치 순서 경합 실측으로 폐기 — 스크림이 모든 터치 선점, 재탭=닫기만 구조 보장). 함정 #22: 모든 트리거 직전 + `setBubbleHiddenForArrange(true)` 시 메뉴 제거. 위치/켬 상태 SharedPreferences (P3-3 에서 DataStore 이관) |
 | `service/BootReceiver.kt` | ✅ P3-1 신규. BOOT_COMPLETED 시 bubble_enabled+오버레이 권한 확인 후 FGS 재기동. **[미검증]** 실부팅 |
 | `ui/OnboardingActivity.kt` | ✅ P3-4 신규 **실기기 검증** (권한 감지·버블 토글·안내 렌더 확인). 권한 카드 3종 + 버블 시작/중지 + 사용 안내 (넷플릭스 "배치 후 재생" 포함). MAIN/LAUNCHER 진입점 |
-| `ui/PanelActivity.kt` | ✅ P2-5. 검정 배경+시계 파트너 창. 라벨 "FW Panel" = SplitEntry 피커 셀렉터 계약. MAIN/LAUNCHER 노출은 Phase 3 재검토 |
+| `ui/PanelActivity.kt` | ✅ P2-5 + P3-2. 검정 배경+시계 파트너 창. 라벨 "FW Panel" = SplitEntry 피커 셀렉터 계약. P3-2: `instance` 정적 참조 + `EXTRA_FINISH_PANEL` (dismissSplit 의 패널 finish 경로 — finish 실기기 검증, 인텐트 폴백 [미검증]). MAIN/LAUNCHER 노출은 Phase 3 재검토 |
 | `probe/ProbeAccessibilityService.kt` | ✅ 실기기 검증 완료 (3회 실행) |
 | `probe/ProbeReport.kt` | ✅ 완성 |
 | `probe/ProbeActivity.kt` | ✅ 실기기 검증 완료 |
@@ -88,11 +88,12 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 17. ~~넷플릭스 재생-분할 관계~~ → **특성 규명 완료**: 분할 페인 안에서 재생 시작 = 유지 / 재생 중 메뉴 진입 = 재생 세션이 "최소화된 플레이어" 팝업으로 분리 (3회+ 재현, One UI 동작). v1 지침 = "배치 후 재생". Phase 3 온보딩/토스트에 안내 반영
 18. ~~step2/3 성공 조건 오탐~~ → **완결** (2026-07-25 오후 2차). 유튜브 DRAG 회귀 E2E 통과. `isSplitSelectTopPane` 임계(전폭≥90%, `EDGE_DOCK_TOLERANCE_PX=40`) 는 ground truth(대상 페인 `[0,0][2184,977]`, 도킹 0px)로 **[검증]**. 회귀에서 발견된 실버그 2종(유령 매치/성공 미인지)은 SplitEntry 수정 완료
 19. 회전 결과 페인 위치 비결정 (넷플릭스 상단 3회/하단 2회) — 원인 미상. 하단 낙착 시 교정 체인: PaneSwapper(재시도 3회) → 회전×2 폴백(**미발동·미검증**) → 실패 시 하단 유지+토스트
-20. "창 전환" ACTION_CLICK 무효 (회전 직후 컨텍스트 2회 실측, 유튜브 세션에선 성공) — 원인 탐구 필요. 좌표 탭 제스처로 대체 시도 검토
+20. "창 전환" ACTION_CLICK 무효 (회전 직후 컨텍스트 2회 실측, 유튜브 세션에선 성공) — 원인 탐구 필요. 좌표 탭 제스처로 대체 시도 검토. **2026-07-25 오후 4차 보강: step3 피커 탭도 동일 계열 변동성 실측** — 메뉴發 배치 4회 중 2회 step3 3연속 실패(클릭 무효 2회 = 액티비티 생성 이벤트 없음 / `startActivityFromRecents` 오라우팅 1회), 직후 재시도는 성공. 성공 시그니처 = `startActivityAsUser:launcher` (DEVICE_FACTS P3-2 절)
 21. PROFILE 보정 생략으로 verify 측정값(residual 122~224)은 보고 전용 — 컨트롤 오버레이 오염이라 신뢰 낮음. Phase 3 신뢰도 필터(#12)와 함께 재설계
 22. 버블 오버레이 존재 시 피커發 파트너가 전체화면 낙착하는 **메커니즘 불명** (One UI WM 라우팅 추정) — 현재 경험 법칙(세션 중 버블 숨김)으로 해소. One UI 업데이트 시 재검증 필요
 23. P3-1 잔여 [미검증]: BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용, 버블 제스처 임계값 실사용감, 30s 안전 타이머 vs 최장 세션(교정 체인 포함) 여유
-24. P3-2 [미검증] 전체: ① `dismissSplit()` — 디바이더를 가장자리(EDGE_MARGIN 40px 클램프)로 드래그하면 One UI 가 분할을 해제한다는 가정 (최소 스냅 슬라이드 함정에서 유추, 페인이 밀리기만 할 가능성 있음) ② 메뉴 위치 클램프가 measure() 예상 크기 기반 — 최종 렌더 크기와 오차 가능 ③ 메뉴 열린 채 버블 정밀 재탭 시 ACTION_OUTSIDE vs 버블 터치 디스패치 순서 (DOWN 스냅샷으로 방어, 최악도 "닫기만") ④ 프리셋 preload 는 onCreate 1회 — 파싱 완료 전 최초 롱프레스 시 프리셋 섹션 없이 열림 (재시도 없음, 의도)
+24. ~~P3-2 [미검증] 전체~~ → **2026-07-25 오후 4차 실기기 검증으로 전부 해소**: ① 드래그 해제 가정 **반증** (dispatchGesture 스냅백 2/2 vs 동일 기하 input swipe 성공 3/3) → **패널 finish 방식으로 재구현·E2E 성공** ② 클램프 가로/세로 실기기 정상 ③ DOWN 스냅샷 방어 **실패 실측** (OUTSIDE 선행 디스패치 → 재탭이 배치 오발화) → **풀스크린 스크림으로 구조 해결·E2E 확인** ④ 프리셋 6종 최초 롱프레스에 정상 렌더. 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로), "분할 없음" 시 2s 대기 후 토스트 체감
+25. 스크림 부산물 (해결·기록): 풀스크린 터치 가능 오버레이가 떠 있는 동안 하위 창이 a11y `getWindows()` 에서 가림-제외되고, 제거 직후 재구축이 **비원자적** (앱 창 먼저, 디바이더 나중) — `isSplitActive` false-negative 2/2 실측. dismiss 는 목표 조건 자체 폴링으로 해결. `beginSession` 의 `awaitWindowsSettled`(APPLICATION≥1 약한 게이트)도 같은 원리에 취약할 수 있음 — 배치 경로에서 유사 증상 재현 시 동일 패턴 적용
 
 ## 결정 로그
 
@@ -146,3 +147,6 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | 2026-07-25 오후 3차 | 분할 해제 = 디바이더를 자기 패널 페인 쪽 가장자리로 드래그 + isSplitActive 폴링 | 전용 API 부재. 패널 쪽으로 접어야 시청 앱이 전체화면 복귀. 자기 페인 미발견 시 하단 폴백. [미검증 #24] |
 | 2026-07-25 오후 3차 | 프리셋 메뉴 = window_profiles.json SSOT 파싱 (하드코딩 복제 금지), 파싱 실패 시 섹션 생략 | SSOT 원칙. `PROFILES_ASSET_NAME` 상수를 WindowProfilesParser 로 이전해 공유 |
 | 2026-07-25 오후 3차 | 메뉴도 배치 트리거 전 반드시 창 제거 (`dismissMenu` 선행 + `setBubbleHiddenForArrange(true)` 에 포함) | 함정 #22 (오버레이 존재 시 피커發 파트너 전체화면 낙착) 가 메뉴 창에도 동일 적용된다고 가정 |
+| 2026-07-25 오후 4차 | 분할 해제 = **PanelActivity finish 방식** (디바이더 드래그 폐기) | 실측: dispatchGesture 는 dismiss 깊이에서 스냅백(2/2), 동일 기하 input swipe 는 성공(3/3) — 접근성 주입만 거부됨. 패널 finish 는 분할 해소+상대 앱 전체화면 복귀 실측. E2E "dismissSplit: 성공" |
+| 2026-07-25 오후 4차 | 확장 메뉴 = **풀스크린 투명 스크림** 창 (ACTION_OUTSIDE 폐기) | 실측: OUTSIDE 가 버블 DOWN 보다 선행 디스패치 → DOWN 스냅샷 방어 무력 (재탭→배치 오발화, 재롱프레스→재열림). 스크림은 경합 클래스를 구조적으로 제거. 재탭=닫기만 E2E 확인 |
+| 2026-07-25 오후 4차 | dismiss 진입 체크 = `isSplitActive` **자체를 2s 조건 폴링** (약한 freshness 게이트 불충분) | 실측: 스크림 제거 후 a11y 창 목록 재구축 비원자적 — APPLICATION≥1 게이트 통과 후에도 디바이더 미관측 false-negative 2/2. 목표 조건 직접 폴링으로 해결, E2E 통과 |
