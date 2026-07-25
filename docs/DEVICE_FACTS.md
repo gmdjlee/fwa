@@ -197,6 +197,29 @@
 5. **⑤ 온보딩 중지 취소 레이스 [근사 검증]**: `input tap(중지); input keyevent BACK` 연속 실행 — 액티비티 finish→lifecycleScope 취소, 폴드 접기와 동일 메커니즘의 근사. 결과: enabled=false 쓰기 완료 + stopService 완주(FGS 소멸) + 무크래시 + 여타 키(x/y·placement) 보존. NonCancellable 시퀀스 보장 동작. **물리 폴드 접기 중 탭 자체는 [미검증]** (구성상 파괴가 아니라 pause 일 가능성도 있어 실익 낮음).
 6. **운영 함정 실측 3건**: ① adb 배치 트리거는 **`-n dev.dj.foldwindow/.service.ArrangeTriggerReceiver` 컴포넌트 지정 필수** — 액션만으로는 implicit broadcast 제한으로 수신 0건 (PROGRESS 의 구 명령이 이 형태였음, 수정). ② `am force-stop` 후 접근성 서비스가 재바인드되지 않음 (설정값은 유지되나 연결 끊김) — settings put 재설정으로 재바인드 (함정 #6 계열). ③ 온보딩의 `accessibilityGranted = instance != null` 은 onResume 스냅샷이라 백그라운드 재바인드가 즉시 반영 안 됨 — 홈→재진입 필요 (개발 중 혼동 포인트, 실사용 무해).
 
+### [측정] #20 클릭-사이클 에스컬레이션 실기기 검증 (2026-07-25 저녁 10차 — Gate 1~3 통과)
+
+빌드 = 커밋 9985b99 (9차 구현). 총 **15 arrange 세션, 15/15 done, ENTRY_STEP_FAILED 0건**. LAUNCH_ADJACENT 삭제 후 회귀 없음.
+
+| Gate | 구성 | 결과 |
+|---|---|---|
+| 1 회귀 | 유튜브 DRAG(broadcast, OVERRIDE top) ×3 | 3/3 converged, **residual=0**, 피커 cycle-0 gesture 327~362ms |
+| 1 회귀 | 넷플릭스 MENU(top) ×3 | 3/3 step2~5 전 단계 1차 통과, rotateOnce 1회로 TOP 착지, residual=122(보고 전용) |
+| 2① 독 컨텍스트 | 유튜브 무override 연속 ×5 | **실패 0** (과거 실패율 ~50% → 우연 확률 ~3%). 4회 cycle-0(176~333ms), **1회 cycle-1 회복**(1157ms) |
+| 2② 회전 여파 스왑 | 넷플릭스 bottom ×4 (회전 TOP 착지 → 스왑 강제) | **스왑 4/4 수렴**: settleGate ok 153~154ms, switch-click cycle=0 mech=a11y → 800ms 검증 슬라이스 내 수렴 |
+
+**핵심 실증 2건**:
+1. **사이클 회복 실작동** (Gate2① run4): cycle-0 제스처 탭이 오착지 → FORENSIC `TYPE_VIEW_CLICKED` 가 착지점을 `launcher:id/icon_container` 로 특정 → 검증 슬라이스 미수렴 → cycle-1 re-find·재탭 → 수렴. **무효 클릭 = "실행 자체 없음" 이 아니라 "다른 뷰에 착지" 클래스**임을 최초 물증화 (성공 클릭 착지점은 일관되게 `FrameLayout viewId=null`, menuStep2 카드 클릭은 `task_icon`).
+2. **회전 여파 독 컨텍스트 전승**: 과거 "창 전환" ACTION_CLICK 무효 2회와 동형 컨텍스트(MENU 회전 직후 스왑)에서 정착 게이트+검증 슬라이스 조합으로 4/4 수렴. 정착 게이트는 매회 ~154ms 로 조기 통과 (timeout-속행 경로 미발동).
+
+부수 관측:
+- 회전 착지 이 세션 **TOP 7/7** (#19 비결정 표본 보강 — 누적 TOP 10, BOTTOM 2).
+- P3-3 placement 체인 회귀 겸증: 무override 5회 전부 `placementSource=LAST_SUCCESS` 결정 정상.
+- 분할 해제 리셋 = 패널 페인 탭+BACK (PanelActivity finish) 15회 전부 정상 동작.
+- 유튜브 MEASURED 경로 conf 0.53~0.59 로 1.7778 정확 측정 8/8 (BBB 앰비언트).
+
+**미발동 경로 [미검증]** (설계 §5 예상과 일치): 피커 cycle-2 a11y 폴백 · 스왑 cycle-1/2 제스처 · 팝업 소멸→재탭 분기 · involution 가드 실개입 · budget-exhausted tail · 오버레이 가드 발동(세션 중 버블 자동 숨김이라 정상적으로 미발동) · 회전×2 폴백(스왑 전승이라 미발동).
+
 ---
 
 ## 검은 띠 실측 (프로브 E) — 실패 + 근본 원인
@@ -257,7 +280,7 @@
 | 항목 | 현재 상태 | 확정 방법 |
 |---|---|---|
 | 가로(상하 분할) 최소 페인 높이 | 세로 좌우 181px만 측정 | 가로 분할에서 디바이더를 끝까지 드래그해 실측 |
-| #20 클릭-사이클 에스컬레이션 전체 (2026-07-25 9차 구현) | 코드 완성·153 테스트 green·qa PASS. 실기기 0회 — 특히 피커 제스처 탭(cycle 0/1), 피커 cycle-2 a11y 폴백, 스왑 cycle-1/2 제스처, 정착 게이트, 오버레이 가드 발동, LAUNCH_ADJACENT 삭제 후 회귀, TYPE_VIEW_CLICKED 포렌식 수신 | `docs/DESIGN_20_CLICK_CYCLE.md` §5 Gate 1~3: 회귀 n=3×2 → 독 컨텍스트 무override 연속 ≥5회 + 회전 여파 스왑 ≥3회 → logcat `mech=` 집계를 이 문서 신규 절로 |
+| #20 잔여 미발동 경로 (10차 Gate 통과 후) | 주 경로 전부 [측정] 해소 (위 10차 절). 잔여: 피커 cycle-2 a11y·스왑 cycle-1/2 제스처·팝업 재오픈 분기·involution 가드·budget-exhausted·오버레이 가드 발동·회전×2 폴백 | 자연 발생 대기 (mech 로그가 상시 계측) — 3시도 전멸 재발 시 FORENSIC viewId 로 원인 특정 후 스텝 되감기 재검토 |
 | 가로(상하 분할) 디바이더 기하 | 세로값(14px/68×221) 대칭 가정 | 가로 분할 상태 dumpsys 실측 |
 | One UI 정확 버전 | 설정값 비어 있음 | 다른 조회 경로 필요 |
 | Recents 셀렉터 다국어 | 한국어만 | 영어 등 로케일에서 content-desc/text 확인 |
