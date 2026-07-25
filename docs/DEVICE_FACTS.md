@@ -188,6 +188,15 @@
 6. 개발 편의: `adb input swipe x y x y 700` 롱프레스 시뮬레이션은 발화 경계에 걸림 (1/3 발화) — **1200ms 권장**. 실손가락 홀드는 무관. 세로(포트레이트) 방향에서도 배치 파이프라인 정상 동작 실측 (verified=true, residual=0).
 7. **실부팅 복귀 (P3-1 #23)**: `adb reboot` 실측 — BOOT_COMPLETED 수신("boot: 버블 자동 복귀 시작"), specialUse FGS 자동 기동 허용, 접근성 서비스 유지, 홈 화면 버블 가시 전부 확인. 분할 없는 상태의 "분할 해제" 는 2.0s 폴링 후 "분할 화면이 아닙니다" 토스트 (설계값 그대로).
 
+### [측정] P3-3 DataStore 이관·placement 복원 실기기 검증 (2026-07-25 오후 7차, PROGRESS #26 해소)
+
+1. **① SharedPreferencesMigration 실이관 [검증]**: 구버전(P3-2 빌드) 설치 상태에서 `bubble_prefs.xml` 에 enabled=true/x=1500/y=300 주입 → `installDebug` 업데이트 설치 → 첫 store 접근 시 3키 **무손실 이관** (pb 디코딩: x=1500(varint DC 0B), y=300(AC 02), enabled=true) + **원본 XML 삭제** 확인. 버블도 주입 x 좌표 그대로 복원 (화면상 y 는 저장값 +~100px — WindowManager 좌표계의 상태바 오프셋, 저장값 자체는 무손실).
+2. **② goAsync 부팅 복귀 [검증, 회귀 해소]**: P3-3 재작성 코드로 `adb reboot` 실측 — "boot: 버블 자동 복귀 시작" 로그, FGS 자동 기동(부팅 후 수 초 내 createTime), 접근성 유지, 홈 버블 가시. 5차(구 동기 코드)와 동일 결과 = goAsync+IO 코루틴 재작성 무회귀.
+3. **③ 마지막 성공 placement 저장→복원 E2E [검증]**: 유튜브 가로 전체화면에서 OVERRIDE bottom 배치 성공(5.1s, residual=0, effective==desired) → pb 에 `last_placement.com.google.android.youtube=BOTTOM` 기록 확인 → **무override 트리거 3회 전부 `placementSource=LAST_SUCCESS placement=BOTTOM` 결정**. 3회차 `done verified=true residual=0 effective=BOTTOM` 로 완결. (1·2회차는 ENTRY_STEP_FAILED — 기존 #20/#25 step3 피커 변동성 그대로 재현: "클릭 후 분할 쌍 미수렴" ×3 → 전략2 폴백도 실패, P3-3 로직과 무관. 이번 세션 누적 무override 3회 중 2회 실패로 변동성 표본 보강)
+4. **④ corruptionHandler [검증]**: 프로세스 킬 → `fwa_store.preferences_pb` 에 가비지 텍스트 주입 → 버블 시작 탭 → `FloatingLauncherService.onCreate` 의 runBlocking 읽기에서 CorruptionException 감지 ("fwaDataStore 손상 감지" Log.e + 스택) → emptyPreferences 재시작 → **FGS 정상 기동 (크래시/크래시 루프 없음)**, onStartCommand 가 enabled=true 재기록. 손상 데이터는 리셋(x/y 유실) = 레거시 SharedPreferences 손상 의미론과 동등. 부차 관찰: 별도 1회차 손상 감지가 서비스 기동 전 프로세스 스타트 +166ms 의 **주체 미상 백그라운드 store 접근**에서 발생 — 결과는 동일(무크래시 복구)하나 접근 주체 특정은 미해결.
+5. **⑤ 온보딩 중지 취소 레이스 [근사 검증]**: `input tap(중지); input keyevent BACK` 연속 실행 — 액티비티 finish→lifecycleScope 취소, 폴드 접기와 동일 메커니즘의 근사. 결과: enabled=false 쓰기 완료 + stopService 완주(FGS 소멸) + 무크래시 + 여타 키(x/y·placement) 보존. NonCancellable 시퀀스 보장 동작. **물리 폴드 접기 중 탭 자체는 [미검증]** (구성상 파괴가 아니라 pause 일 가능성도 있어 실익 낮음).
+6. **운영 함정 실측 3건**: ① adb 배치 트리거는 **`-n dev.dj.foldwindow/.service.ArrangeTriggerReceiver` 컴포넌트 지정 필수** — 액션만으로는 implicit broadcast 제한으로 수신 0건 (PROGRESS 의 구 명령이 이 형태였음, 수정). ② `am force-stop` 후 접근성 서비스가 재바인드되지 않음 (설정값은 유지되나 연결 끊김) — settings put 재설정으로 재바인드 (함정 #6 계열). ③ 온보딩의 `accessibilityGranted = instance != null` 은 onResume 스냅샷이라 백그라운드 재바인드가 즉시 반영 안 됨 — 홈→재진입 필요 (개발 중 혼동 포인트, 실사용 무해).
+
 ---
 
 ## 검은 띠 실측 (프로브 E) — 실패 + 근본 원인
