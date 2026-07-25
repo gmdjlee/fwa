@@ -245,7 +245,24 @@
 
 **[미검증] 잔여**: 비-16:9 콘텐츠(영화 2.35 등)의 합치 채택 실측 0건 (16:9 만 검증) · `requireMeasurementAgreement=false` 롤백 레버 미실사용 · confirm 레이트리밋 백오프 대기 분기(진입 2~4s 라 자연 미발동) · 메뉴 프리셋 UI發 tier 0 (adb 경로만 검증, 배선은 코드 확인 완료)
 
----
+### [측정] #12 §6 측정 캐싱 v1 실기기 검증 (2026-07-26 오전 13차 — 4항목 전부 통과)
+
+빌드 = 커밋 2e5028b (레버 세션만 시드 JSON `cacheMeasuredAspect:false` 임시 수정 빌드, 종료 후 원복·재설치). 총 10 arrange 세션 10/10 done. 유튜브만 사용 (BBB 앰비언트 + MPD직캠 세로 영상).
+
+| # | 항목 | 시나리오 | 물증 |
+|---|---|---|---|
+| ① | 합치 세션 → 저장 | 클린 BBB 전체화면 트리거 | SNAP_AGREE→MEASURED, done verified=true residual=0 직후 `aspect cache save: pkg=com.google.android.youtube aspect=1.7777778 (합치∧verified)` + pb 실물: 키 `measured_aspect.com.google.android.youtube`, float LE `39 8e e3 3f` = 1.7777778 (run-as od 판독) |
+| ② | 불합치 폴백 CACHED 낙착 | 일시정지+컨트롤/홈 피드/Shorts 3연 (pre 쓰레기 PURE_BLACK 1.126~1.139 conf 0.997~1.0, 구 시스템이면 divider 1780) | 3세션 전부 decision `cachedAspect=1.7777778` 채움 → confirm 불합치 (RAW_DISAGREE ×1, BOTH_AXES_BARS ×2) → `→ aspect=1.7777778 source=CACHED`. residual 0/46/38 (46·38 은 비영상 콘텐츠 위 보정 1회 정직 보고 — CACHED 도 closedLoopCorrection ON 정상) |
+| ③ | CACHED 세션 confirm 미실행 | **세로 직캠 immersive 전체화면** (MPD직캠, 필러박스 전용) 트리거 | `measure[pre/rows]: 밴드 없음` = pre **null** → decision `aspectSource=CACHED preMeasure=none` (divider 1236 즉시 계획) → 세션 전체에 confirm/consensus/cache save 로그 **0건** (자기 갱신 구조 차단 실증). done verified=true residual=0 |
+| ④ | 레버 false 회귀 | 시드 `cacheMeasuredAspect:false` 빌드로 ③·② 동형 3세션 | read측: pre-null 동형에서 `cachedAspect=none`·`aspectSource=PRESET`(1.7778, divider 1235) / 불합치 폴백도 `source=PRESET` (cached 티어 건너뜀 — 세션 ② 와 동일 RAW_DISAGREE 에서 A/B 대조). write측: SNAP_AGREE+verified=true residual=0 (① 동형) 인데 save 로그 **0건** + pb 불변. 기존 캐시 값은 삭제되지 않고 보존 (레버 = read/write 차단만) |
+
+**원복 확인 세션** (레버 원복 재설치 후): decision `cachedAspect=1.7777778` 재등장 + 보너스 실증 — confirm 이 구름 장면을 4:3 으로 오측(ADAPTIVE 1.333, band 247/185 — **사고 클래스 1.333 재현**) → RAW_DISAGREE → CACHED 폴백 → residual=0. 과거 오염 고착 사고가 §6 에서 캐시로 무해화되는 실전 시나리오.
+
+부수 관측·운영 함정:
+- **pre-null 유도 조건 = "필러박스 전용 콘텐츠의 immersive 전체화면"** (세로 영상 fullscreen). 비-immersive 다크 UI 에선 상태바/하단 엣지의 순흑 행이 항상 PURE_BLACK 후보를 만들어 pre 가 절대 null 이 안 됨 — **한쪽 밴드 0 도 허용**되는 순흑 경로 실측 (band 28/0, 24/12, 6/44). 홈 피드·Shorts(랜드)·일시정지 전부 conf 0.997~1.0 쓰레기 후보 생성
+- **Shorts 진입은 포트레이트 강제 + user_rotation 잠금 무시**. 복귀 후 `settings put system user_rotation` 만으론 WM 이 재평가하지 않음 — **`adb shell cmd window user-rotation lock 1` 이 즉시 적용** (free 로 해제). 캠페인 중 회전 상태 재확인 필수 (기존 노트 강화)
+- 세로 영상 전체화면(포트레이트 immersive) 상태에서 트리거해도 파이프라인 정상 — decision 시점 geometry 는 가로(2184×1968) 로 잡혀 divider 1236 계획, 배치도 가로 분할로 완료 (세로 영상은 페인 안에서 좌우 필러박스, rows residual=0 → verified — 순흑 블라인드 #13 의미론 그대로)
+- 유튜브 재설치 후에도 전체화면 재생 유지 (분할만 해소) — 레버 A/B 빌드 교체 중 상태 재셋업 불필요했음
 
 ## 검은 띠 실측 (프로브 E) — 실패 + 근본 원인
 
@@ -311,7 +328,7 @@
 | Recents 셀렉터 다국어 | 한국어만 | 영어 등 로케일에서 content-desc/text 확인 |
 | wavve 등 국내 OTT 패키지명 | 미확인 | 대상 앱 실행 후 foreground 패키지 조회 |
 | E 종횡비 역산 실측 | 미검출로 0건 | 순흑 플레이어 또는 Detector v2 로 재측정 |
-| #12 §6 측정 캐싱 v1 (12차 구현) | JVM 204 테스트·qa PASS. 실기기 0회 | ① 클린 MEASURED 합치 세션 Done(verified=true) 후 `aspect cache save` 로그 + DataStore `measured_aspect.<pkg>` 키 확인 (P3-3 pb 디코딩 방식) ② 캐시 존재 상태에서 pre 실패/불합치 유도 재트리거 → `arrange decision` 로그 `cachedAspect=` 채움·`source=CACHED` 낙착·residual 수렴 ③ CACHED 세션이 confirm 미실행(자기 갱신 없음) 로그 확인 ④ `cacheMeasuredAspect=false` 레버 — 시드 임시 수정으로 종전 동작 회귀 확인 |
+| ~~#12 §6 측정 캐싱 v1 (12차 구현)~~ | **13차 실기기 4항목 전부 [측정] 해소** (위 13차 절) — 저장·CACHED 낙착(폴백/decision 양 지점)·confirm 미실행·레버 회귀 전부 물증 확보 | 잔여 [미검증]: 캐시 값이 1.7778 이외인 앱(비-16:9 콘텐츠 캐시) 실측 — 11차 잔여와 동일 갭 |
 
 ---
 
