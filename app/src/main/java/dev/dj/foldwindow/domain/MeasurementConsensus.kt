@@ -55,16 +55,29 @@ object MeasurementConsensus {
     /**
      * 한 축의 측정 결과를 세 가지로 분류한다.
      *
-     * - [measurement] 가 있으면 그 자체로 띠가 검출된 것이다 → [AxisReading.BARS_MEASURED]
-     * - [measurement] 가 없어도 [residual] 이 엄격히 0(잔여 픽셀 없음)이면 "띠 없음"이 확정된 것이다
-     *   → [AxisReading.NO_BARS]
+     * - [measurement] 가 있고 신뢰도가 [minConfidence] 이상이면 그 자체로 띠가 검출된 것이다 →
+     *   [AxisReading.BARS_MEASURED]. 신뢰도 미달 측정은 없는 것과 동일하게 취급하고 아래 두
+     *   분기로 내려간다 — 실측(2026-07-25, Fold 7): 분할 진입 직후 유튜브가 플레이어 컨트롤을
+     *   상시 소환해 타이틀 그라디언트가 conf 0.08 안팎의 유사 밴드를 만들어냈고, 이 저신뢰 밴드가
+     *   그대로 BARS_MEASURED 로 승격돼 반대편 축의 정상 측정과 결합해 [ConfirmOutcome.BothAxesBars]
+     *   오판정을 유발했다. [agree] 가 이미 쓰는 신뢰도 하한과 동일 기준을 축 분류 단계에도 적용해
+     *   더 일찍 걸러낸다.
+     * - [measurement] 가 없거나(또는 신뢰도 미달) [residual] 이 엄격히 0(잔여 픽셀 없음)이면
+     *   "띠 없음"이 확정된 것이다 → [AxisReading.NO_BARS]
      * - 그 외(잔여가 0보다 크지만 [LetterboxDetector.detectHybrid] 가 밴드를 거부한 경우 포함)는
      *   판정할 수 없다 → [AxisReading.UNJUDGEABLE]. 잔여 >0 인데 밴드가 거부된 상태는 오염 의심
      *   신호이므로 "띠 없음"으로 낙관하지 않고 엄격히 0인 경우만 [AxisReading.NO_BARS] 로 인정한다.
+     *
+     * @param minConfidence [measurement] 를 BARS_MEASURED 후보로 인정하는 최소 신뢰도. [agree] 가
+     *                       raw/snap 합치를 판정하기 전에 적용하는 게이트와 동일 기본값을 쓴다.
      */
-    fun classifyAxis(measurement: AspectMeasurement?, residual: ResidualBars?): AxisReading =
+    fun classifyAxis(
+        measurement: AspectMeasurement?,
+        residual: ResidualBars?,
+        minConfidence: Float = AspectResolver.DEFAULT_MIN_MEASUREMENT_CONFIDENCE,
+    ): AxisReading =
         when {
-            measurement != null -> AxisReading.BARS_MEASURED
+            measurement != null && measurement.confidence >= minConfidence -> AxisReading.BARS_MEASURED
             residual != null && residual.totalPx == 0 -> AxisReading.NO_BARS
             else -> AxisReading.UNJUDGEABLE
         }
@@ -78,15 +91,18 @@ object MeasurementConsensus {
      * 모두 없으면 [ConfirmOutcome.NoBars] (영상 AR ≈ 페인 AR 이라는 별도 증거로 [agree] 에서 취급).
      * 그 외 조합(어느 한 축이라도 UNJUDGEABLE) 은 전부 [ConfirmOutcome.Unavailable] 로 묶는다 —
      * 확인 불가는 무죄가 아니다(§3.3).
+     *
+     * @param minConfidence 각 축을 [classifyAxis] 로 분류할 때 쓰는 최소 신뢰도. 그대로 전달된다.
      */
     fun classifyConfirm(
         rowMeasurement: AspectMeasurement?,
         rowResidual: ResidualBars?,
         colMeasurement: AspectMeasurement?,
         colResidual: ResidualBars?,
+        minConfidence: Float = AspectResolver.DEFAULT_MIN_MEASUREMENT_CONFIDENCE,
     ): ConfirmOutcome {
-        val row = classifyAxis(rowMeasurement, rowResidual)
-        val col = classifyAxis(colMeasurement, colResidual)
+        val row = classifyAxis(rowMeasurement, rowResidual, minConfidence)
+        val col = classifyAxis(colMeasurement, colResidual, minConfidence)
 
         return when {
             row == AxisReading.BARS_MEASURED && col == AxisReading.NO_BARS ->

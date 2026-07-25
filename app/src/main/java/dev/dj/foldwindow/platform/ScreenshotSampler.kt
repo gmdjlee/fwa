@@ -89,13 +89,22 @@ fun Bitmap.toLetterboxScan(
  * @param rowStride     한 열 안에서 몇 행마다 볼지
  * @param darkLuma      이 값 이하의 휘도를 "어두운 픽셀" 로 본다 (0..255)
  * @param edgeMarginPct 상하 가장자리를 이 비율만큼 무시한다. [toLetterboxScan] 의 sideMarginPct
- *                      전치 — 디바이더 그림자·플레이어 상단 그라디언트 오염 방지
+ *                      전치 — 디바이더 그림자·플레이어 상단 그라디언트 오염 방지. 실측
+ *                      (2026-07-25, Fold 7 confirm 단계): 분할 진입 직후 유튜브가 플레이어
+ *                      컨트롤을 상시 소환 — 타이틀 그라디언트 ~상단 100px, 축소 아이콘 y
+ *                      890~945(977px 페인 기준) 오염. 기존 5%(49px) 로는 두 대역을 못 걸러
+ *                      12%(117px) 로 상향
+ * @param sideMarginPct 좌우 최외곽 열(entries 축)을 이 비율만큼 무시한다(기본 0.5% ≈ 11px).
+ *                      실측(2026-07-25, Fold 7): 최외곽 열 분산 404~501 실측 — 라운드 코너 누출 +
+ *                      엣지 렌더링. 5% 세로 마진(49px) < 코너 반경(~80px) 이라 세로 마진만으로
+ *                      불충분해 별도의 가로축 마진이 필요하다.
  */
 fun Bitmap.toPillarboxScan(
     colStride: Int = 2,
     rowStride: Int = 8,
     darkLuma: Int = 24,
-    edgeMarginPct: Float = 0.05f,
+    edgeMarginPct: Float = 0.12f,
+    sideMarginPct: Float = 0.005f,
 ): LetterboxScan {
     require(colStride >= 1 && rowStride >= 1) { "stride must be >= 1" }
 
@@ -103,18 +112,20 @@ fun Bitmap.toPillarboxScan(
     val h = height
     val y0 = (h * edgeMarginPct).toInt().coerceIn(0, h / 2 - 1)
     val y1 = (h - y0).coerceAtLeast(y0 + 1)
+    val x0 = (w * sideMarginPct).toInt().coerceIn(0, w / 2 - 1)
+    val x1 = (w - x0).coerceAtLeast(x0 + 1)
 
-    val sampledCols = (w + colStride - 1) / colStride
+    val sampledCols = (x1 - x0 + colStride - 1) / colStride
     val ratios = FloatArray(sampledCols)
     val meanLuma = FloatArray(sampledCols)
     val lumaVariance = FloatArray(sampledCols)
 
     // 열 전체(0..h)를 한 번에 읽고 margin·rowStride 는 배열 순회에서 적용한다.
-    // 열마다 getPixels 호출 1회 — 총 호출 수 ≈ width/colStride (행 스캔과 동일 오더).
+    // 열마다 getPixels 호출 1회 — 총 호출 수 ≈ (x1-x0)/colStride (행 스캔과 동일 오더).
     val colBuf = IntArray(h)
     var idx = 0
-    var x = 0
-    while (x < w) {
+    var x = x0
+    while (x < x1) {
         getPixels(colBuf, 0, 1, x, 0, 1, h)
         var dark = 0
         var counted = 0
@@ -146,8 +157,10 @@ fun Bitmap.toPillarboxScan(
     }
 
     // colStride 로 축소된 스캔(entries=열)이므로 height 도 같은 좌표계로 맞춘다 — margin 제외 전
-    // 전체 높이 기준. toLetterboxScan 의 scaledWidth=w/rowStride 에 정확 대응(전치판이므로 entries
-    // 축 stride 인 colStride 를 쓴다) — 어긋나면 resolveAspectPillarbox 역산이 깨진다.
+    // 전체 높이 기준. sideMarginPct 는 entries 개수(x0..x1 범위)만 줄일 뿐 이 값과는 무관하다 —
+    // 종횡비 역산의 교차축 길이는 항상 페인 전체 높이여야 한다. toLetterboxScan 의
+    // scaledWidth=w/rowStride 에 정확 대응(전치판이므로 entries 축 stride 인 colStride 를 쓴다) —
+    // 어긋나면 resolveAspectPillarbox 역산이 깨진다.
     val scaledHeight = (h.toFloat() / colStride).toInt().coerceAtLeast(1)
     return LetterboxScan(
         rowDarkRatio = ratios.copyOf(idx),

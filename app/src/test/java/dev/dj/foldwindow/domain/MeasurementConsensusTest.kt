@@ -57,6 +57,36 @@ class MeasurementConsensusTest {
         assertEquals(AxisReading.UNJUDGEABLE, MeasurementConsensus.classifyAxis(null, ResidualBars(2, 0)))
     }
 
+    @Test
+    fun `classifyAxis demotes a low-confidence measurement to NO_BARS when residual is exactly zero`() {
+        // 실측(Fold 7): 플레이어 컨트롤 소환 시 타이틀 그라디언트가 conf 0.08 유사 밴드를 만든다 —
+        // 신뢰도 미달 측정은 없는 것과 동일 취급하고 residual(0,0) 로 무띠 확정한다
+        val weak = measurement(raw = 1.7778f, snapped = 16f / 9f, confidence = 0.08f)
+        assertEquals(
+            AxisReading.NO_BARS,
+            MeasurementConsensus.classifyAxis(weak, ResidualBars(0, 0)),
+        )
+    }
+
+    @Test
+    fun `classifyAxis demotes a low-confidence measurement to UNJUDGEABLE when residual is unavailable`() {
+        val weak = measurement(raw = 1.7778f, snapped = 16f / 9f, confidence = 0.08f)
+        assertEquals(
+            AxisReading.UNJUDGEABLE,
+            MeasurementConsensus.classifyAxis(weak, null),
+        )
+    }
+
+    @Test
+    fun `classifyAxis returns BARS_MEASURED at exactly the minConfidence boundary (inclusive)`() {
+        // AspectResolver.DEFAULT_MIN_MEASUREMENT_CONFIDENCE = 0.25f — 경계값 포함(>=)
+        val boundary = measurement(raw = 1.7778f, snapped = 16f / 9f, confidence = 0.25f)
+        assertEquals(
+            AxisReading.BARS_MEASURED,
+            MeasurementConsensus.classifyAxis(boundary, null),
+        )
+    }
+
     // ── classifyConfirm ──────────────────────────────────────────
 
     @Test
@@ -116,6 +146,21 @@ class MeasurementConsensusTest {
             colMeasurement = null, colResidual = null,
         )
         assertEquals(ConfirmOutcome.Unavailable, outcome)
+    }
+
+    @Test
+    fun `classifyConfirm adopts the strong column measurement when the row axis is contaminated (G3 field scenario)`() {
+        // 실측 G3: row=약측정(conf 0.08, 타이틀 그라디언트 오염)+residual(0,0), col=강측정(conf 0.55).
+        // 신뢰도 게이트가 없으면 row 가 BARS_MEASURED 로 오승격돼 BothAxesBars 로 오판정된다.
+        val weakRow = measurement(raw = 1.02f, snapped = null, confidence = 0.08f, value = 1.02f)
+        val strongCol = measurement(raw = 2.2f, snapped = null, confidence = 0.55f, value = 2.2f)
+
+        val outcome = MeasurementConsensus.classifyConfirm(
+            rowMeasurement = weakRow, rowResidual = ResidualBars(0, 0),
+            colMeasurement = strongCol, colResidual = null,
+        )
+
+        assertEquals(ConfirmOutcome.Measured(strongCol), outcome)
     }
 
     // ── agree — §3.3 합치 표 전 행 ───────────────────────────────
