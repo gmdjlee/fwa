@@ -1,11 +1,14 @@
 package dev.dj.foldwindow.data
 
+import dev.dj.foldwindow.domain.MAX_ASPECT
+import dev.dj.foldwindow.domain.MIN_ASPECT
 import dev.dj.foldwindow.domain.Placement
 
 /*
  * 순수 Kotlin. android.* import 금지(CLAUDE.md 아키텍처 규칙) — domain 은 아니지만 이 파일은
  * ProfileStore(DataStore 접근 계층)가 쓰는 키/직렬화 상수를 android 의존 없이 테스트하기 위해
- * 의도적으로 분리했다. domain.Placement import 는 허용된다(data -> domain 방향은 합법, 역방향만 금지).
+ * 의도적으로 분리했다. domain.Placement/MIN_ASPECT/MAX_ASPECT import 는 허용된다(data -> domain
+ * 방향은 합법, 역방향만 금지).
  *
  * P3-3: bubble_prefs SharedPreferences -> Preferences DataStore 이관.
  * [ProfileStore] 는 SharedPreferencesMigration(레거시 파일명 "bubble_prefs")으로 1회 자동 이관한다.
@@ -44,5 +47,25 @@ object ProfileStoreMapping {
             "BOTTOM" -> Placement.BOTTOM
             else -> null
         }
+    }
+
+    /**
+     * 앱별 캐시된 실측 종횡비 저장 키를 만든다(DESIGN #12 §6). [placementKeyFor] 와 동일하게
+     * 패키지명이 비어 있으면 저장 자체가 무의미하므로 거부한다.
+     */
+    fun measuredAspectKeyFor(packageName: String): String {
+        require(packageName.isNotBlank()) { "packageName must not be blank" }
+        return "measured_aspect.$packageName"
+    }
+
+    /**
+     * 저장된 Float -> 유효 종횡비. null/NaN/무한대/범위 밖([MIN_ASPECT]..[MAX_ASPECT], domain
+     * Profiles.kt 의 validate() 와 동일 허용 범위)은 전부 null 을 반환한다 — [placementFromStorage]
+     * 와 동일한 이유로, 디스크 오염(예: 손상된 값, 수동 편집, 과거 버전의 다른 스키마)이 크래시로
+     * 이어지면 안 되고 "복원 실패는 상위 폴백 체인(AspectResolver 티어 ③)에 위임"이 올바른 처리다.
+     */
+    fun aspectFromStorage(raw: Float?): Float? {
+        if (raw == null || raw.isNaN() || raw.isInfinite()) return null
+        return if (raw in MIN_ASPECT..MAX_ASPECT) raw else null
     }
 }

@@ -57,6 +57,21 @@ class AspectResolverTest {
         assertNull(result.measurement)
     }
 
+    @Test
+    fun `PROFILE profile wins over cachedAspect`() {
+        val p = profile(aspect = 1.7778f, aspectSource = AspectSource.PROFILE)
+        val result = AspectResolver.resolve(
+            profile = p,
+            measurement = null,
+            presetAspect = 2.0f,
+            cachedAspect = 2.35f,
+        )
+
+        assertEquals(AspectSource.PROFILE, result.source)
+        assertEquals(1.7778f, result.aspect, 0.0001f)
+        assertNull(result.measurement)
+    }
+
     // ── 티어 ② MEASURED ──────────────────────────────────────────
 
     @Test
@@ -111,6 +126,71 @@ class AspectResolverTest {
         assertEquals(2.35f, result.aspect, 0.0001f)
     }
 
+    // ── 티어 ②.5 CACHED (DESIGN #12 §6) ───────────────────────────
+
+    @Test
+    fun `valid measurement wins over cachedAspect`() {
+        val p = profile(aspect = null, aspectSource = AspectSource.MEASURED)
+        val m = measurement(confidence = 0.8f, value = 2.35f)
+        val result = AspectResolver.resolve(
+            profile = p,
+            measurement = m,
+            presetAspect = 1.7778f,
+            cachedAspect = 2.0f,
+        )
+
+        assertEquals(AspectSource.MEASURED, result.source)
+        assertEquals(2.35f, result.aspect, 0.0001f)
+        assertSame(m, result.measurement)
+    }
+
+    @Test
+    fun `null measurement with cachedAspect adopts tier 2point5 CACHED`() {
+        val p = profile(aspect = null, aspectSource = AspectSource.MEASURED)
+        val result = AspectResolver.resolve(
+            profile = p,
+            measurement = null,
+            presetAspect = 1.7778f,
+            cachedAspect = 2.0f,
+        )
+
+        assertEquals(AspectSource.CACHED, result.source)
+        assertEquals(2.0f, result.aspect, 0.0001f)
+        assertNull(result.measurement)
+    }
+
+    @Test
+    fun `low-confidence measurement with cachedAspect adopts CACHED not PRESET`() {
+        val p = profile(aspect = null, aspectSource = AspectSource.MEASURED)
+        val m = measurement(confidence = 0.1f, value = 2.35f)
+        val result = AspectResolver.resolve(
+            profile = p,
+            measurement = m,
+            presetAspect = 1.7778f,
+            cachedAspect = 2.0f,
+            minMeasurementConfidence = 0.25f,
+        )
+
+        assertEquals(AspectSource.CACHED, result.source)
+        assertEquals(2.0f, result.aspect, 0.0001f)
+        assertNull(result.measurement)
+    }
+
+    @Test
+    fun `null cachedAspect falls back to PRESET (regression)`() {
+        val p = profile(aspect = null, aspectSource = AspectSource.MEASURED)
+        val result = AspectResolver.resolve(
+            profile = p,
+            measurement = null,
+            presetAspect = 1.7778f,
+            cachedAspect = null,
+        )
+
+        assertEquals(AspectSource.PRESET, result.source)
+        assertEquals(1.7778f, result.aspect, 0.0001f)
+        assertNull(result.measurement)
+    }
+
     // ── 미등록 앱 (profile == null) ────────────────────────────────
 
     @Test
@@ -140,6 +220,16 @@ class AspectResolverTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             AspectResolver.resolve(profile = null, measurement = null, presetAspect = -1.5f)
+        }
+    }
+
+    @Test
+    fun `non-positive cachedAspect throws`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            AspectResolver.resolve(profile = null, measurement = null, presetAspect = 1.7778f, cachedAspect = 0f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AspectResolver.resolve(profile = null, measurement = null, presetAspect = 1.7778f, cachedAspect = -1.5f)
         }
     }
 }

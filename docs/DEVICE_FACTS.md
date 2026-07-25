@@ -311,6 +311,7 @@
 | Recents 셀렉터 다국어 | 한국어만 | 영어 등 로케일에서 content-desc/text 확인 |
 | wavve 등 국내 OTT 패키지명 | 미확인 | 대상 앱 실행 후 foreground 패키지 조회 |
 | E 종횡비 역산 실측 | 미검출로 0건 | 순흑 플레이어 또는 Detector v2 로 재측정 |
+| #12 §6 측정 캐싱 v1 (12차 구현) | JVM 204 테스트·qa PASS. 실기기 0회 | ① 클린 MEASURED 합치 세션 Done(verified=true) 후 `aspect cache save` 로그 + DataStore `measured_aspect.<pkg>` 키 확인 (P3-3 pb 디코딩 방식) ② 캐시 존재 상태에서 pre 실패/불합치 유도 재트리거 → `arrange decision` 로그 `cachedAspect=` 채움·`source=CACHED` 낙착·residual 수렴 ③ CACHED 세션이 confirm 미실행(자기 갱신 없음) 로그 확인 ④ `cacheMeasuredAspect=false` 레버 — 시드 임시 수정으로 종전 동작 회귀 확인 |
 
 ---
 

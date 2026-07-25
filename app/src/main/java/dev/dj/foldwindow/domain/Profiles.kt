@@ -8,8 +8,11 @@ package dev.dj.foldwindow.domain
  * SSOT: config/window_profiles.json (schema "fold-window-profiles/1")
  */
 
-/** 종횡비를 어느 경로로 결정했는가. PRESET 은 AspectResolver 의 출력 전용이며 JSON 에서는 금지된다 */
-enum class AspectSource { PROFILE, MEASURED, PRESET }
+/**
+ * 종횡비를 어느 경로로 결정했는가. PRESET·CACHED 는 AspectResolver 의 출력 전용이며 JSON 에서는
+ * 금지된다. CACHED = 과거 세션의 합치∧verified 측정값(DataStore 저장) — DESIGN #12 §6.
+ */
+enum class AspectSource { PROFILE, MEASURED, CACHED, PRESET }
 
 /** 파트너(비영상) 창을 어떻게 채울지. v1 은 검정 배경(BLACK)만 지원한다. Phase 3 에서 확장 예정 */
 enum class PartnerMode { BLACK }
@@ -28,6 +31,12 @@ data class ProfileDefaults(
      * 요구한다. false 면 기존 동작(pre 단독 + 신뢰도 게이트만)으로 되돌린다. 배선은 후속 작업.
      */
     val requireMeasurementAgreement: Boolean = true,
+    /**
+     * DESIGN #12 §6 롤백 레버. true(기본) 면 합치∧verified 로 채택된 측정 종횡비를 앱별로 캐싱해
+     * 다음 세션 불합치/미측정 시 PRESET 보다 우선하는 폴백으로 쓴다. false 면 캐시 조회·폴백·저장을
+     * 전부 끄고 종전 동작(3단 폴백만)으로 되돌린다.
+     */
+    val cacheMeasuredAspect: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */
@@ -61,9 +70,13 @@ data class WindowProfilesConfig(
 /** 이 스키마만 지원한다. 새 스키마 버전이 필요하면 파서와 함께 여기도 올릴 것 */
 const val SUPPORTED_PROFILES_SCHEMA = "fold-window-profiles/1"
 
-/** 프로파일에서 허용하는 종횡비 범위. 4:3(1.33)보다 좁거나 4:1보다 넓은 값은 오타로 간주한다 */
-private const val MIN_ASPECT = 1.0f
-private const val MAX_ASPECT = 4.0f
+/**
+ * 프로파일에서 허용하는 종횡비 범위. 4:3(1.33)보다 좁거나 4:1보다 넓은 값은 오타로 간주한다.
+ * public 승격 이유(DESIGN #12 §6): data/ProfileStoreMapping 의 캐시값 오염 검증(aspectFromStorage)이
+ * 이 범위를 그대로 재사용한다 — 여기서 바꾸면 validate() 뿐 아니라 캐시 채택 게이트도 함께 바뀐다.
+ */
+const val MIN_ASPECT = 1.0f
+const val MAX_ASPECT = 4.0f
 private const val MAX_RESIDUAL_TOLERANCE_PX = 100
 
 /**
@@ -124,10 +137,15 @@ fun WindowProfilesConfig.validate(): List<String> {
             }
             AspectSource.MEASURED -> {
                 // 시드 JSON 의미론: MEASURED 는 저장된 값이 없다는 뜻이므로 aspect 는 반드시 null 이어야 한다.
-                // Phase 3 에서 실측값을 캐싱하게 되면 이 제약을 재검토할 것.
+                // DESIGN #12 §6 실측 캐싱은 DataStore 의 별도 키 공간(measured_aspect.<pkg>)에서
+                // 처리하며 이 JSON aspect 필드와는 무관하다 — JSON 의 MEASURED 프로파일은 계속
+                // aspect=null 이어야 하고, 캐시값은 aspectSource=CACHED(리졸버 출력 전용)로만 나타난다.
                 if (profile.aspect != null) {
                     errors += "profiles[$i].aspect: MEASURED 소스는 aspect가 null이어야 함 (값: ${profile.aspect})"
                 }
+            }
+            AspectSource.CACHED -> {
+                errors += "profiles[$i].aspectSource: CACHED 는 리졸버 출력 전용이며 JSON 에서는 금지됨"
             }
             AspectSource.PRESET -> {
                 errors += "profiles[$i].aspectSource: PRESET 은 리졸버 출력 전용이며 JSON 에서는 금지됨"

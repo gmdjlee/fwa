@@ -84,4 +84,55 @@ class ProfileStoreMappingTest {
         assertEquals("bubble_x", ProfileStoreMapping.KEY_BUBBLE_X)
         assertEquals("bubble_y", ProfileStoreMapping.KEY_BUBBLE_Y)
     }
+
+    // ── measuredAspectKeyFor (DESIGN #12 §6) ──────────────────────
+
+    @Test
+    fun `measuredAspectKeyFor produces distinct keys per package`() {
+        val youtube = ProfileStoreMapping.measuredAspectKeyFor("com.google.android.youtube")
+        val tving = ProfileStoreMapping.measuredAspectKeyFor("net.cj.cjhv.gs.tving")
+        assertTrue(youtube != tving)
+        assertTrue(youtube.startsWith("measured_aspect."))
+        assertTrue(youtube.endsWith("com.google.android.youtube"))
+    }
+
+    @Test
+    fun `measuredAspectKeyFor rejects blank packageName`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ProfileStoreMapping.measuredAspectKeyFor("   ")
+        }
+    }
+
+    // ── aspectFromStorage 오염값 방어 (DESIGN #12 §6) ──────────────
+
+    @Test
+    fun `aspectFromStorage accepts value within range`() {
+        val restored = ProfileStoreMapping.aspectFromStorage(1.7778f)
+        assertEquals(1.7778f, restored!!, 0.0001f)
+    }
+
+    @Test
+    fun `aspectFromStorage null maps to null`() {
+        assertNull(ProfileStoreMapping.aspectFromStorage(null))
+    }
+
+    @Test
+    fun `aspectFromStorage NaN maps to null`() {
+        assertNull(ProfileStoreMapping.aspectFromStorage(Float.NaN))
+    }
+
+    @Test
+    fun `aspectFromStorage positive infinity maps to null`() {
+        assertNull(ProfileStoreMapping.aspectFromStorage(Float.POSITIVE_INFINITY))
+    }
+
+    @Test
+    fun `aspectFromStorage below MIN_ASPECT maps to null`() {
+        assertNull(ProfileStoreMapping.aspectFromStorage(0.9f))
+    }
+
+    @Test
+    fun `aspectFromStorage above MAX_ASPECT maps to null`() {
+        assertNull(ProfileStoreMapping.aspectFromStorage(4.1f))
+    }
 }

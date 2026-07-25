@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -160,6 +161,33 @@ class ProfileStore(context: Context) {
             appContext.fwaDataStore.edit { prefs ->
                 prefs[key] = ProfileStoreMapping.placementToStorage(placement)
             }
+        }
+    }
+
+    /**
+     * target 패키지의 캐시된 실측 종횡비(DESIGN #12 §6 — 과거 합치∧verified 세션에서만 저장됨).
+     * 저장된 적 없거나 값이 오염/조회 실패했으면 null(호출부가 상위 폴백을 탄다).
+     */
+    suspend fun measuredAspect(packageName: String): Float? = safeRead(null) {
+        val key = floatPreferencesKey(ProfileStoreMapping.measuredAspectKeyFor(packageName))
+        ProfileStoreMapping.aspectFromStorage(appContext.fwaDataStore.data.first()[key])
+    }
+
+    /**
+     * [DESIGN #12 §6] admission 조건(이번 세션 합치 통과 ∧ verified=true)은 호출부
+     * (ArrangerAccessibilityService.reportTerminal) 책임 — 이 함수는 그 결정을 그대로 실행할 뿐이다.
+     * 범위 밖 값은 [ProfileStoreMapping.aspectFromStorage] 로 한 번 더 방어해 저장 자체를 거부한다
+     * (호출부 로직이 정상이라면 도달하지 않아야 하는 경로이지만, 조용한 실패 금지 원칙상 방어를
+     * 생략하지 않는다).
+     */
+    suspend fun saveMeasuredAspect(packageName: String, aspect: Float) {
+        if (ProfileStoreMapping.aspectFromStorage(aspect) == null) {
+            Log.w(TAG, "saveMeasuredAspect: 범위 밖 값 $aspect — 저장 거부")
+            return
+        }
+        safeWrite {
+            val key = floatPreferencesKey(ProfileStoreMapping.measuredAspectKeyFor(packageName))
+            appContext.fwaDataStore.edit { prefs -> prefs[key] = aspect }
         }
     }
 

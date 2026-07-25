@@ -3,7 +3,8 @@ package dev.dj.foldwindow.domain
 /*
  * 순수 Kotlin. android.* import 금지 (CLAUDE.md 아키텍처 규칙).
  *
- * ADR-1 3단 폴백: ① 프로파일 고정값 → ② 스크린샷 실측 → ③ 프리셋.
+ * ADR-1 폴백(DESIGN #12 §6 로 4단 확장): ① 프로파일 고정값 → ② 스크린샷 실측 →
+ * ②.5 과거 세션의 합치∧verified 캐시값 → ③ 프리셋.
  * 어떤 앱이든 "쓸 수 있는 종횡비"가 반드시 하나는 나오도록 보장하는 것이 이 리졸버의 역할이다.
  */
 
@@ -29,21 +30,28 @@ object AspectResolver {
     const val DEFAULT_MIN_MEASUREMENT_CONFIDENCE = 0.25f
 
     /**
-     * 3단 폴백으로 실제 사용할 종횡비를 결정한다.
+     * 4단 폴백으로 실제 사용할 종횡비를 결정한다.
      *
      * @param profile                 앱에 등록된 프로파일. null 이면 미등록 앱
      * @param measurement             이번 세션에서 얻은 스크린샷 실측 결과. null 이면 캡처 실패/미시도
      *                                 (DRM 전체 검정 화면으로 검출 자체가 실패한 경우 포함)
      * @param presetAspect            티어 ③ 최종 폴백값. 보통 defaults.aspect 또는 사용자가 고른 프리셋
+     * @param cachedAspect            티어 ②.5 값. 과거 합치∧verified 세션의 캐시(DESIGN #12 §6).
+     *                                범위 검증(MIN_ASPECT..MAX_ASPECT)은 저장 계층(data/ProfileStoreMapping)
+     *                                책임이다 — 여기서는 양수 여부만 방어한다.
      * @param minMeasurementConfidence 실측을 채택하기 위한 최소 신뢰도
      */
     fun resolve(
         profile: AppProfile?,
         measurement: AspectMeasurement?,
         presetAspect: Float,
+        cachedAspect: Float? = null,
         minMeasurementConfidence: Float = DEFAULT_MIN_MEASUREMENT_CONFIDENCE,
     ): ResolvedAspect {
         require(presetAspect > 0f) { "presetAspect must be positive, was $presetAspect" }
+        require(cachedAspect == null || cachedAspect > 0f) {
+            "cachedAspect must be positive when present, was $cachedAspect"
+        }
 
         // 티어 ①: 프로파일에 고정값이 있으면 그것을 최우선으로 쓴다.
         // aspectSource == MEASURED 인 프로파일은 저장된 aspect 가 항상 null 이므로
@@ -57,7 +65,15 @@ object AspectResolver {
             return ResolvedAspect(aspect = measurement.value, source = AspectSource.MEASURED, measurement = measurement)
         }
 
-        // 티어 ③: 위 둘 다 실패하면 프리셋(또는 defaults) 값으로 폴백한다.
+        // 티어 ②.5(DESIGN #12 §6): 이번 세션은 측정이 없거나 신뢰도 미달이지만, 과거에 합치∧verified
+        // 로 이중 검증된 캐시값이 있으면 정적 프리셋보다 그것을 우선한다. 신규 측정(티어 ②)이 있었다면
+        // 위에서 이미 반환됐으므로 여기 도달했다는 것 자체가 "이번 세션 증거 없음"을 의미한다 —
+        // 캐시가 신규 측정을 이기는 경로는 존재하지 않는다.
+        if (cachedAspect != null) {
+            return ResolvedAspect(aspect = cachedAspect, source = AspectSource.CACHED, measurement = null)
+        }
+
+        // 티어 ③: 위 전부 실패하면 프리셋(또는 defaults) 값으로 폴백한다.
         return ResolvedAspect(aspect = presetAspect, source = AspectSource.PRESET, measurement = null)
     }
 }

@@ -124,10 +124,20 @@ per-측정 conf ≥ 0.25 게이트는 유지하되 역할 격하: "후보 자격
 P3-3 에서 보류된 측정 캐싱의 admission predicate 확정: **합치 통과 ∧ Done(verified=true)**.
 ProfileStore `measuredAspect(pkg)` 설계는 후속 작업. 합치 없는 캐싱 = 오염 고착 (실측 사고 2회) — 본 게이트가 전제조건.
 
+**→ 2026-07-26 12차 설계 확정·구현 완료 (JVM 204 테스트·qa PASS 결함 0, 실기기 [미검증] — DEVICE_FACTS 미검증 표):**
+
+- 티어: PROFILE > MEASURED > **CACHED** > PRESET (`AspectSource.CACHED` 신설, PRESET 처럼 JSON 금지). 캐시 = "같은 앱의 이중 검증된 사전값(prior)" — 신규 합치 측정을 절대 이기지 않는다.
+- 적용 2지점: ① beginSession resolve (pre 실패/저신뢰 시 PRESET 전에 CACHED) ② finishConfirm 불합치 폴백 (`sessionCachedAspect ?: sessionPresetAspect`). confirm 발동 조건(`requireAgreement && source==MEASURED`) 무변경 — CACHED 세션은 confirm 을 돌리지 않는다 (§3.3 "confirm 단독 채택 금지" 보존).
+- admission 구현: finishConfirm 에서 `ConsensusResult.agreed` 일 때만 `consensusAdoptedAspect` 기록 → reportTerminal Done(verified=true) ∧ 레버 on 에서만 저장. requireAgreement=false 롤백 세션은 confirm 자체가 미실행이라 저장도 자동 차단 — 단일 프레임 값의 캐시 유입 경로 부재 (qa 쓰기 지점 전수 확인 2곳: 리셋·합치 기록뿐). CACHED/PRESET/PROFILE 세션 자기 갱신 없음. placement 저장과 달리 effectivePlacement 조건 무관 (종횡비 = 콘텐츠 속성, 위치와 직교).
+- 불합치 폴백을 PRESET 대신 캐시 우선으로 바꾼 근거: §3.5 의 PRESET 논리 자체가 "사전확률" 논증 — 캐시는 같은 앱의 합치∧verified 이력이라 정적 16:9 보다 정보량 우위, 치유 경로 동일 (CACHED 도 closedLoopCorrection ON — 기존 식 `source != PROFILE` 자동 커버). 오류 비용 = 보정 1회로 대칭.
+- 무 TTL·last-write-wins·패키지당 float 1개 (`measured_aspect.<pkg>`). 저장/조회 양측 범위 검증 (NaN/∞/1.0..4.0 밖 → 저장 거부/조회 null — placement 오염→null 패턴 미러).
+- 롤백 레버: `defaults.cacheMeasuredAspect` (키 부재=true, 시드 JSON 무수정 — `requireMeasurementAgreement` 선례). false → 조회·폴백·저장 전부 종전 동작.
+- 기각: pre×캐시 합치로 confirm 샷 생략 (+~0.3s 절약, 레이트리밋 여유) — G1~G5 채택 직후 새 채택 경로 추가는 실기기 검증 부담 > 이득. v1.5 재고 후보.
+
 ## 7. v1 범위
 
 **IN**: `MeasurementConsensus` + 열축 도메인(detect/역산/residualColumns) + 샘플러 transpose + confirm 배선(handleDragDividerTo 선두) + PRESET 폴백 + JSON 토글 + aspectOverride tier 0 + 측정/합치 로깅
-**OUT (v1.5 이월)**: `verified` 플래그에 열축 반영(#13 완결) · 적응형 residual(글로우 은폐 — §5 데이터 수집 후) · 측정 캐싱(§6) · 대칭성 휴리스틱
+**OUT (v1.5 이월)**: `verified` 플래그에 열축 반영(#13 완결) · 적응형 residual(글로우 은폐 — §5 데이터 수집 후) · ~~측정 캐싱(§6)~~(12차 구현 완료) · 대칭성 휴리스틱
 
 ## 8. 구현 전 확인 항목 (Worker 브리프 포함용)
 

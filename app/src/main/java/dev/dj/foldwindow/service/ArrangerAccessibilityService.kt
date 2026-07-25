@@ -126,6 +126,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
     /** window_profiles.json defaults.requireMeasurementAgreement 의 세션 스냅샷(#12 롤백 레버) */
     private var requireAgreement = true
 
+    /** 이 앱의 캐시된 실측 종횡비(DESIGN_12 §6). 합치 불합치 시 PRESET 보다 우선하는 폴백 사전값 */
+    private var sessionCachedAspect: Float? = null
+
+    /** defaults.cacheMeasuredAspect 의 세션 스냅샷(§6 롤백 레버) */
+    private var cacheAspectEnabled = true
+
+    /** 이번 세션에서 합치로 채택된 종횡비. non-null ∧ Done(verified=true) 이면 캐시에 저장한다(§6 admission) */
+    private var consensusAdoptedAspect: Float? = null
+
     /**
      * [실기기 확인, 2026-07-25] UNRESIZEABLE 앱(넷플릭스류)은 드래그 레시피가 팝업(프리폼)으로
      * 라우팅돼 상하 분할-선택 진입이 불가능함이 확인됐다. `ResizeModeDetector` 판정 결과로
@@ -435,9 +444,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // 1) 프로파일 로드 (성공만 캐싱, 실패 시 매번 재시도 + null config 로 진행)
         val config = loadProfilesConfig()
 
-        // 2) 종횡비 결정 (ADR-1 3단 폴백 + DESIGN_12 §4 override tier 0)
+        // 2) 종횡비 결정 (ADR-1 3단 폴백 + DESIGN_12 §4 override tier 0 + §6 캐시 tier ②.5)
         val profile = config?.profiles?.firstOrNull { it.packageName == target }
         val presetAspect = aspectOverride ?: config?.defaults?.aspect ?: DEFAULT_ASPECT
+        // [DESIGN_12 §6] 아래 else 분기의 캐시 조회가 이 값을 바로 써야 하므로 requireAgreement
+        // 스냅샷과 나란히 여기서 먼저 확정한다(대입을 사용 지점보다 늦추면 조회 자체가 불가능하다).
+        cacheAspectEnabled = config?.defaults?.cacheMeasuredAspect ?: true
         val measurement: AspectMeasurement?
         val resolved: ResolvedAspect
         if (aspectOverride != null) {
@@ -445,13 +457,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // 문서화된 "강제" 의미론)가 예전에는 tier ③ presetAspect 로만 주입돼 tier ② 측정에
             // 밀렸다 — 사용자가 21:9 를 명시 선택해도 측정 1.778 이 조용히 이겼다(실증 확인).
             // override 존재 시 tier 0 로 직접 채택하고 pre/confirm 샷을 전부 생략한다(지연 0,
-            // 레이트리밋 예산 절약, "강제" 의미론 정상화).
+            // 레이트리밋 예산 절약, "강제" 의미론 정상화). 캐시 조회도 동일 논리로 생략한다 —
+            // override 는 이미 확정값이라 tier ②.5 비교 자체가 무의미하다.
             measurement = null
             resolved = ResolvedAspect(aspectOverride, AspectSource.PRESET, null)
         } else {
             // ADR-1 티어 ②: 분할 진입 전 스냅샷 실측 (best effort — 실패해도 진행)
             measurement = preMeasureAspect(SystemClock.uptimeMillis(), target)
-            resolved = AspectResolver.resolve(profile, measurement, presetAspect)
+            val cachedAspect = if (cacheAspectEnabled) store.measuredAspect(target) else null
+            sessionCachedAspect = cachedAspect
+            resolved = AspectResolver.resolve(profile, measurement, presetAspect, cachedAspect)
         }
         resolvedAspect = resolved
         // [DESIGN_12 §3.2] confirm 합치 게이트(handleDragDividerTo 첫 호출)가 쓸 세션 상태.
@@ -500,7 +515,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
             "arrange decision: target=$target label=$targetLabel aspectSource=${resolved.source} " +
                 "aspectOverride=$aspectOverride aspect=${resolved.aspect} placement=$placement " +
                 "placementSource=$placementSource dividerCenterY=${computedPlan.dividerCenterY} " +
-                "clamp=${computedPlan.clampReason} preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
+                "clamp=${computedPlan.clampReason} preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"} " +
+                "cachedAspect=${sessionCachedAspect ?: "none"}",
         )
 
         // [측정 2026-07-25] PROFILE(사용자가 고정한 진실) 종횡비 세션에서 오염된 재측정(컨트롤
@@ -697,6 +713,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         sessionPresetAspect = DEFAULT_ASPECT
         aspectConfirmed = false
         requireAgreement = true
+        sessionCachedAspect = null
+        consensusAdoptedAspect = null
+        cacheAspectEnabled = true
         // 세션 시작 시 숨긴 버블을 복원한다 (beginSession 의 setBubbleHiddenForArrange(true) 짝).
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
     }
@@ -924,9 +943,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
      */
     private fun finishConfirm(outcome: ConfirmOutcome, paneAspect: Float): Int {
         val result = MeasurementConsensus.agree(preMeasurement, outcome, paneAspect)
+        // [DESIGN_12 §6] 불합치 폴백은 정적 PRESET 보다 이 앱의 과거 합치∧verified 이력(캐시)이
+        // 더 나은 사전값이다 — 오측 시 치유 경로(closedLoopCorrection)가 PRESET 소스와 동일하게
+        // 적용되므로 안전망은 그대로 유지된다(§3.5 의 "신규 증거 없으면 차선 증거라도 정적 기본값
+        // 보다 우선" 비대칭 논리를 그대로 확장한 것).
         val newResolved = result.adopted?.let { ResolvedAspect(it.value, AspectSource.MEASURED, it) }
+            ?: sessionCachedAspect?.let { ResolvedAspect(it, AspectSource.CACHED, null) }
             ?: ResolvedAspect(sessionPresetAspect, AspectSource.PRESET, null)
         resolvedAspect = newResolved
+        // 캐시 admission(§6) 은 합치로 채택된 값만 대상이다 — result.agreed(=adopted != null) 가
+        // 아니면 기록하지 않는다. 이 세션이 CACHED/PRESET 으로 낙착하는 것과는 별개로, "이번 세션이
+        // 새 합치 증거를 냈는가"만이 저장 여부를 결정한다.
+        if (result.agreed) {
+            consensusAdoptedAspect = result.adopted?.value
+        }
         Log.i(
             TAG,
             "consensus: verdict=${result.verdict} outcome=$outcome " +
@@ -1136,6 +1166,17 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     scope.launch {
                         store.saveLastSuccessfulPlacement(pkg, placementToPersist)
                     }
+                }
+
+                // 측정 종횡비 캐싱(DESIGN_12 §6). admission = 이번 세션 합치 통과 ∧ verified=true.
+                // placement 저장과 달리 effectivePlacement 조건은 무관하다(종횡비는 콘텐츠 속성, 위치와 직교).
+                // CACHED/PRESET/PROFILE 세션은 consensusAdoptedAspect 가 null 이라 자연 제외되고,
+                // requireAgreement=false 롤백 세션은 confirm 자체가 안 돌아 역시 null — 단일 프레임 값은
+                // 어떤 경로로도 캐시에 들어올 수 없다.
+                val adoptedAspect = consensusAdoptedAspect
+                if (pkg != null && state.verified && adoptedAspect != null && cacheAspectEnabled) {
+                    Log.i(TAG, "aspect cache save: pkg=$pkg aspect=$adoptedAspect (합치∧verified)")
+                    scope.launch { store.saveMeasuredAspect(pkg, adoptedAspect) }
                 }
             }
 
