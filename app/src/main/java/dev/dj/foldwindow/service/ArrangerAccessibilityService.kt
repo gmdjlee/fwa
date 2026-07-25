@@ -12,6 +12,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
+import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.data.ProfilesParseResult
 import dev.dj.foldwindow.data.WindowProfilesParser
 import dev.dj.foldwindow.domain.ArrangeConfig
@@ -73,6 +74,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val screenshotExecutor = Executors.newSingleThreadExecutor()
+    private val store by lazy { ProfileStore(this) }
 
     private val dividerLocator = DividerLocator()
     private lateinit var dividerDragger: DividerDragger
@@ -411,7 +413,36 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val resolved = AspectResolver.resolve(profile, measurement, presetAspect)
         resolvedAspect = resolved
 
-        val placement = placementOverride ?: profile?.placement ?: config?.defaults?.placement ?: Placement.TOP
+        // P3-3: 명시 오버라이드(메뉴 위/아래 선택)가 항상 최우선이고, 그다음 이 앱의 "마지막 성공
+        // 배치"(store.lastSuccessfulPlacement), 그다음 프로파일/기본값, 최종 폴백은 TOP. 조용한
+        // 실패 금지 원칙에 따라 어느 티어가 이겼는지 arrange decision 로그에 남긴다.
+        val lastSuccessPlacement = store.lastSuccessfulPlacement(target)
+        val profilePlacement = profile?.placement
+        val defaultsPlacement = config?.defaults?.placement
+        val placement: Placement
+        val placementSource: String
+        when {
+            placementOverride != null -> {
+                placement = placementOverride
+                placementSource = "OVERRIDE"
+            }
+            lastSuccessPlacement != null -> {
+                placement = lastSuccessPlacement
+                placementSource = "LAST_SUCCESS"
+            }
+            profilePlacement != null -> {
+                placement = profilePlacement
+                placementSource = "PROFILE"
+            }
+            defaultsPlacement != null -> {
+                placement = defaultsPlacement
+                placementSource = "DEFAULTS"
+            }
+            else -> {
+                placement = Placement.TOP
+                placementSource = "FALLBACK"
+            }
+        }
         desiredPlacement = placement
         effectivePlacement = placement
 
@@ -421,8 +452,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         Log.i(
             TAG,
             "arrange decision: target=$target label=$targetLabel aspectSource=${resolved.source} " +
-                "aspect=${resolved.aspect} placement=$placement dividerCenterY=${computedPlan.dividerCenterY} " +
-                "clamp=${computedPlan.clampReason} preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
+                "aspect=${resolved.aspect} placement=$placement placementSource=$placementSource " +
+                "dividerCenterY=${computedPlan.dividerCenterY} clamp=${computedPlan.clampReason} " +
+                "preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
         )
 
         // [측정 2026-07-25] PROFILE(사용자가 고정한 진실) 종횡비 세션에서 오염된 재측정(컨트롤
@@ -885,6 +917,25 @@ class ArrangerAccessibilityService : AccessibilityService() {
                         "adjusted=${state.adjusted} desired=$desiredPlacement effective=$effectivePlacement",
                 )
                 toast(message)
+
+                // 앱별 "마지막 성공 placement" 저장(P3-3). 사용자가 의도한 위치(desiredPlacement)로
+                // 실제로 낙착된 세션만 저장한다 — 스왑/회전 폴백이 모두 실패해 다른 위치로 낙착된
+                // 세션(effectivePlacement != desiredPlacement)은 저장하지 않는다. 사용자가 고르지
+                // 않은 위치가 다음 탭의 기본값을 조용히 오염시키면 안 된다(PROGRESS 열린 질문
+                // #19/#20, 위치 전환 실패 실측 근거). verified(측정 검증) 여부는 배치 자체의 성공과
+                // 무관하므로 저장 조건에 넣지 않는다. cleanupSession() 이 targetPackage 를 곧
+                // null 로 되돌리므로 지역 변수로 캡처한 뒤 기존 서비스 스코프에서 저장한다.
+                val pkg = targetPackage
+                val placementToPersist = effectivePlacement
+                if (pkg != null && effectivePlacement == desiredPlacement) {
+                    // fire-and-forget — ProfileStore.saveLastSuccessfulPlacement 이 내부에서
+                    // IOException 을 잡아 Log.w 로 드러내므로(safeWrite) 여기서 scope 예외 처리가
+                    // 필요 없다. 이 launch 는 startArrange 의 바깥 try/catch 범위 밖(별도 코루틴)이라
+                    // 방어가 없으면 저장소 오류 시 프로세스가 죽는다 — 반드시 ProfileStore 쪽 보호에 의존한다.
+                    scope.launch {
+                        store.saveLastSuccessfulPlacement(pkg, placementToPersist)
+                    }
+                }
             }
 
             is ArrangeState.Failed -> {

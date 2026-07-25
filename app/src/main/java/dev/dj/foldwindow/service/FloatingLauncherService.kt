@@ -9,7 +9,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -30,6 +29,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import dev.dj.foldwindow.R
+import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.data.ProfilesParseResult
 import dev.dj.foldwindow.data.WindowProfilesParser
 import dev.dj.foldwindow.domain.AspectPreset
@@ -40,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -89,11 +90,19 @@ import kotlin.math.abs
 class FloatingLauncherService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private lateinit var prefs: SharedPreferences
+    private val store by lazy { ProfileStore(this) }
     private val handler = Handler(Looper.getMainLooper())
 
     /** P3-2 프리셋 asset 백그라운드 로드 전용. UI 상태 변경은 이 서비스도 메인 스레드로 단일화한다. */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * [ProfileStore.bubblePosition] 의 콜드 스타트 1회 스냅샷 캐시(P3-3). onCreate 에서 한 번만
+     * runBlocking 으로 읽고, 이후 createBubbleView/savePosition 은 전부 이 캐시만 쓴다 — 매 위치
+     * 조회마다 DataStore I/O 를 걸지 않기 위함이다. null 이면 아직 저장된 위치가 없다는 뜻이다.
+     */
+    private var cachedBubbleX: Int? = null
+    private var cachedBubbleY: Int? = null
 
     private var bubbleView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -113,10 +122,24 @@ class FloatingLauncherService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         createNotificationChannel()
         instance = this
         preloadPresetsIfNeeded()
+        // 콜드 스타트 1회 한정 동기 스냅샷 읽기(위 cachedBubbleX/Y KDoc 참고). 최초 접근 시
+        // SharedPreferencesMigration(레거시 "bubble_prefs" 이관)도 함께 실행되므로 이 1회는
+        // 약간의 I/O 비용이 있으나, 버블 뷰 생성 전에 위치가 확정돼야 하므로 동기 대기가 맞다.
+        //
+        // [실기기 검증 리뷰 지적 반영, 2026-07-25] ProfileStore.bubblePosition() 은 내부적으로
+        // 이미 읽기 실패를 잡아 null 로 폴백하지만(safeRead), 이 onCreate 경로는 BootReceiver ->
+        // startForegroundService 직후 즉시 실행돼 부팅 크래시 루프로 이어질 수 있는 가장 민감한
+        // 지점이라 runCatching 으로 한 번 더 방어한다(조용한 실패 금지 — 실패 시 Log.w 로 드러내고
+        // 기본 위치로 폴백. cachedBubbleX/Y == null 이면 createBubbleView 가 화면 비율 기반 기본
+        // 위치를 계산한다).
+        val position = runCatching { runBlocking { store.bubblePosition() } }
+            .onFailure { e -> Log.w(TAG, "onCreate: 저장된 버블 위치 읽기 실패 — 기본 위치로 폴백", e) }
+            .getOrNull()
+        cachedBubbleX = position?.first
+        cachedBubbleY = position?.second
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -133,7 +156,9 @@ class FloatingLauncherService : Service() {
 
         startForegroundCompat()
         // 서비스가 살아있다 = 사용자가 버블을 켠 상태. BootReceiver 가 이 값을 읽어 부팅 시 복귀한다.
-        prefs.edit().putBoolean(PREF_BUBBLE_ENABLED, true).apply()
+        // fire-and-forget — ProfileStore.setBubbleEnabled 가 내부에서 IOException 을 잡아
+        // Log.w 로 드러내므로(safeWrite) 여기서 별도 예외 처리가 필요 없다.
+        serviceScope.launch { store.setBubbleEnabled(true) }
         addBubbleIfNeeded()
         isRunning = true
         return START_STICKY
@@ -257,8 +282,8 @@ class FloatingLauncherService : Service() {
         val bounds = windowManager.currentWindowMetrics.bounds
         val maxX = (bounds.width() - sizePx).coerceAtLeast(0)
         val maxY = (bounds.height() - sizePx).coerceAtLeast(0)
-        val savedX = prefs.getInt(PREF_BUBBLE_X, maxX)
-        val savedY = prefs.getInt(PREF_BUBBLE_Y, bounds.height() / 3)
+        val savedX = cachedBubbleX ?: maxX
+        val savedY = cachedBubbleY ?: (bounds.height() / 3)
 
         val params = WindowManager.LayoutParams(
             sizePx,
@@ -654,7 +679,10 @@ class FloatingLauncherService : Service() {
     }
 
     private fun savePosition(x: Int, y: Int) {
-        prefs.edit().putInt(PREF_BUBBLE_X, x).putInt(PREF_BUBBLE_Y, y).apply()
+        cachedBubbleX = x
+        cachedBubbleY = y
+        // fire-and-forget — ProfileStore.saveBubblePosition 이 내부에서 예외를 잡는다(safeWrite).
+        serviceScope.launch { store.saveBubblePosition(x, y) }
     }
 
     companion object {
@@ -677,14 +705,6 @@ class FloatingLauncherService : Service() {
          * 길게 잡아, 정상 세션 도중에는 절대 발동하지 않게 한다. UI 안전망일 뿐 ADR-2 대상 아님.
          */
         private const val HIDE_SAFETY_TIMEOUT_MS = 30_000L
-
-        // [미해결] P3-3 에서 DataStore 로 이관 예정. 지금은 SharedPreferences 로 최소 구현한다
-        // (프로젝트 전반은 DataStore 를 쓰지만, 이 값들은 OnboardingActivity/BootReceiver 도 동기적으로
-        // 읽어야 해서 P3-1 범위에서는 SharedPreferences 가 더 단순하다).
-        const val PREFS_NAME = "bubble_prefs"
-        const val PREF_BUBBLE_ENABLED = "bubble_enabled"
-        private const val PREF_BUBBLE_X = "bubble_x"
-        private const val PREF_BUBBLE_Y = "bubble_y"
 
         /** [OnboardingActivity] 가 버블 실행 여부를 표시하기 위한 토글 상태. */
         @Volatile

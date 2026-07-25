@@ -2,11 +2,11 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-25 오후 5차 (**P3-2 검증분 커밋 `a104d70`** + "분할 없음" dismiss 지연 실측 2.0s(설계대로) + **BootReceiver 실부팅 검증 통과** — `adb reboot` 후 "boot: 버블 자동 복귀 시작" 로그, FloatingLauncherService FGS 자동 기동, 접근성 서비스 유지, 홈 화면 버블 가시 전부 확인 → #23 부팅 복귀 해소. P3-3 설계 확정)
-**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 완료(부팅 복귀 포함), P3-2 **완료·커밋됨**, 잔여 P3-3·P3-5
+**최종 갱신:** 2026-07-25 오후 6차 (**P3-3 구현 완료** — 버블 prefs DataStore 이관(`SharedPreferencesMigration`, 레거시 키 이름 동결) + 앱별 마지막 성공 placement 저장/복원 + `data/ProfileStore.kt`·`ProfileStoreMapping.kt` + JVM 테스트 141개 전부 통과. 독립 검증 PASS, 적대적 리뷰 major 2건(corruptionHandler 부재·fire-and-forget 쓰기 크래시)+minor 2건(취소發 쓰기 유실·stopService 미호출) 전부 수정 반영. **미커밋 — 승인 대기**)
+**현재 Phase:** Phase 3 진행 중 — P3-1·P3-2·P3-3·P3-4 완료, 잔여 P3-5
 **다음 행동 (착수 목록):**
-1. BootReceiver 검증 결과 커밋 (PROGRESS/DEVICE_FACTS 문서분 — 사용자 승인 후)
-2. **P3-3 위임 (설계 확정됨)**: 범위 = ① 버블 prefs(enabled/x/y) SharedPreferences→DataStore 이관 (BootReceiver goAsync+runBlocking 동기 읽기) ② 앱별 마지막 성공 placement 저장→탭 기본값 복원 ③ `data/ProfileStore.kt` + 순수 매핑 JVM 테스트. **제외**: 측정 종횡비 캐싱 (#12 신뢰도 필터 전엔 오염 고착 위험 — 실측 사고 2회)
+1. P3-3 커밋 (사용자 승인 후)
+2. **P3-3 실기기 검증 [미검증]**: ① 기존 설치 위에 업데이트 → bubble_prefs 값(enabled/x/y)이 DataStore 로 무손실 이관되는지 ② BootReceiver goAsync 재작성 경로로 실부팅 복귀 재확인 (5차 검증은 구 동기 코드 기준 — 코드 교체로 회귀) ③ 앱별 마지막 성공 placement: 메뉴로 하단 배치 성공 → 이후 탭이 하단 기본으로 복원되는지 ④ 온보딩 중지 토글 → 서비스 종료+enabled=false 반영
 3. #12 신뢰도 필터 검토 → 이후 측정 캐싱 재검토. P3-5 FoldingFeature
 4. **#20/#25 step3 피커 탭 변동성**: 메뉴發 배치 4회 중 2회 step3 3연속 실패 실측 (클릭 무효/오라우팅, DEVICE_FACTS P3-2 절) — 좌표 탭 제스처 대체 검토
 5. P3-2 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로). 회전×2 폴백 검증 기회 확보
@@ -36,7 +36,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | Phase 0 프로브 | ✅ 완료 | 3회 실행(전체화면/분할활성/가로영상). #5 ✅ #6 ❌ #7 ✅(분할 중에만). E는 유튜브 앰비언트 모드로 미검출 → Detector v2 필요. `docs/DEVICE_FACTS.md` 확정 |
 | Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
 | Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
-| Phase 3 UI | 🔄 진행 중 | P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). 잔여: P3-3 DataStore / P3-5 FoldingFeature. 부팅 복귀 [미검증] |
+| Phase 3 UI | 🔄 진행 중 | P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). P3-3 DataStore ✅ 구현 완료 (141 테스트, 실기기 [미검증] — 마이그레이션·goAsync 부팅·placement 복원). 잔여: P3-5 FoldingFeature |
 | Phase 4 확장 | ⬜ 조건부 | #5 판정에 따라 범위 결정 |
 
 ## 작성된 코드
@@ -49,6 +49,8 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | `domain/Profiles.kt` | ✅ P1-2 신규. `AspectSource`/`PartnerMode`/모델 4종 + `validate()` 위치 특정 에러. 순수 Kotlin |
 | `domain/AspectResolver.kt` | ✅ P1-3 신규. ADR-1 3단 폴백(PROFILE→MEASURED→PRESET). `DEFAULT_MIN_MEASUREMENT_CONFIDENCE=0.25f`(미검증). 테스트 9개 |
 | `data/WindowProfilesParser.kt` | ✅ P1-2 신규. kotlinx-serialization DTO→domain 매핑, 예외 누출 없이 `ProfilesParseResult`. 테스트 14개(실제 SSOT 파일 파싱 포함) |
+| `data/ProfileStore.kt` | ✅ P3-3 신규. Preferences DataStore(`fwa_store`) 래퍼 — 버블 enabled/x/y + 앱별 마지막 성공 placement. `SharedPreferencesMigration("bubble_prefs")` 무손실 이관(레거시 키 이름 동결 계약), `ReplaceFileCorruptionHandler`→emptyPreferences(부팅 크래시 루프 방지), 쓰기 = `safeWrite` NonCancellable(레거시 apply() 의 종료 후 반영 보장 대체), 읽기 = safeRead 예외 방어. 실기기 [미검증] |
+| `data/ProfileStoreMapping.kt` | ✅ P3-3 신규. 순수 Kotlin 매핑 — placement 직렬화 왕복(오염값→null, 크래시 금지)·키 네임스페이스·레거시 키 상수. JVM 테스트 10개 (키 이름 동결 회귀 테스트 포함) |
 | `platform/ScreenshotSampler.kt` | ✅ v2 확장. 행별 luma 평균/분산 산출 추가. 실기기 미검증 |
 | `domain/PaneGeometry.kt` | ✅ P2-2 + 확장. 가시 교집합·간격 휴리스틱·상하/좌우 분할 판정·분할선택 페인 판정·`pickPaneLike`(최소화 플레이어 팝업 오염 필터, 실기기 근거). 순수 Kotlin. 테스트 30개 |
 | `platform/DividerLocator.kt` | ✅ P2-2. `TYPE_SPLIT_SCREEN_DIVIDER` 핸들 중심 1차 → PaneGeometry 간격 휴리스틱 폴백. 실기기 미검증 |
@@ -58,11 +60,11 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | `platform/ResizeModeDetector.kt` | ✅ 신규 **실기기 검증**. `privateFlags` 필드 리플렉션 allowed / 상수 리플렉션 denied(max-target-o) → 폴백 비트 **1<<11** (0x8c000910 교차 검증). 실패 시 null → DRAG 폴백 |
 | `platform/DividerPopupRotator.kt` | ✅ 신규. 핸들 탭→"시계 방향으로 회전" 클릭 공용화 (MENU step5 + 서비스 회전×2 폴백). step5 경로 실기기 검증, 회전×2 폴백은 미발동 **미검증** |
 | `platform/GestureDrags.kt` | ✅ 신규·실기기 검증. 2-페이즈 홀드드래그(1px 드리프트 홀드 + continueStroke 이동, 타이밍 가드). API 함정 4종 문서화 |
-| `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드. P3-2 `dismissSplit()` **실기기 E2E 검증**: 디바이더 드래그 아님(반증) — `PanelActivity.instance.finishAndRemoveTask()` + 인텐트 폴백[미검증], 진입 체크 = `isSplitActive` 자체 2s 조건 폴링(스크림發 a11y 목록 비원자 재구축 대응), 150ms/3s 해소 폴링, 실패 전부 토스트. `awaitWindowsSettled()` = beginSession freshness 게이트 |
+| `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드. P3-2 `dismissSplit()` **실기기 E2E 검증**: 디바이더 드래그 아님(반증) — `PanelActivity.instance.finishAndRemoveTask()` + 인텐트 폴백[미검증], 진입 체크 = `isSplitActive` 자체 2s 조건 폴링(스크림發 a11y 목록 비원자 재구축 대응), 150ms/3s 해소 폴링, 실패 전부 토스트. `awaitWindowsSettled()` = beginSession freshness 게이트. P3-3: placement 결정 체인에 `ProfileStore.lastSuccessfulPlacement` 2순위 삽입(override>last-success>profile>defaults>TOP, placementSource 로그), Done ∧ effective==desired 시에만 저장(지역 캡처 후 launch) [실기기 미검증] |
 | `service/ArrangeTriggerReceiver.kt` | ✅ adb 디버그 트리거 (`dev.dj.foldwindow.ARRANGE`). 버블 도입 후에도 회귀용으로 유지 |
-| `service/FloatingLauncherService.kt` | ✅ P3-1 + P3-2 확장 메뉴 **실기기 E2E 검증**. 탭=배치, 드래그=이동+스냅, **롱프레스=메뉴 열기**(위/아래 배치·분할 해제·프리셋(JSON SSOT 파싱 캐시)·설정). 메뉴 = **풀스크린 투명 스크림** FrameLayout 창 (ACTION_OUTSIDE 방식은 디스패치 순서 경합 실측으로 폐기 — 스크림이 모든 터치 선점, 재탭=닫기만 구조 보장). 함정 #22: 모든 트리거 직전 + `setBubbleHiddenForArrange(true)` 시 메뉴 제거. 위치/켬 상태 SharedPreferences (P3-3 에서 DataStore 이관) |
-| `service/BootReceiver.kt` | ✅ P3-1 신규. BOOT_COMPLETED 시 bubble_enabled+오버레이 권한 확인 후 FGS 재기동. **[미검증]** 실부팅 |
-| `ui/OnboardingActivity.kt` | ✅ P3-4 신규 **실기기 검증** (권한 감지·버블 토글·안내 렌더 확인). 권한 카드 3종 + 버블 시작/중지 + 사용 안내 (넷플릭스 "배치 후 재생" 포함). MAIN/LAUNCHER 진입점 |
+| `service/FloatingLauncherService.kt` | ✅ P3-1 + P3-2 확장 메뉴 **실기기 E2E 검증**. 탭=배치, 드래그=이동+스냅, **롱프레스=메뉴 열기**(위/아래 배치·분할 해제·프리셋(JSON SSOT 파싱 캐시)·설정). 메뉴 = **풀스크린 투명 스크림** FrameLayout 창 (ACTION_OUTSIDE 방식은 디스패치 순서 경합 실측으로 폐기 — 스크림이 모든 터치 선점, 재탭=닫기만 구조 보장). 함정 #22: 모든 트리거 직전 + `setBubbleHiddenForArrange(true)` 시 메뉴 제거. 위치/켬 상태 P3-3 에서 `ProfileStore`(DataStore) 이관 완료 — 초기 위치는 onCreate 1회 runBlocking 스냅샷(runCatching 폴백), 쓰기는 serviceScope.launch(store 계층 NonCancellable) |
+| `service/BootReceiver.kt` | ✅ P3-1 신규 + P3-3 개편. BOOT_COMPLETED 시 bubble_enabled+오버레이 권한 확인 후 FGS 재기동. 실부팅 검증은 구 동기 prefs 코드로 통과(5차) — P3-3 에서 goAsync+IO 코루틴(finally finish 보장)으로 재작성돼 **[미검증] 회귀**, 실부팅 재확인 필요 |
+| `ui/OnboardingActivity.kt` | ✅ P3-4 신규 **실기기 검증** (권한 감지·버블 토글·안내 렌더 확인). 권한 카드 3종 + 버블 시작/중지 + 사용 안내 (넷플릭스 "배치 후 재생" 포함). MAIN/LAUNCHER 진입점. P3-3: 중지 = NonCancellable(enabled=false 쓰기→stopService, 액티비티 파괴에도 완주) + stopInProgress 재진입 가드 [실기기 미검증] |
 | `ui/PanelActivity.kt` | ✅ P2-5 + P3-2. 검정 배경+시계 파트너 창. 라벨 "FW Panel" = SplitEntry 피커 셀렉터 계약. P3-2: `instance` 정적 참조 + `EXTRA_FINISH_PANEL` (dismissSplit 의 패널 finish 경로 — finish 실기기 검증, 인텐트 폴백 [미검증]). MAIN/LAUNCHER 노출은 Phase 3 재검토 |
 | `probe/ProbeAccessibilityService.kt` | ✅ 실기기 검증 완료 (3회 실행) |
 | `probe/ProbeReport.kt` | ✅ 완성 |
@@ -97,6 +99,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 23. P3-1 잔여: ~~BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용~~ → **2026-07-25 오후 5차 실부팅 검증 통과** (BOOT_COMPLETED 수신 로그·FGS 자동 기동·접근성 유지·버블 가시 전부 확인). 잔여 [미검증]: 버블 제스처 임계값 실사용감, 30s 안전 타이머 vs 최장 세션(교정 체인 포함) 여유
 24. ~~P3-2 [미검증] 전체~~ → **2026-07-25 오후 4차 실기기 검증으로 전부 해소**: ① 드래그 해제 가정 **반증** (dispatchGesture 스냅백 2/2 vs 동일 기하 input swipe 성공 3/3) → **패널 finish 방식으로 재구현·E2E 성공** ② 클램프 가로/세로 실기기 정상 ③ DOWN 스냅샷 방어 **실패 실측** (OUTSIDE 선행 디스패치 → 재탭이 배치 오발화) → **풀스크린 스크림으로 구조 해결·E2E 확인** ④ 프리셋 6종 최초 롱프레스에 정상 렌더. 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로), "분할 없음" 시 2s 대기 후 토스트 체감
 25. 스크림 부산물 (해결·기록): 풀스크린 터치 가능 오버레이가 떠 있는 동안 하위 창이 a11y `getWindows()` 에서 가림-제외되고, 제거 직후 재구축이 **비원자적** (앱 창 먼저, 디바이더 나중) — `isSplitActive` false-negative 2/2 실측. dismiss 는 목표 조건 자체 폴링으로 해결. `beginSession` 의 `awaitWindowsSettled`(APPLICATION≥1 약한 게이트)도 같은 원리에 취약할 수 있음 — 배치 경로에서 유사 증상 재현 시 동일 패턴 적용
+26. P3-3 실기기 [미검증] 목록: ① SharedPreferencesMigration 실이관 (업데이트 설치 시 기존 enabled/x/y 보존) ② goAsync 부팅 복귀 (5차 검증은 구 코드 — 회귀) ③ 마지막 성공 placement 저장→탭 복원 E2E ④ corruptionHandler (fwa_store.preferences_pb 인위 손상 시나리오 — 로직은 datastore-core 1.1.1 소스 대조로만 확인) ⑤ 온보딩 중지 시퀀스 취소 레이스 (폴드 접기 중 탭)
 
 ## 결정 로그
 
@@ -153,3 +156,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 | 2026-07-25 오후 4차 | 분할 해제 = **PanelActivity finish 방식** (디바이더 드래그 폐기) | 실측: dispatchGesture 는 dismiss 깊이에서 스냅백(2/2), 동일 기하 input swipe 는 성공(3/3) — 접근성 주입만 거부됨. 패널 finish 는 분할 해소+상대 앱 전체화면 복귀 실측. E2E "dismissSplit: 성공" |
 | 2026-07-25 오후 4차 | 확장 메뉴 = **풀스크린 투명 스크림** 창 (ACTION_OUTSIDE 폐기) | 실측: OUTSIDE 가 버블 DOWN 보다 선행 디스패치 → DOWN 스냅샷 방어 무력 (재탭→배치 오발화, 재롱프레스→재열림). 스크림은 경합 클래스를 구조적으로 제거. 재탭=닫기만 E2E 확인 |
 | 2026-07-25 오후 4차 | dismiss 진입 체크 = `isSplitActive` **자체를 2s 조건 폴링** (약한 freshness 게이트 불충분) | 실측: 스크림 제거 후 a11y 창 목록 재구축 비원자적 — APPLICATION≥1 게이트 통과 후에도 디바이더 미관측 false-negative 2/2. 목표 조건 직접 폴링으로 해결, E2E 통과 |
+| 2026-07-25 오후 6차 | P3-3 이관 = `SharedPreferencesMigration("bubble_prefs")`, 레거시 키 이름(`bubble_enabled`/`bubble_x`/`bubble_y`) **동결 계약** — 회귀 테스트로 고정 | 마이그레이션이 키 이름 그대로 이관 + 원본 파일 삭제. 이름이 어긋나면 기존 사용자 설정 유실. 직접 `getSharedPreferences` 호출은 리포지토리에서 0건으로 소거 (잔존 사용처 = 삭제된 파일 부활 버그) |
+| 2026-07-25 오후 6차 | placement 복원 우선순위 = override > **last-success** > profile > defaults > TOP. 저장은 Done ∧ effective==desired 만 | 마지막 실사용 선택이 정적 JSON 보다 사용자 의도에 가까움. 스왑 실패로 낙착한 위치(effective≠desired)를 저장하면 사용자가 고르지 않은 값이 기본값을 오염 (#19/#20 실측 존재). placementSource 로그로 어느 티어가 이겼는지 노출 |
+| 2026-07-25 오후 6차 | ProfileStore 쓰기 = `NonCancellable` + `ReplaceFileCorruptionHandler`→emptyPreferences. 측정 종횡비 캐싱은 P3-3 에서 **제외 유지** | 리뷰 실지적: 레거시 apply() 는 컴포넌트 종료 후에도 QueuedWork 로 반영 보장 — 코루틴 취소가 쓰기 유실/stopService 미호출 회귀를 만듦. corruptionHandler 부재는 부팅 크래시 루프 위험. 캐싱은 #12 신뢰도 필터 전엔 오염 고착 위험 (실측 사고 2회) |
+| 2026-07-25 오후 6차 | BootReceiver = goAsync + IO 코루틴, `finally { pendingResult.finish() }` | 메인 스레드 동기 IO 제거. 부팅 시점 조용한 실패 금지 의미론(로그만·크래시/토스트 금지)과 검증된 로그 시그니처는 불변. 실부팅 재검증 필요 (#26) |

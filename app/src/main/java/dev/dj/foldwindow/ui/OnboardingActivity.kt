@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,8 +38,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import dev.dj.foldwindow.R
+import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.service.ArrangerAccessibilityService
 import dev.dj.foldwindow.service.FloatingLauncherService
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * P3-4: 온보딩 — 오버레이/접근성/알림 권한 유도 + 버블 시작·중지 + 사용 안내.
@@ -53,6 +58,17 @@ class OnboardingActivity : ComponentActivity() {
     private var accessibilityGranted by mutableStateOf(false)
     private var notificationGranted by mutableStateOf(false)
     private var bubbleRunning by mutableStateOf(false)
+
+    /**
+     * 중지 시퀀스(DataStore 쓰기 -> stopService) 진행 중 재진입을 막는 플래그.
+     * Compose 상태가 아니라 순수 필드다 — UI 를 다시 그리지 않고 [toggleBubble] 호출만 무시하면 된다.
+     * [실기기 검증 리뷰 지적 반영, 2026-07-25] 이 플래그가 없으면: 사용자가 중지 버튼을 빠르게 두 번
+     * 누르거나(중지 시퀀스가 아직 stopService 전인데 재호출) 중지 도중 재시작을 눌렀을 때, 두 번째
+     * 호출이 시작한 새 서비스를 첫 번째 호출의 지연된 stopService 가 죽이는 레이스가 발생한다.
+     */
+    private var stopInProgress = false
+
+    private val store by lazy { ProfileStore(this) }
 
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
 
@@ -119,14 +135,32 @@ class OnboardingActivity : ComponentActivity() {
     }
 
     private fun toggleBubble() {
+        // 중지 시퀀스 진행 중에는 재호출(빠른 재탭, 중지 도중 재시작 시도)을 전부 무시한다 —
+        // 아래에서 stopInProgress 를 false 로 되돌리기 전까지는 안전하게 재진입할 수 없다.
+        if (stopInProgress) return
+
         val intent = Intent(this, FloatingLauncherService::class.java)
         if (bubbleRunning) {
-            // 사용자가 명시적으로 중지 — 부팅 자동 복귀 대상에서 빠지도록 서비스 시작 전에 prefs 를 내린다.
-            getSharedPreferences(FloatingLauncherService.PREFS_NAME, MODE_PRIVATE)
-                .edit()
-                .putBoolean(FloatingLauncherService.PREF_BUBBLE_ENABLED, false)
-                .apply()
-            stopService(intent)
+            // 사용자가 명시적으로 중지 — 부팅 자동 복귀 대상에서 빠지도록 DataStore 쓰기가
+            // 완료된 뒤에 서비스를 멈춘다(쓰기 -> 중지 순서 유지, 기존 SharedPreferences 구현과
+            // 동일한 의도: 부팅 자동 복귀 제외 확정이 서비스 중지보다 먼저 이뤄져야 한다).
+            //
+            // [실기기 검증 리뷰 지적 반영, 2026-07-25] 이 시퀀스 전체를 withContext(NonCancellable)
+            // 로 감싼다. 폴드 접기 등 구성 변경으로 액티비티가 파괴돼 lifecycleScope 가 취소돼도,
+            // 이미 시작된 "쓰기 -> stopService" 시퀀스는 끝까지 실행된다(ProfileStore.safeWrite 도
+            // 자체적으로 NonCancellable 이지만, 그것만으로는 쓰기와 stopService 사이에서 취소되는
+            // 것까지 막지 못한다 — 이 바깥쪽 NonCancellable 이 두 호출을 하나의 원자적 시퀀스로
+            // 보장한다). 이게 없으면 서비스는 살아있는데 DataStore 는 enabled=false 인 불일치가
+            // 생긴다. stopInProgress 리셋도 같은 NonCancellable 블록 안에서 수행해 액티비티가
+            // 파괴돼도 반드시 정리되게 한다.
+            stopInProgress = true
+            lifecycleScope.launch {
+                withContext(NonCancellable) {
+                    store.setBubbleEnabled(false)
+                    stopService(intent)
+                    stopInProgress = false
+                }
+            }
         } else {
             startForegroundService(intent)
         }
