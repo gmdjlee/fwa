@@ -1,6 +1,7 @@
 package dev.dj.foldwindow.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.ActivityManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -20,6 +21,7 @@ import dev.dj.foldwindow.domain.ArrangeState
 import dev.dj.foldwindow.domain.ArrangeStateMachine
 import dev.dj.foldwindow.domain.AspectMeasurement
 import dev.dj.foldwindow.domain.AspectResolver
+import dev.dj.foldwindow.domain.AspectSource
 import dev.dj.foldwindow.domain.FailureReason
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
@@ -33,9 +35,12 @@ import dev.dj.foldwindow.domain.WindowProfilesConfig
 import dev.dj.foldwindow.platform.DividerDragger
 import dev.dj.foldwindow.platform.DividerHandle
 import dev.dj.foldwindow.platform.DividerLocator
+import dev.dj.foldwindow.platform.DividerPopupRotator
 import dev.dj.foldwindow.platform.DragStrategy
 import dev.dj.foldwindow.platform.EntryContext
+import dev.dj.foldwindow.platform.EntryRecipe
 import dev.dj.foldwindow.platform.PaneSwapper
+import dev.dj.foldwindow.platform.ResizeModeDetector
 import dev.dj.foldwindow.platform.SplitEntry
 import dev.dj.foldwindow.platform.toLetterboxScan
 import dev.dj.foldwindow.ui.PanelActivity
@@ -72,6 +77,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private lateinit var dividerDragger: DividerDragger
     private lateinit var paneSwapper: PaneSwapper
     private lateinit var splitEntry: SplitEntry
+    private lateinit var popupRotator: DividerPopupRotator
 
     @Volatile
     private var lastForegroundPkg: String? = null
@@ -92,6 +98,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private var effectivePlacement: Placement = Placement.TOP
     private var plan: SplitPlan? = null
     private var resolvedAspect: ResolvedAspect? = null
+
+    /**
+     * [실기기 확인, 2026-07-25] UNRESIZEABLE 앱(넷플릭스류)은 드래그 레시피가 팝업(프리폼)으로
+     * 라우팅돼 상하 분할-선택 진입이 불가능함이 확인됐다. `ResizeModeDetector` 판정 결과로
+     * `beginSession` 이 세션마다 결정하고, `cleanupSession` 이 DRAG 로 리셋한다.
+     */
+    private var entryRecipe: EntryRecipe = EntryRecipe.DRAG
     private val geometry = WindowGeometry.foldSevenLandscape()
     private var lastScreenshotAtMs: Long = 0L
     private var lastDragCompletedAtMs: Long = 0L
@@ -107,6 +120,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         dividerDragger = DividerDragger(this)
         paneSwapper = PaneSwapper(this)
         splitEntry = SplitEntry(this)
+        popupRotator = DividerPopupRotator(this)
         Log.i(TAG, "arranger service connected")
     }
 
@@ -189,11 +203,29 @@ class ArrangerAccessibilityService : AccessibilityService() {
             packageManager.getApplicationLabel(appInfo).toString()
         }.getOrNull()
 
+        // [측정 2026-07-25] 잔존 FW Panel 태스크(직전 세션이 프로세스 강제 종료로 자가 가드를
+        // 못 돌린 경우)가 분할 진입 피커의 "최근 앱" 섹션에 노출되면, SplitEntry 셀렉터가 그
+        // 죽은 태스크 카드를 탭 → 재개 즉시 전체화면 자가 가드 종료 → 분할 쌍 미성립 →
+        // 3회 재시도 소진 → Failed(ENTRY_STEP_FAILED) 로 귀결됨을 실기기에서 확인했다.
+        // 진입 단계가 시작되기 전, target 확정 직후 동기적으로 청소해 피커에 죽은 카드가
+        // 뜨지 않게 한다 (조용한 실패 금지: 청소 개수를 로그로 남긴다).
+        purgeStalePanelTasks()
+
+        // [실기기 확인, 2026-07-25] target 확정 직후 리사이즈 모드를 판정해 진입 레시피를 고른다.
+        // null(판정 불가 — 리플렉션 실패 등)은 안전하게 DRAG 로 폴백한다 (조용한 실패 금지: 로그로 드러냄).
+        val unresizeableDetection = ResizeModeDetector.isActivitiesUnresizeable(packageManager, target)
+        entryRecipe = if (unresizeableDetection == true) EntryRecipe.MENU else EntryRecipe.DRAG
+        Log.i(
+            TAG,
+            "resize-mode detection: target=$target unresizeableDetection=$unresizeableDetection " +
+                "recipe=$entryRecipe",
+        )
+
         // 1) 프로파일 로드 (성공만 캐싱, 실패 시 매번 재시도 + null config 로 진행)
         val config = loadProfilesConfig()
 
         // 2) ADR-1 티어 ②: 분할 진입 전 스냅샷 실측 (best effort — 실패해도 진행)
-        val measurement = preMeasureAspect(SystemClock.uptimeMillis())
+        val measurement = preMeasureAspect(SystemClock.uptimeMillis(), target)
 
         // 3) 종횡비/배치 결정
         val profile = config?.profiles?.firstOrNull { it.packageName == target }
@@ -215,17 +247,50 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 "clamp=${computedPlan.clampReason} preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
         )
 
-        // TODO(Phase 3): config?.defaults?.closedLoopCorrection 은 아직 배선하지 않았다.
-        // ArrangeStateMachine 의 ADR-5 단일 보정(reduceVerifying)은 이 플래그와 무관하게 항상 켜져 있다.
+        // [측정 2026-07-25] PROFILE(사용자가 고정한 진실) 종횡비 세션에서 오염된 재측정(컨트롤
+        // 오버레이/DRM 잔상을 띠로 오인, residual=224)이 정확한 배치를 과축소했다(1235→1011).
+        // PROFILE 소스는 재측정이 오염되기 쉬운데도 그 결과가 신뢰된 배치를 덮어쓰는 구조적 결함 —
+        // 보정은 신뢰 가능한 측정 경로(MEASURED/PRESET)에서만 켠다. config?.defaults?.closedLoopCorrection
+        // 이 false 면 어떤 소스든 보정하지 않는다(사용자/프로파일이 명시적으로 끈 값 우선).
         arrangeConfig = ArrangeConfig(
             residualTolerancePx = config?.defaults?.residualTolerancePx ?: 8,
-            // [실기기 확인, 2026-07-25] SplitEntry 진입 레시피가 4단계(메뉴 탭)에서 3단계
-            // (Recents → 상단 가장자리 홀드-드래그 → 파트너 배치)로 바뀌었다.
-            entryStepCount = 3,
+            // [실기기 확인, 2026-07-25] 진입 단계 수는 레시피에 따라 달라진다 — DRAG(리사이저블
+            // 앱 기본) 3단계, MENU(UNRESIZEABLE 전용, 회전 우회) 5단계.
+            entryStepCount = entryRecipe.stepCount,
+            // [측정 2026-07-25] 위치 교정(스왑 3s + 회전×2 폴백)이 Dragging 상태 안에서 실행돼
+            // 기본 3000ms 로는 DRAG_TIMEOUT (실측). 교정 경로 포함 예산으로 확대.
+            // ArrangeConfig 기본값 자체는 불변 — 이 세션 오버라이드만 확대한다.
+            dragTimeoutMs = SESSION_DRAG_TIMEOUT_MS,
+            closedLoopCorrection = (resolved.source != AspectSource.PROFILE) &&
+                (config?.defaults?.closedLoopCorrection ?: true),
         )
 
         dispatch(ArrangeEvent.Start(SystemClock.uptimeMillis(), computedPlan.dividerCenterY))
         startTickLoop()
+    }
+
+    /**
+     * [측정 2026-07-25] 앱 재설치 등으로 프로세스가 강제 종료되면 [PanelActivity]의 자가 가드
+     * (onResume/onMultiWindowModeChanged 의 finishAndRemoveTask)가 실행될 기회를 얻지 못해
+     * 태스크 레코드만 잔존한다. 이 잔존 카드가 분할 진입 피커의 "최근 앱" 섹션에 뜨면
+     * SplitEntry 의 피커 셀렉터가 그 죽은 태스크를 탭해 재개 → 즉시 전체화면 감지로 자가 가드가
+     * 종료 → 분할 쌍이 성립하지 못해 ENTRY_STEP_FAILED 로 귀결됨을 실기기 로그+스크린샷으로
+     * 확인했다. `appTasks` 는 자기 앱(패키지) 소유 태스크만 반환하므로 다른 앱을 건드릴 위험은
+     * 없지만, 그중에서도 [PanelActivity] 컴포넌트만 선별해 제거한다 (서비스 자체 태스크나
+     * 다른 액티비티 태스크를 오제거하지 않도록).
+     */
+    private fun purgeStalePanelTasks() {
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        var purged = 0
+        runCatching {
+            am.appTasks.forEach { task ->
+                val component = runCatching { task.taskInfo.baseIntent.component }.getOrNull()
+                if (component?.className == PanelActivity::class.java.name) {
+                    runCatching { task.finishAndRemoveTask() }.onSuccess { purged++ }
+                }
+            }
+        }
+        if (purged > 0) Log.i(TAG, "purgeStalePanelTasks: 잔존 패널 태스크 $purged 개 제거")
     }
 
     private suspend fun loadProfilesConfig(): WindowProfilesConfig? {
@@ -252,20 +317,64 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun preMeasureAspect(now: Long): AspectMeasurement? {
+    /**
+     * [측정 2026-07-25] 분할 활성 상태에서 트리거된 세션은 전체 화면을 그대로 스캔하면
+     * "상단 DRM 검정(넷플릭스) + 디바이더 + 하단 패널 UI"가 섞인 프레임을 스캔해 쓰레기 측정이
+     * 고신뢰로 채택됐다 — 실측 1(전체화면): aspect=1.1423/conf=0.906 채택 → 오배치,
+     * 실측 2(분할+재생중): aspect=2.9514/conf=0.974 채택 → 영상 페인 ~575px 로 압착.
+     * targetPackage 의 실제 APPLICATION 창 rect 를 찾을 수 있으면(분할 활성 등) 그 rect 로
+     * crop 해 대상 앱 콘텐츠만 스캔하고, 못 찾으면(전체화면 시나리오) 기존처럼 전체 비트맵을 스캔한다.
+     */
+    private suspend fun preMeasureAspect(now: Long, targetPackage: String?): AspectMeasurement? {
         if (now < lastScreenshotAtMs + SCREENSHOT_MIN_INTERVAL_MS) {
             Log.i(TAG, "pre-measure 스킵: 스크린샷 레이트리밋 백오프 중 (함정 #3)")
             return null
         }
         val bitmap = captureScreen() ?: return null
-        return try {
-            val scan = bitmap.toLetterboxScan(rowStride = ROW_STRIDE)
-            LetterboxDetector.resolveAspect(scan)
-        } catch (e: Exception) {
-            Log.w(TAG, "pre-measure 스캔 실패", e)
-            null
+        try {
+            val paneRect = actualVideoPaneRect(targetPackage, screenRect())
+            var scanCrop: Bitmap? = null
+            val scanTarget: Bitmap = if (paneRect != null) {
+                val crop = cropToRect(bitmap, paneRect)
+                if (crop == null) {
+                    // crop 실패 시 전체 화면으로 폴백하지 않는다 — 그게 바로 위 쓰레기 측정의 원인이었다.
+                    Log.w(TAG, "pre-measure: 대상 페인 crop 실패 — 측정 포기")
+                    return null
+                }
+                scanCrop = crop
+                crop
+            } else {
+                bitmap
+            }
+            return try {
+                val scan = scanTarget.toLetterboxScan(rowStride = ROW_STRIDE)
+                LetterboxDetector.resolveAspect(scan)
+            } catch (e: Exception) {
+                Log.w(TAG, "pre-measure 스캔 실패", e)
+                null
+            } finally {
+                scanCrop?.recycle()
+            }
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    /**
+     * bitmap 을 rect 로 crop 한다. bitmap 경계로 좌표를 coerce 하고, 실패 시 null 을 반환한다
+     * (handleMeasureLetterbox 와 preMeasureAspect 가 공유하는 crop 로직 — 함정 #4 무관, 반환된
+     * crop 은 호출자가 사용 후 recycle() 해야 한다. 원본 bitmap 은 이 함수가 건드리지 않는다).
+     */
+    private fun cropToRect(bitmap: Bitmap, rect: IntRect): Bitmap? {
+        val left = rect.left.coerceIn(0, bitmap.width - 1)
+        val top = rect.top.coerceIn(0, bitmap.height - 1)
+        val right = rect.right.coerceIn(left + 1, bitmap.width)
+        val bottom = rect.bottom.coerceIn(top + 1, bitmap.height)
+        return try {
+            Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+        } catch (e: Exception) {
+            Log.w(TAG, "cropToRect 실패", e)
+            null
         }
     }
 
@@ -313,6 +422,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         lastHandle = null
         desiredPlacement = Placement.TOP
         effectivePlacement = Placement.TOP
+        entryRecipe = EntryRecipe.DRAG
     }
 
     // ══════════════════════════════════════════════════════════
@@ -356,6 +466,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 selfPackage = packageName,
                 panelIntent = panelIntent,
                 screen = Rect(screen.left, screen.top, screen.right, screen.bottom),
+                recipe = entryRecipe,
             )
 
             // 머신 Tick 타임아웃(entryStepTimeoutMs)보다 먼저 결과 이벤트가 도착하도록 폴링 예산에
@@ -406,19 +517,33 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     dividerLocator.locate(safeWindows(), screen)?.let { lastHandle = it }
                     Log.i(TAG, "DragDividerTo: pane swap 성공 — 희망 위치($desiredPlacement) 유지")
                 } else {
-                    val recomputedActual = actualVideoPanePosition(target, screenRect()) ?: actualPosition
-                    effectivePlacement = recomputedActual
-                    val aspect = resolvedAspect?.aspect
-                    if (aspect != null) {
-                        val recomputedPlan = SplitPlanner.plan(geometry, aspect, recomputedActual)
-                        plan = recomputedPlan
-                        realTargetY = recomputedPlan.dividerCenterY
+                    // [측정 2026-07-25] "창 전환" 클릭 result=true 인데 실제 스왑 미발생이 2회
+                    // 연속 실측됐다 — 원인 미상. 최종 폴백으로 디바이더 핸들 회전을 2회 반복한다
+                    // (T/B → 회전1 → L/R → 회전2 → B/T, SplitEntry MENU step5 와 동일 원리 —
+                    // 회전 자체는 4회 전부 동작 실증됨).
+                    Log.w(TAG, "DragDividerTo: pane swap 실패 — 회전×2 폴백 시도")
+                    val rotated = rotateTwiceFallback(target, screen)
+
+                    if (rotated) {
+                        effectivePlacement = desiredPlacement
+                        dividerLocator.locate(safeWindows(), screen)?.let { lastHandle = it }
+                        Log.i(TAG, "DragDividerTo: 회전×2 폴백 성공 — 희망 위치($desiredPlacement) 유지")
+                    } else {
+                        val recomputedActual = actualVideoPanePosition(target, screenRect()) ?: actualPosition
+                        effectivePlacement = recomputedActual
+                        val aspect = resolvedAspect?.aspect
+                        if (aspect != null) {
+                            val recomputedPlan = SplitPlanner.plan(geometry, aspect, recomputedActual)
+                            plan = recomputedPlan
+                            realTargetY = recomputedPlan.dividerCenterY
+                        }
+                        Log.w(
+                            TAG,
+                            "DragDividerTo: pane swap + 회전×2 폴백 모두 실패 — 실제 위치($recomputedActual) " +
+                                "유지, 재계산 targetY=$realTargetY (사용자 의도 부분 달성: letterbox는 " +
+                                "제거하되 위치는 유지 — 조용한 실패 금지: reportTerminal 이 최종 토스트로 고지)",
+                        )
                     }
-                    Log.w(
-                        TAG,
-                        "DragDividerTo: pane swap 실패 — 실제 위치($recomputedActual) 유지, " +
-                            "재계산 targetY=$realTargetY (사용자 의도 부분 달성: letterbox는 제거하되 위치는 유지)",
-                    )
                 }
             }
 
@@ -441,6 +566,43 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /**
+     * [측정 2026-07-25] `PaneSwapper.swap` ("창 전환" 노드 클릭) result=true 인데 실제 스왑이
+     * 일어나지 않는 현상이 2회 연속 실측됐다(3000ms 대기에도 배치 불변, 원인 미상). 반면 디바이더
+     * 핸들 탭 → "시계 방향으로 회전" 노드 클릭은 4회 전부 동작 실증됨(SplitEntry MENU step5).
+     *
+     * 이미 만들어진 상하(T/B) 분할을 90도씩 두 번 회전하면 위/아래 페인이 맞교환된다
+     * (T/B → 회전1 → 좌우(L/R) → 회전2 → B/T). 회전 로직 자체는 [DividerPopupRotator] 로 추출돼
+     * `SplitEntry.menuStep5` 와 공유한다.
+     *
+     * 1회차 성공 조건: target+self 두 페인이 [PaneGeometry.isLeftRightSplit].
+     * 2회차 성공 조건: 두 페인이 [PaneGeometry.isTopBottomSplit] ∧ 실제 위치가 [desiredPlacement].
+     */
+    private suspend fun rotateTwiceFallback(target: String?, screen: IntRect): Boolean {
+        fun paneRects(): List<IntRect> = listOfNotNull(
+            actualVideoPaneRect(target, screen),
+            actualVideoPaneRect(packageName, screen),
+        )
+
+        val firstRotated = popupRotator.rotateOnce(screen, ROTATE_STEP_TIMEOUT_MS) {
+            PaneGeometry.isLeftRightSplit(paneRects(), screen)
+        }
+        if (!firstRotated) {
+            Log.w(TAG, "rotateTwiceFallback: 1회차 회전 실패(좌우 분할 미도달)")
+            return false
+        }
+
+        val secondRotated = popupRotator.rotateOnce(screen, ROTATE_STEP_TIMEOUT_MS) {
+            PaneGeometry.isTopBottomSplit(paneRects(), screen) &&
+                actualVideoPanePosition(target, screen) == desiredPlacement
+        }
+        if (!secondRotated) {
+            Log.w(TAG, "rotateTwiceFallback: 2회차 회전 실패(상하 분할 또는 희망 위치 미도달)")
+            return false
+        }
+        return true
     }
 
     private fun handleMeasureLetterbox(notBeforeMs: Long) {
@@ -475,19 +637,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val left = paneRect.left.coerceIn(0, bitmap.width - 1)
-                val top = paneRect.top.coerceIn(0, bitmap.height - 1)
-                val right = paneRect.right.coerceIn(left + 1, bitmap.width)
-                val bottom = paneRect.bottom.coerceIn(top + 1, bitmap.height)
-
-                val crop = try {
-                    Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-                } catch (e: Exception) {
-                    Log.w(TAG, "MeasureLetterbox: crop 실패", e)
-                    null
-                }
-
+                val crop = cropToRect(bitmap, paneRect)
                 if (crop == null) {
+                    Log.w(TAG, "MeasureLetterbox: crop 실패")
                     dispatch(ArrangeEvent.MeasureResult(SystemClock.uptimeMillis(), null, null))
                     return@launch
                 }
@@ -609,17 +761,30 @@ class ArrangerAccessibilityService : AccessibilityService() {
         return if (visibleCenterY < screenCenterY) Placement.TOP else Placement.BOTTOM
     }
 
-    /** targetPackage 의 APPLICATION 창과 화면의 가시 교집합. 못 찾으면 null (함정 #2: 오프스크린 슬라이드 대응) */
+    /**
+     * targetPackage 의 APPLICATION 창 중 "분할 페인 같은" 것과 화면의 가시 교집합. 못 찾으면 null
+     * (함정 #2: 오프스크린 슬라이드 대응).
+     *
+     * [측정 2026-07-25] 넷플릭스가 분할 진입 도중 "최소화된 플레이어" 팝업(같은 패키지의 좁은
+     * 부유 창)을 함께 띄우는 현상이 실측됐다. 예전에는 targetPackage 의 APPLICATION 창을
+     * `firstOrNull` 로 하나만 집었는데, windows 순회 순서에 따라 이 팝업이 먼저 걸리면 위치
+     * 판정(TOP/BOTTOM)과 letterbox crop 이 세션 내내 오염됐다. 이제는 같은 패키지의 **모든**
+     * APPLICATION 창 bounds 를 모아 `PaneGeometry.pickPaneLike` 로 선별한다 — 폭이 좁은 팝업은
+     * 배제되고, 남은 후보 중 가시 면적이 가장 넓은 것(진짜 분할 페인)이 채택된다.
+     */
     private fun actualVideoPaneRect(targetPackage: String?, screen: IntRect): IntRect? {
         if (targetPackage == null) return null
-        val window = safeWindows().firstOrNull { w ->
-            runCatching { w.type }.getOrNull() == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                runCatching { w.root?.packageName?.toString() }.getOrNull() == targetPackage
-        } ?: return null
-        val bounds = Rect()
-        val ok = runCatching { window.getBoundsInScreen(bounds) }.isSuccess
-        if (!ok) return null
-        return PaneGeometry.visibleRect(IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom), screen)
+        val candidates = safeWindows()
+            .filter { w ->
+                runCatching { w.type }.getOrNull() == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    runCatching { w.root?.packageName?.toString() }.getOrNull() == targetPackage
+            }
+            .mapNotNull { w ->
+                val bounds = Rect()
+                val ok = runCatching { w.getBoundsInScreen(bounds) }.isSuccess
+                if (ok) IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom) else null
+            }
+        return PaneGeometry.pickPaneLike(candidates, screen)
     }
 
     // ══════════════════════════════════════════════════════════
@@ -673,7 +838,27 @@ class ArrangerAccessibilityService : AccessibilityService() {
         private const val DIVIDER_SETTLE_MS = 600L
 
         private const val DIVIDER_LOCATE_MIN_INTERVAL_MS = 200L
-        private const val SWAP_TIMEOUT_MS = 1200L
+        /**
+         * [측정 2026-07-25] 1200ms 예산에서 "창 전환" 클릭 성공(+0.8s 시점) 후 애니메이션 완료 전에
+         * 실패 판정 → 하단 플랜 재드래그와 경합. 팝업 재시도(최대 3탭×700ms) + 전환 애니메이션까지
+         * 흡수하도록 3000ms 로 확대.
+         */
+        private const val SWAP_TIMEOUT_MS = 3000L
+
+        /**
+         * [측정 2026-07-25] PaneSwapper.swap 실패 폴백(회전×2)의 회전 1회당 예산.
+         * SplitEntry MENU step5(회전 1회, 3000ms)와 동일한 예산으로 맞춘다 — 핸들 재조회 →
+         * 탭 → 회전 팝업 노드 재시도(최대 3탭×700ms) → 정착 폴링까지 흡수해야 한다.
+         */
+        private const val ROTATE_STEP_TIMEOUT_MS = 3000L
+
+        /**
+         * [측정 2026-07-25] 위치 교정(스왑 3s + 회전×2 폴백 최대 6s)이 `Dragging` 상태 안에서
+         * 실행돼 `ArrangeConfig.dragTimeoutMs` 기본값(3000ms)으로는 DRAG_TIMEOUT 이 실측됐다
+         * (12:12:33 로그). 교정 경로 전체 + 실제 드래그 제스처까지 흡수하도록 세션 오버라이드를
+         * 12000ms 로 확대한다. domain 의 ArrangeConfig 기본값 자체는 불변.
+         */
+        private const val SESSION_DRAG_TIMEOUT_MS = 12_000L
 
         /**
          * 머신 Tick 타임아웃(entryStepTimeoutMs)보다 먼저 결과 이벤트가 도착하도록 폴링 예산에

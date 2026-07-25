@@ -28,10 +28,10 @@
     {
       "package": "com.netflix.mediaclient",
       "label": "Netflix",
-      "aspect": null,
-      "aspectSource": "MEASURED",
+      "aspect": 1.7778,
+      "aspectSource": "PROFILE",
       "placement": "TOP",
-      "note": "DRM 화면이라 캡처가 검게 나오면 프리셋으로 폴백된다"
+      "note": "[측정 2026-07-25] DRM+분할 UI 오염으로 실측 경로가 고신뢰 오측(1.14/2.95) 생성 — 실측 금지, 프로파일 고정. 콘텐츠별 비율은 사용자 프리셋으로 조정"
     },
     {
       "package": "net.cj.cjhv.gs.tving",

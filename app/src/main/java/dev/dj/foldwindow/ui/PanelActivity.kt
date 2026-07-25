@@ -58,6 +58,9 @@ class PanelActivity : ComponentActivity() {
         // 600ms 유예: 분할 배치 전환 중 일시적으로 멀티윈도우 아님으로 보고될 수 있어
         // 즉시 종료하면 정상 배치를 죽인다. 이 대기는 라이프사이클 전환 유예이지
         // 상태 전이 대체가 아님 (ADR-2 취지 유지).
+        // 한계: 프로세스가 강제 종료(예: 앱 재설치)되면 이 가드 자체가 실행될 기회를 얻지
+        // 못해 태스크 레코드만 잔존할 수 있다 — 그 잔존 청소는
+        // ArrangerAccessibilityService.beginSession 의 purgeStalePanelTasks 가 세션 시작 시 담당한다.
         scheduleFullscreenCheck(600)
     }
 

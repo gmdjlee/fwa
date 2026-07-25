@@ -225,6 +225,38 @@ class ArrangeStateMachineTest {
     }
 
     @Test
+    fun `closedLoopCorrection disabled reports residual honestly without correction drag`() {
+        val config = ArrangeConfig(residualTolerancePx = 8, closedLoopCorrection = false)
+        val verifying = ArrangeState.Verifying(since = 300, targetY = 1000, adjustedOnce = false, lastShotAt = 300)
+
+        val t = reduce(
+            verifying,
+            ArrangeEvent.MeasureResult(nowMs = 1500, residualPx = 224, correctedTargetY = 1235),
+            config,
+        )
+        assertEquals(ArrangeState.Done(verified = true, finalResidualPx = 224, adjusted = false), t.state)
+        assertTrue(t.effects.isEmpty())
+    }
+
+    @Test
+    fun `closedLoopCorrection default true preserves existing single-correction behavior`() {
+        val config = ArrangeConfig(residualTolerancePx = 8)
+        assertTrue(config.closedLoopCorrection)
+        val verifying = ArrangeState.Verifying(since = 300, targetY = 1000, adjustedOnce = false, lastShotAt = 300)
+
+        val correctT = reduce(
+            verifying,
+            ArrangeEvent.MeasureResult(nowMs = 1500, residualPx = 20, correctedTargetY = 1010),
+            config,
+        )
+        assertEquals(
+            ArrangeState.Dragging(since = 1500, targetY = 1010, adjustedOnce = true, lastShotAt = 300),
+            correctT.state,
+        )
+        assertEquals(listOf(ArrangeEffect.DragDividerTo(1010)), correctT.effects)
+    }
+
+    @Test
     fun `measure failure yields unverified done`() {
         val verifying = ArrangeState.Verifying(since = 300, targetY = 1000, adjustedOnce = false, lastShotAt = 300)
         val t = reduce(verifying, ArrangeEvent.MeasureResult(nowMs = 1500, residualPx = null, correctedTargetY = null))
@@ -271,6 +303,52 @@ class ArrangeStateMachineTest {
         val dragging = ArrangeState.Dragging(since = 100, targetY = 1000, adjustedOnce = false, lastShotAt = null)
         val t2 = reduce(dragging, ArrangeEvent.Cancel(nowMs = 200))
         assertEquals(ArrangeState.Failed(FailureReason.CANCELLED), t2.state)
+    }
+
+    // ── 5단계 진입 레시피 (MENU, UNRESIZEABLE 전용) ─────────────
+
+    @Test
+    fun `five step entry recipe succeeds through all steps then waits for divider`() {
+        val config = ArrangeConfig(entryStepCount = 5)
+
+        var t = reduce(ArrangeState.Idle, ArrangeEvent.Start(nowMs = 0, targetDividerCenterY = 1000), config)
+        t = reduce(t.state, ArrangeEvent.SplitStateResult(nowMs = 10, active = false), config)
+        assertEquals(ArrangeState.EnteringSplit(step = 1, attempt = 1, stepSince = 10, targetY = 1000), t.state)
+        assertEquals(listOf(ArrangeEffect.PerformEntryStep(1)), t.effects)
+
+        for (step in 1..5) {
+            val stepNow = 10L + step * 10
+            t = reduce(t.state, ArrangeEvent.EntryStepResult(nowMs = stepNow, success = true), config)
+            if (step < 5) {
+                assertEquals(
+                    ArrangeState.EnteringSplit(step = step + 1, attempt = 1, stepSince = stepNow, targetY = 1000),
+                    t.state,
+                )
+                assertEquals(listOf(ArrangeEffect.PerformEntryStep(step + 1)), t.effects)
+            } else {
+                assertEquals(ArrangeState.WaitingDivider(since = stepNow, targetY = 1000), t.state)
+                assertEquals(listOf(ArrangeEffect.QueryDivider), t.effects)
+            }
+        }
+    }
+
+    @Test
+    fun `five step entry recipe fails when step5 exhausts retry attempts`() {
+        val config = ArrangeConfig(entryStepCount = 5, entryStepMaxAttempts = 3)
+
+        var t = reduce(
+            ArrangeState.EnteringSplit(step = 5, attempt = 1, stepSince = 0, targetY = 1000),
+            ArrangeEvent.EntryStepResult(nowMs = 10, success = false),
+            config,
+        )
+        assertEquals(2, (t.state as ArrangeState.EnteringSplit).attempt)
+
+        t = reduce(t.state, ArrangeEvent.EntryStepResult(nowMs = 20, success = false), config)
+        assertEquals(3, (t.state as ArrangeState.EnteringSplit).attempt)
+
+        t = reduce(t.state, ArrangeEvent.EntryStepResult(nowMs = 30, success = false), config)
+        assertEquals(ArrangeState.Failed(FailureReason.ENTRY_STEP_FAILED), t.state)
+        assertTrue(t.effects.isEmpty())
     }
 
     // ── 스테일 이벤트 무시 ────────────────────────────────────

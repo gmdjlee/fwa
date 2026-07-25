@@ -35,6 +35,7 @@ data class ArrangeConfig(
     val screenshotMinIntervalMs: Long = 1100, // takeScreenshot 레이트 리밋 백오프
     val dividerTolerancePx: Int = 4,          // 이 이내면 드래그 생략
     val residualTolerancePx: Int = 8,         // 잔여 띠 허용치
+    val closedLoopCorrection: Boolean = true, // ADR-5 1회 보정 활성화 여부. false면 잔여값만 정직 보고
 )
 
 /** 서비스가 머신에 밀어넣는 사건. 전부 발생 시각(nowMs)을 들고 온다 — 절대시간은 머신 밖에서 구한다. */
@@ -344,7 +345,7 @@ object ArrangeStateMachine {
                     emptyList(),
                 )
 
-                !state.adjustedOnce -> {
+                !state.adjustedOnce && config.closedLoopCorrection -> {
                     // ADR-5: 잔여 초과 시 정확히 1회 미세 조정
                     val correctedTarget = event.correctedTargetY ?: state.targetY
                     Transition(
@@ -355,6 +356,17 @@ object ArrangeStateMachine {
                             lastShotAt = state.lastShotAt,
                         ),
                         listOf(ArrangeEffect.DragDividerTo(correctedTarget)),
+                    )
+                }
+
+                !state.adjustedOnce -> {
+                    // [측정 2026-07-25] PROFILE 종횡비에서 오염된 재측정(컨트롤 오버레이 residual=224)이
+                    // 정확한 배치를 과축소 — 보정은 신뢰 가능한 측정 경로(MEASURED/PRESET)에서만.
+                    // closedLoopCorrection=false 인 경우 보정하지 않고 잔여값을 정직하게 보고한다
+                    // (조용한 실패 금지 — Done(verified=true)로 끝나되 residual/adjusted 는 사실 그대로).
+                    Transition(
+                        ArrangeState.Done(verified = true, finalResidualPx = residual, adjusted = false),
+                        emptyList(),
                     )
                 }
 
