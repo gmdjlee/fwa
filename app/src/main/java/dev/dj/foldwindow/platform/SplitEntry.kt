@@ -130,41 +130,79 @@ class SplitEntry(private val service: AccessibilityService) {
      * 성공 조건: [PaneGeometry.isSplitSelectTopPane] — 대상 창이 전폭·상단 도킹·가시 높이
      * 비율 15~75% 를 모두 만족하는 상하 분할-선택 상태. (팝업/프리폼 오탐 차단 — 실측 근거는
      * DEVICE_FACTS.md "step2/3 성공 조건 허점" 참조.)
+     *
+     * [회귀 수정, 실기기 확인 2026-07-25] 유튜브 DRAG E2E 회귀 로그 분석 결과 두 가지 판정
+     * 버그가 확인됐다:
+     *  1. 유령 매치 즉시 실패 — `structural-clickable-label` 셀렉터가 bounds 조회 불가 노드를
+     *     매치하면 시도 전체가 수 ms 만에 false 로 끝났다. 이제는 유효 bounds 를 못 얻어도
+     *     시도를 끝내지 않고 재폴링을 계속한다.
+     *  2. 성공 미인지 재시도 — 드래그가 물리적으로 성공해도 전환 애니메이션 정착이 폴링 잔여
+     *     예산(관찰: 정착 직전 ~370ms 남음, 정착에는 더 필요)을 넘기면 실패로 판정됐고, 다음
+     *     시도는 이미 사라진 Recents 카드를 재탐색하다 영원히 실패했다. 이제는 매 폴링 주기마다
+     *     먼저 목표 상태(분할-선택 상단) 도달 여부를 확인해 이전 시도의 늦은 정착을 흡수한다.
      */
     private suspend fun step2DragToTopEdge(ctx: EntryContext, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
-        val iconNode = pollForNode(remaining()) { findCardIconNode(ctx) }
-        if (iconNode == null) {
-            Log.w(TAG, "step2: 카드 아이콘 노드를 ${timeoutMs}ms 안에 찾지 못함")
+        val acquired = pollForValue(remaining()) {
+            if (isTargetInSplitSelectTopState(ctx)) {
+                Step2Acquire.AlreadyThere
+            } else {
+                val iconNode = findCardIconNode(ctx)
+                if (iconNode == null) {
+                    null
+                } else {
+                    val rect = Rect()
+                    val gotBounds =
+                        runCatching { iconNode.getBoundsInScreen(rect) }.isSuccess && !rect.isEmpty
+                    if (gotBounds) {
+                        Step2Acquire.BoundsReady(rect)
+                    } else {
+                        // 유령 매치 — 시도를 끝내지 않고 다음 폴링 주기로 넘어간다.
+                        Log.w(TAG, "step2: 카드 아이콘 bounds 조회 실패 — 유령 매치, 재폴링 계속")
+                        null
+                    }
+                }
+            }
+        }
+        if (acquired == null) {
+            Log.w(TAG, "step2: ${timeoutMs}ms 안에 목표 상태 도달도, 유효 카드 아이콘도 확보하지 못함")
             return false
         }
-        val bounds = Rect()
-        val gotBounds = runCatching { iconNode.getBoundsInScreen(bounds) }.isSuccess
-        if (!gotBounds || bounds.isEmpty) {
-            Log.w(TAG, "step2: 카드 아이콘 bounds 조회 실패")
-            return false
+        return when (acquired) {
+            is Step2Acquire.AlreadyThere -> {
+                Log.i(TAG, "step2: 분할-선택 상태 이미 도달 — 드래그 생략")
+                true
+            }
+            is Step2Acquire.BoundsReady -> {
+                val bounds = acquired.bounds
+                val dropX = ctx.screen.centerX()
+                val dropY = ctx.screen.top + EntrySelectors.DROP_MARGIN_PX
+                Log.i(
+                    TAG,
+                    "step2: holdThenDrag icon(${bounds.centerX()},${bounds.centerY()}) -> ($dropX,$dropY)",
+                )
+                val gestureCompleted = suspendHoldThenDrag(
+                    fromX = bounds.centerX(),
+                    fromY = bounds.centerY(),
+                    toX = dropX,
+                    toY = dropY,
+                )
+                if (!gestureCompleted) {
+                    // step1 과 동일한 관례: 제스처 완료 콜백이 false 여도(예: 타이밍 경합) 실제 시스템
+                    // 반응은 비동기일 수 있으므로 성공 조건 폴링은 그대로 계속한다. 조용히 포기하지 않는다.
+                    Log.w(TAG, "step2: holdThenDrag 완료 콜백=false — 그래도 상태 폴링 계속")
+                }
+                pollUntil(remaining()) { isTargetInSplitSelectTopState(ctx) }
+            }
         }
+    }
 
-        val dropX = ctx.screen.centerX()
-        val dropY = ctx.screen.top + EntrySelectors.DROP_MARGIN_PX
-        Log.i(
-            TAG,
-            "step2: holdThenDrag icon(${bounds.centerX()},${bounds.centerY()}) -> ($dropX,$dropY)",
-        )
-        val gestureCompleted = suspendHoldThenDrag(
-            fromX = bounds.centerX(),
-            fromY = bounds.centerY(),
-            toX = dropX,
-            toY = dropY,
-        )
-        if (!gestureCompleted) {
-            // step1 과 동일한 관례: 제스처 완료 콜백이 false 여도(예: 타이밍 경합) 실제 시스템
-            // 반응은 비동기일 수 있으므로 성공 조건 폴링은 그대로 계속한다. 조용히 포기하지 않는다.
-            Log.w(TAG, "step2: holdThenDrag 완료 콜백=false — 그래도 상태 폴링 계속")
-        }
-        return pollUntil(remaining()) { isTargetInSplitSelectTopState(ctx) }
+    /** [step2DragToTopEdge] 통합 폴링 결과: 목표 상태에 이미 도달했는지, 유효 bounds 를 확보했는지. */
+    private sealed class Step2Acquire {
+        object AlreadyThere : Step2Acquire()
+        data class BoundsReady(val bounds: Rect) : Step2Acquire()
     }
 
     /** [holdThenDrag] 의 콜백을 suspend 로 잇는다. 정확히 한 번만 재개된다. */
@@ -198,6 +236,12 @@ class SplitEntry(private val service: AccessibilityService) {
      * LAUNCH_ADJACENT 전체화면 강탈을 성공으로 오판할 수 있었다 — PROGRESS.md 열린 질문 #18.)
      */
     private suspend fun step3PlacePartner(ctx: EntryContext, timeoutMs: Long): Boolean {
+        // [회귀 예방, 2026-07-25] step2 와 동일한 함정: 이전 시도의 클릭/드래그가 정착 지연으로
+        // 실패 판정된 뒤 성공을 몰라보고 재탐색부터 시작하면 안 된다 — 먼저 목표 상태를 확인한다.
+        if (isSplitPairPresent(ctx)) {
+            Log.i(TAG, "step3: 분할 쌍 이미 존재 — 피커 탭 생략")
+            return true
+        }
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
@@ -262,6 +306,11 @@ class SplitEntry(private val service: AccessibilityService) {
      * step5 회전 단계와 결합해 좌우→상하 전환이 가능함이 실측 확정됐다 — 유일한 진입 경로.
      */
     private suspend fun menuStep3TapSplitMenuNode(ctx: EntryContext, timeoutMs: Long): Boolean {
+        // [회귀 예방, 2026-07-25] step2 정착-지연 함정과 동일 패턴의 선체크.
+        if (isTargetInSplitSelectSideState(ctx)) {
+            Log.i(TAG, "menuStep3: 좌우 분할-선택 상태 이미 도달 — 메뉴 탭 생략")
+            return true
+        }
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
@@ -282,6 +331,11 @@ class SplitEntry(private val service: AccessibilityService) {
      * 성공 조건: 패키지 2종 존재 ∧ [PaneGeometry.isLeftRightSplit] ([isSplitPairPresentLeftRight]).
      */
     private suspend fun menuStep4TapPartnerInPicker(ctx: EntryContext, timeoutMs: Long): Boolean {
+        // [회귀 예방, 2026-07-25] step2 정착-지연 함정과 동일 패턴의 선체크.
+        if (isSplitPairPresentLeftRight(ctx)) {
+            Log.i(TAG, "menuStep4: 좌우 분할 쌍 이미 존재 — 피커 탭 생략")
+            return true
+        }
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
@@ -308,8 +362,14 @@ class SplitEntry(private val service: AccessibilityService) {
      * 핸들 재조회·탭·회전 노드 폴링·클릭 로직 자체는 [DividerPopupRotator] 로 추출되어
      * 서비스 레이어의 위치 교정 폴백(PaneSwapper 실패 시 회전×2)과 공유된다.
      */
-    private suspend fun menuStep5RotateDivider(ctx: EntryContext, timeoutMs: Long): Boolean =
-        rotator.rotateOnce(ctx.screen.toIntRect(), timeoutMs) { isSplitPairPresent(ctx) }
+    private suspend fun menuStep5RotateDivider(ctx: EntryContext, timeoutMs: Long): Boolean {
+        // [회귀 예방, 2026-07-25] step2 정착-지연 함정과 동일 패턴의 선체크 — 회전 호출 전에 확인.
+        if (isSplitPairPresent(ctx)) {
+            Log.i(TAG, "menuStep5: 상하 분할 쌍 이미 존재 — 회전 생략")
+            return true
+        }
+        return rotator.rotateOnce(ctx.screen.toIntRect(), timeoutMs) { isSplitPairPresent(ctx) }
+    }
 
     // ══════════════════════════════════════════════════════════
     // 성공 조건 판정
@@ -399,9 +459,24 @@ class SplitEntry(private val service: AccessibilityService) {
                     EntrySelectors.CARD_ICON_DESC_EN.any { desc.contains(it) } &&
                     desc.contains(label.lowercase())
             },
+            // [실측 2026-07-25 3차] "구조적" 셀렉터라 라벨만 맞으면 매치되는데, 정작 Recents 카드
+            // 본체/섬네일(대형 노드, 실측 중심 1092,833)이 label 을 contentDescription 으로 물려받아
+            // 유효 bounds 를 가진 채로 오매치됐다 — holdThenDrag 가 그 큰 카드를 통째로 끌어 Recents
+            // 세션 자체를 파괴하고 빈-bounds 가드(2026-07-25 2차 수정)는 통과해버렸다. 진짜 아이콘은
+            // 카드 헤더의 소형 아이콘(성공 런 2회 실측 중심 (593,323), 대략 90px 급)이므로, 화면 폭의
+            // 1/10(2184px 기준 ≈218px, 좌표 하드코딩이 아니라 화면 비율 기준) 이하인 정사각형에 가까운
+            // 노드만 매치로 인정한다 — 카드 본체 같은 수백 px 대형 노드를 차단한다.
             "structural-clickable-label" to { node ->
-                label != null && node.isClickable &&
-                    node.contentDescription?.toString()?.contains(label) == true
+                if (label == null || !node.isClickable ||
+                    node.contentDescription?.toString()?.contains(label) != true
+                ) {
+                    false
+                } else {
+                    val rect = Rect()
+                    val gotBounds = runCatching { node.getBoundsInScreen(rect) }.isSuccess
+                    val maxIconDim = ctx.screen.width() / 10
+                    gotBounds && !rect.isEmpty && rect.width() <= maxIconDim && rect.height() <= maxIconDim
+                }
             },
         )
         return firstMatch("step2 card-icon", roots, selectors)
@@ -517,22 +592,23 @@ class SplitEntry(private val service: AccessibilityService) {
     }
 
     /**
-     * [timeoutMs] 안에서 [POLL_INTERVAL_MS] 간격으로 [find] 가 노드를 찾을 때까지 폴링한다.
-     * [clickWhenFound] 와 달리 클릭하지 않는다 — step2 처럼 좌표(bounds)만 필요하고 노드 자체를
-     * 드래그 시작점으로 쓰는 경우에 쓴다.
+     * [timeoutMs] 안에서 [POLL_INTERVAL_MS] 간격으로 [find] 가 null 이 아닌 값을 반환할 때까지
+     * 폴링한다. 제네릭 버전 — [step2DragToTopEdge] 의 "목표 상태 이미 도달" 대 "유효 카드 아이콘
+     * 확보" 이중 판정처럼, 매 폴링 주기마다 여러 조건을 함께 확인해야 하는 경우에 재사용한다
+     * ([회귀 수정, 2026-07-25] 기존 `pollForNode` 를 일반화해 대체).
      */
-    private suspend fun pollForNode(
+    private suspend fun <T> pollForValue(
         timeoutMs: Long,
-        find: () -> AccessibilityNodeInfo?,
-    ): AccessibilityNodeInfo? {
+        find: () -> T?,
+    ): T? {
         if (timeoutMs <= 0) return find()
         return withTimeoutOrNull(timeoutMs) {
-            var node = find()
-            while (node == null) {
+            var value = find()
+            while (value == null) {
                 delay(POLL_INTERVAL_MS)
-                node = find()
+                value = find()
             }
-            node
+            value
         }
     }
 
@@ -673,8 +749,10 @@ private object EntrySelectors {
 
     const val LAUNCHER_PACKAGE = "com.sec.android.app.launcher"
 
-    // [미검증] step3/menuStep4 폴백 피커에서 우리 패널을 찾기 위한 라벨 후보. 실제 앱 라벨 문자열 확정 전까지 후보로 유지
-    val PANEL_LABEL_CANDIDATES: List<String> = listOf("FW Panel", "FoldWindow")
+    // [실측 2026-07-25] "FoldWindow" 후보가 P3-4 OnboardingActivity 라벨(@string/app_name = "FoldWindow")
+    // 과 충돌해 피커가 온보딩을 오클릭 → 전체화면으로 떠 분할-선택을 파괴함이 실기기에서 재현됐다.
+    // "FW Panel" 만 남긴다. 후보 추가 시 앱 서랍에 노출되는 다른 액티비티 라벨과 겹치지 않는지 반드시 확인할 것.
+    val PANEL_LABEL_CANDIDATES: List<String> = listOf("FW Panel")
 
     // 회전 팝업 노드 셀렉터(ROTATE_DESC_KO/EN)는 DividerPopupRotator 로 이동했다 —
     // SplitEntry.menuStep5 와 서비스 레이어 위치 교정 폴백이 공유하는 단일 출처.
