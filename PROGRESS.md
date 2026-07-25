@@ -2,14 +2,17 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-25 오후 4차 (**P3-2 실기기 검증 완료 + 결함 3건 수정** — ① dismissSplit 드래그 가설 반증→패널 finish 방식 재구현·E2E 성공 ② 메뉴 재탭 경합 실측→풀스크린 스크림 재구성 ③ 스크림發 a11y 창 목록 false-negative→isSplitActive 자체 폴링. 131 테스트·빌드 통과, 전 결함 실기기 E2E 재검증)
-**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 완료, P3-2 **완료(실기기 E2E 검증)**, 잔여 P3-3·P3-5
+**최종 갱신:** 2026-07-25 오후 5차 (**P3-2 검증분 커밋 `a104d70`** + "분할 없음" dismiss 지연 실측 2.0s(설계대로) + **BootReceiver 실부팅 검증 통과** — `adb reboot` 후 "boot: 버블 자동 복귀 시작" 로그, FloatingLauncherService FGS 자동 기동, 접근성 서비스 유지, 홈 화면 버블 가시 전부 확인 → #23 부팅 복귀 해소. P3-3 설계 확정)
+**현재 Phase:** Phase 3 진행 중 — P3-1·P3-4 완료(부팅 복귀 포함), P3-2 **완료·커밋됨**, 잔여 P3-3·P3-5
 **다음 행동 (착수 목록):**
-1. 미커밋 변경 커밋 (P3-2 검증 수정 3건: ArrangerAccessibilityService/FloatingLauncherService/PanelActivity + 문서 — 사용자 승인 후)
-2. P3-1 잔여 실기기 검증: 부팅 후 버블 자동 복귀(BootReceiver [미검증]), 알림 권한 플로우. P3-2 잔여: dismissSplit 인텐트 폴백(instance null) [미검증], "분할 없음" 2s 대기 체감 확인
-3. Phase 3 계속: P3-3 DataStore 프로파일 (버블 prefs 이관 포함), P3-5 FoldingFeature. **#12 신뢰도 필터 우선 검토** — 영상 시작 직후 탭 시 1.6 오측 실측 (DEVICE_FACTS 참조)
-4. **#20/#25 step3 피커 탭 변동성**: 메뉴發 배치 4회 중 2회 step3 3연속 실패 실측 (클릭 무효/오라우팅, DEVICE_FACTS P3-2 절 참조) — 좌표 탭 제스처 대체 검토
-5. Phase 3 중 검토: 회전×2 폴백 실기기 검증 기회 확보
+1. BootReceiver 검증 결과 커밋 (PROGRESS/DEVICE_FACTS 문서분 — 사용자 승인 후)
+2. **P3-3 위임 (설계 확정됨)**: 범위 = ① 버블 prefs(enabled/x/y) SharedPreferences→DataStore 이관 (BootReceiver goAsync+runBlocking 동기 읽기) ② 앱별 마지막 성공 placement 저장→탭 기본값 복원 ③ `data/ProfileStore.kt` + 순수 매핑 JVM 테스트. **제외**: 측정 종횡비 캐싱 (#12 신뢰도 필터 전엔 오염 고착 위험 — 실측 사고 2회)
+3. #12 신뢰도 필터 검토 → 이후 측정 캐싱 재검토. P3-5 FoldingFeature
+4. **#20/#25 step3 피커 탭 변동성**: 메뉴發 배치 4회 중 2회 step3 3연속 실패 실측 (클릭 무효/오라우팅, DEVICE_FACTS P3-2 절) — 좌표 탭 제스처 대체 검토
+5. P3-2 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로). 회전×2 폴백 검증 기회 확보
+6. 알림 권한 플로우 실기기 확인 (P3-1 잔여)
+
+**개발 환경 주의 (이 세션 실측)**: Git Bash 에서 gradlew 는 `JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` 프리픽스 필수 — 없으면 installDebug 가 조용히 실패해 구버전 APK 로 검증하게 됨 (실제 발생, 40분 소모). screencap 은 `-d 4630946449689556883` (멀티 디스플레이). adb 롱프레스 시뮬레이션은 `input swipe x y x y 1200` (700ms 는 경계 실패).
 **다음 행동:** 실기기 검증 절차:
 
 ```bash
@@ -91,7 +94,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE --es placement top
 20. "창 전환" ACTION_CLICK 무효 (회전 직후 컨텍스트 2회 실측, 유튜브 세션에선 성공) — 원인 탐구 필요. 좌표 탭 제스처로 대체 시도 검토. **2026-07-25 오후 4차 보강: step3 피커 탭도 동일 계열 변동성 실측** — 메뉴發 배치 4회 중 2회 step3 3연속 실패(클릭 무효 2회 = 액티비티 생성 이벤트 없음 / `startActivityFromRecents` 오라우팅 1회), 직후 재시도는 성공. 성공 시그니처 = `startActivityAsUser:launcher` (DEVICE_FACTS P3-2 절)
 21. PROFILE 보정 생략으로 verify 측정값(residual 122~224)은 보고 전용 — 컨트롤 오버레이 오염이라 신뢰 낮음. Phase 3 신뢰도 필터(#12)와 함께 재설계
 22. 버블 오버레이 존재 시 피커發 파트너가 전체화면 낙착하는 **메커니즘 불명** (One UI WM 라우팅 추정) — 현재 경험 법칙(세션 중 버블 숨김)으로 해소. One UI 업데이트 시 재검증 필요
-23. P3-1 잔여 [미검증]: BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용, 버블 제스처 임계값 실사용감, 30s 안전 타이머 vs 최장 세션(교정 체인 포함) 여유
+23. P3-1 잔여: ~~BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용~~ → **2026-07-25 오후 5차 실부팅 검증 통과** (BOOT_COMPLETED 수신 로그·FGS 자동 기동·접근성 유지·버블 가시 전부 확인). 잔여 [미검증]: 버블 제스처 임계값 실사용감, 30s 안전 타이머 vs 최장 세션(교정 체인 포함) 여유
 24. ~~P3-2 [미검증] 전체~~ → **2026-07-25 오후 4차 실기기 검증으로 전부 해소**: ① 드래그 해제 가정 **반증** (dispatchGesture 스냅백 2/2 vs 동일 기하 input swipe 성공 3/3) → **패널 finish 방식으로 재구현·E2E 성공** ② 클램프 가로/세로 실기기 정상 ③ DOWN 스냅샷 방어 **실패 실측** (OUTSIDE 선행 디스패치 → 재탭이 배치 오발화) → **풀스크린 스크림으로 구조 해결·E2E 확인** ④ 프리셋 6종 최초 롱프레스에 정상 렌더. 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로), "분할 없음" 시 2s 대기 후 토스트 체감
 25. 스크림 부산물 (해결·기록): 풀스크린 터치 가능 오버레이가 떠 있는 동안 하위 창이 a11y `getWindows()` 에서 가림-제외되고, 제거 직후 재구축이 **비원자적** (앱 창 먼저, 디바이더 나중) — `isSplitActive` false-negative 2/2 실측. dismiss 는 목표 조건 자체 폴링으로 해결. `beginSession` 의 `awaitWindowsSettled`(APPLICATION≥1 약한 게이트)도 같은 원리에 취약할 수 있음 — 배치 경로에서 유사 증상 재현 시 동일 패턴 적용
 

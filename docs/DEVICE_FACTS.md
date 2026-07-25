@@ -186,6 +186,7 @@
 4. **풀스크린 터치 가능 오버레이 = a11y 창 목록 가림-제외**: 스크림이 떠 있는 동안 하위 창들이 서비스 `getWindows()` 에서 제외되고, removeView 직후에도 스냅샷이 잠시 유지된다. **재구축은 비원자적** — TYPE_APPLICATION 이 먼저 돌아오고 TYPE_SPLIT_SCREEN_DIVIDER 는 나중 (실측: "APPLICATION ≥1" 게이트 통과 직후에도 `isSplitActive` false-negative 2/2, 같은 순간 dumpsys accessibility 는 정상). 대응: dismiss 진입 체크를 `isSplitActive` 자체의 2s 조건 폴링으로 교체 후 E2E 통과. 소형(WRAP_CONTENT) 창이던 구 메뉴에선 미발생 — 가림 면적이 원인.
 5. **step3 피커 탭 변동성 (#20 확장)**: 메뉴發 배치 4회 중 2회가 step3 3연속 실패 → ENTRY_STEP_FAILED (직후 재시도는 성공). events 버퍼 실측: 실패 시 클릭이 무효(액티비티 생성 이벤트 자체 없음, 2회)이거나 `startActivityFromRecents` 로 오라우팅(전체화면 낙착, 1회), 성공 시엔 `startActivityAsUser:com.sec.android.app.launcher` (정상 파트너 배치). "창 전환" ACTION_CLICK 무효(#20)와 동일 계열 — 좌표 탭 제스처 대체 검토 근거 보강.
 6. 개발 편의: `adb input swipe x y x y 700` 롱프레스 시뮬레이션은 발화 경계에 걸림 (1/3 발화) — **1200ms 권장**. 실손가락 홀드는 무관. 세로(포트레이트) 방향에서도 배치 파이프라인 정상 동작 실측 (verified=true, residual=0).
+7. **실부팅 복귀 (P3-1 #23)**: `adb reboot` 실측 — BOOT_COMPLETED 수신("boot: 버블 자동 복귀 시작"), specialUse FGS 자동 기동 허용, 접근성 서비스 유지, 홈 화면 버블 가시 전부 확인. 분할 없는 상태의 "분할 해제" 는 2.0s 폴링 후 "분할 화면이 아닙니다" 토스트 (설계값 그대로).
 
 ---
 
