@@ -23,6 +23,11 @@ data class ProfileDefaults(
     val partner: PartnerMode,
     val closedLoopCorrection: Boolean,
     val residualTolerancePx: Int,
+    /**
+     * DESIGN #12 롤백 레버. true(기본) 면 MEASURED 채택에 [MeasurementConsensus] 합치(pre×confirm)를
+     * 요구한다. false 면 기존 동작(pre 단독 + 신뢰도 게이트만)으로 되돌린다. 배선은 후속 작업.
+     */
+    val requireMeasurementAgreement: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */

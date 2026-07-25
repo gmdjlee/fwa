@@ -385,4 +385,61 @@ class LetterboxDetectorTest {
         assertEquals(4, bars!!.totalPx)
         assertNull("detect() 는 상한 거부로 null 이어야 한다(대조군, 이 격차가 버그의 근원)", detected)
     }
+
+    // ── resolveAspectPillarbox (열축 필러박스 역산, DESIGN #12 §3.4) ────────────
+    // scan() 의 height 인자 = entries(열, 좌→우) 개수, width 인자 = 페인 높이(같은 stride 단위).
+
+    @Test
+    fun `resolveAspectPillarbox derives 16 to 9 from a strided pane crop (worked example)`() {
+        // 페인 2184x977, colStride=2 → entries 1092, width(페인 높이 stride 환산) 488.
+        // 16:9 콘텐츠 폭 1725px → 863 entries → 863/488 ≈ 1.768 → snap 1.7778 (DESIGN #12 §3.4 검산 예).
+        val m = LetterboxDetector.resolveAspectPillarbox(
+            scan(height = 1092, topBar = 114, bottomBar = 115, width = 488)
+        )
+
+        assertNotNull(m)
+        assertEquals(863, m!!.band.height)
+        assertTrue(m.isSnapped)
+        assertEquals(16f / 9f, m.value, 0.0001f)
+        assertTrue(m.raw != m.value)
+    }
+
+    @Test
+    fun `resolveAspectPillarbox returns null when there is no pillarbox`() {
+        assertNull(
+            LetterboxDetector.resolveAspectPillarbox(scan(height = 1092, topBar = 0, bottomBar = 0, width = 488))
+        )
+    }
+
+    @Test
+    fun `resolveAspectPillarbox returns null when content fraction is below minimum`() {
+        // 콘텐츠가 entries 의 10%대 → MIN_CONTENT_FRACTION(0.25) 미달로 오탐 거부
+        assertNull(
+            LetterboxDetector.resolveAspectPillarbox(scan(height = 1092, topBar = 490, bottomBar = 490, width = 488))
+        )
+    }
+
+    @Test
+    fun `resolveAspectPillarbox falls back to adaptive detection for ambient-glow pillarbox bars`() {
+        val s = statsScan(height = 1092, topBar = 114, bottomBar = 115, barLuma = 40f, barVariance = 100f, width = 488)
+
+        val m = LetterboxDetector.resolveAspectPillarbox(s)
+
+        assertNotNull(m)
+        assertEquals(DetectionMethod.ADAPTIVE, m!!.method)
+        assertTrue("conf=${m.confidence} must stay <= 0.6 (adaptive ceiling)", m.confidence <= 0.6f)
+    }
+
+    @Test
+    fun `resolveAspectPillarbox keeps the raw value when nothing is close enough`() {
+        // 690 entries / 408 ≈ 1.691 — 16:10(1.600)과 16:9(1.778) 사이의 빈 구간이라 스냅되지 않는다
+        val m = LetterboxDetector.resolveAspectPillarbox(
+            scan(height = 1000, topBar = 155, bottomBar = 155, width = 408)
+        )
+
+        assertNotNull(m)
+        assertNull(m!!.snapped)
+        assertEquals(m.raw, m.value, 0.0001f)
+        assertEquals(690f / 408f, m.raw, 0.0001f)
+    }
 }

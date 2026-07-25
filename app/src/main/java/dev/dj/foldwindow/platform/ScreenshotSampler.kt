@@ -75,3 +75,84 @@ fun Bitmap.toLetterboxScan(
         rowLumaVariance = lumaVariance.copyOf(idx),
     )
 }
+
+/**
+ * [DESIGN #12 §3.4] `toLetterboxScan` 의 전치(transpose)판. 분할 페인은 보통 화면이 영상보다
+ * 넓어(AR≈2.2) 위아래가 아니라 **좌우**에 검은 띠(필러박스)가 생긴다 — 열 단위로 스캔해
+ * [LetterboxDetector.resolveAspectPillarbox] 가 그대로 재사용하는 [LetterboxScan] 을 만든다.
+ * `scan.rowDarkRatio` 의 각 entry = 열(왼쪽→오른쪽), `scan.width` 자리 = 페인 높이(entries 축과
+ * 동일한 stride 좌표계로 환산됨)다.
+ *
+ * 기존 [toLetterboxScan] 은 시그니처/동작 그대로 둔다 — 이 함수는 완전히 독립된 신규 함수다.
+ *
+ * @param colStride     몇 열마다 한 번 샘플링할지(entries 축, 좌→우). 성능/정밀도 트레이드오프
+ * @param rowStride     한 열 안에서 몇 행마다 볼지
+ * @param darkLuma      이 값 이하의 휘도를 "어두운 픽셀" 로 본다 (0..255)
+ * @param edgeMarginPct 상하 가장자리를 이 비율만큼 무시한다. [toLetterboxScan] 의 sideMarginPct
+ *                      전치 — 디바이더 그림자·플레이어 상단 그라디언트 오염 방지
+ */
+fun Bitmap.toPillarboxScan(
+    colStride: Int = 2,
+    rowStride: Int = 8,
+    darkLuma: Int = 24,
+    edgeMarginPct: Float = 0.05f,
+): LetterboxScan {
+    require(colStride >= 1 && rowStride >= 1) { "stride must be >= 1" }
+
+    val w = width
+    val h = height
+    val y0 = (h * edgeMarginPct).toInt().coerceIn(0, h / 2 - 1)
+    val y1 = (h - y0).coerceAtLeast(y0 + 1)
+
+    val sampledCols = (w + colStride - 1) / colStride
+    val ratios = FloatArray(sampledCols)
+    val meanLuma = FloatArray(sampledCols)
+    val lumaVariance = FloatArray(sampledCols)
+
+    // 열 전체(0..h)를 한 번에 읽고 margin·rowStride 는 배열 순회에서 적용한다.
+    // 열마다 getPixels 호출 1회 — 총 호출 수 ≈ width/colStride (행 스캔과 동일 오더).
+    val colBuf = IntArray(h)
+    var idx = 0
+    var x = 0
+    while (x < w) {
+        getPixels(colBuf, 0, 1, x, 0, 1, h)
+        var dark = 0
+        var counted = 0
+        var sumLuma = 0L
+        var sumLumaSq = 0L
+        var y = y0
+        while (y < y1) {
+            val c = colBuf[y]
+            val luma = (77 * Color.red(c) + 150 * Color.green(c) + 29 * Color.blue(c)) shr 8
+            if (luma <= darkLuma) dark++
+            sumLuma += luma
+            sumLumaSq += luma.toLong() * luma // 오버플로 방지를 위해 Long 누적
+            counted++
+            y += rowStride
+        }
+        if (counted == 0) {
+            ratios[idx] = 0f
+            meanLuma[idx] = 0f
+            lumaVariance[idx] = 0f
+        } else {
+            ratios[idx] = dark.toFloat() / counted
+            val mean = sumLuma.toFloat() / counted
+            meanLuma[idx] = mean
+            // E[X^2] - E[X]^2. 부동소수 오차로 음수가 나올 수 있어 0 이상으로 clamp
+            lumaVariance[idx] = ((sumLumaSq.toFloat() / counted) - mean * mean).coerceAtLeast(0f)
+        }
+        idx++
+        x += colStride
+    }
+
+    // colStride 로 축소된 스캔(entries=열)이므로 height 도 같은 좌표계로 맞춘다 — margin 제외 전
+    // 전체 높이 기준. toLetterboxScan 의 scaledWidth=w/rowStride 에 정확 대응(전치판이므로 entries
+    // 축 stride 인 colStride 를 쓴다) — 어긋나면 resolveAspectPillarbox 역산이 깨진다.
+    val scaledHeight = (h.toFloat() / colStride).toInt().coerceAtLeast(1)
+    return LetterboxScan(
+        rowDarkRatio = ratios.copyOf(idx),
+        width = scaledHeight,
+        rowMeanLuma = meanLuma.copyOf(idx),
+        rowLumaVariance = lumaVariance.copyOf(idx),
+    )
+}

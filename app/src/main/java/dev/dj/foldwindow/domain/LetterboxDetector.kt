@@ -321,6 +321,33 @@ object LetterboxDetector {
             band = band,
         )
     }
+
+    /**
+     * [resolveAspect] 의 열축(필러박스) 판. 분할 페인은 보통 AR≈2.2 로 영상보다 넓어 위아래가
+     * 아니라 **좌우**에 검은 띠가 생긴다 (DESIGN #12 §3.4). [detectHybrid] 는 배열 양끝에서
+     * 어두운 entry 를 벗겨내는 축 중립 로직이라 그대로 재사용하고, 역산 공식만 뒤집는다.
+     *
+     * 호출자는 [scan] 을 다음 좌표계로 구성해 넘긴다:
+     * - `scan.rowDarkRatio` 의 각 entry = 페인의 "열"(왼쪽→오른쪽), 이름은 그대로지만 의미는 열이다.
+     * - `scan.width` 자리 = 페인의 "높이". 열 스캔에 stride 를 적용했다면 [scan.width] 도 같은
+     *   stride 단위로 환산해 넘겨야 한다 — 분자(entry 수)와 분모가 서로 다른 단위면 역산 비율이
+     *   깨진다. 두 값에 동일 배율을 적용하면 비율(raw)은 배율에 무관하므로 안전하다.
+     *
+     * raw = band.height(검출된 콘텐츠 폭, entry 단위) / scan.width(페인 높이, 같은 단위)
+     *
+     * @return 스냅 성공 시 프리셋 값, 실패 시 원본 역산값, 감지 실패 시 null
+     */
+    fun resolveAspectPillarbox(scan: LetterboxScan): AspectMeasurement? {
+        val band = detectHybrid(scan) ?: return null
+        val raw = band.height.toFloat() / scan.width
+        val snapped = snapToKnownAspect(raw)
+        return AspectMeasurement(
+            raw = raw,
+            snapped = snapped,
+            value = snapped ?: raw,
+            band = band,
+        )
+    }
 }
 
 data class AspectMeasurement(

@@ -23,11 +23,14 @@ import dev.dj.foldwindow.domain.ArrangeStateMachine
 import dev.dj.foldwindow.domain.AspectMeasurement
 import dev.dj.foldwindow.domain.AspectResolver
 import dev.dj.foldwindow.domain.AspectSource
+import dev.dj.foldwindow.domain.ConfirmOutcome
 import dev.dj.foldwindow.domain.FailureReason
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
+import dev.dj.foldwindow.domain.MeasurementConsensus
 import dev.dj.foldwindow.domain.PaneGeometry
 import dev.dj.foldwindow.domain.Placement
+import dev.dj.foldwindow.domain.ResidualBars
 import dev.dj.foldwindow.domain.ResolvedAspect
 import dev.dj.foldwindow.domain.SplitPlan
 import dev.dj.foldwindow.domain.SplitPlanner
@@ -44,6 +47,7 @@ import dev.dj.foldwindow.platform.PaneSwapper
 import dev.dj.foldwindow.platform.ResizeModeDetector
 import dev.dj.foldwindow.platform.SplitEntry
 import dev.dj.foldwindow.platform.toLetterboxScan
+import dev.dj.foldwindow.platform.toPillarboxScan
 import dev.dj.foldwindow.ui.PanelActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -108,6 +112,19 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private var effectivePlacement: Placement = Placement.TOP
     private var plan: SplitPlan? = null
     private var resolvedAspect: ResolvedAspect? = null
+
+    // ── DESIGN_12 측정 합치 게이트 세션 필드 (cleanupSession() 이 초기값으로 리셋) ──
+    /** confirm 합치 게이트의 비교 대상(진입 전 행축 pre-measure 결과) */
+    private var preMeasurement: AspectMeasurement? = null
+
+    /** 합치 실패 시 폴백할 이번 세션의 PRESET 값(aspectOverride ?: config.defaults.aspect ?: DEFAULT_ASPECT) */
+    private var sessionPresetAspect: Float = DEFAULT_ASPECT
+
+    /** confirm 은 세션당 1회만 — 보정 재드래그(Verifying→Dragging 재진입)에서 반복하지 않는다 */
+    private var aspectConfirmed = false
+
+    /** window_profiles.json defaults.requireMeasurementAgreement 의 세션 스냅샷(#12 롤백 레버) */
+    private var requireAgreement = true
 
     /**
      * [실기기 확인, 2026-07-25] UNRESIZEABLE 앱(넷플릭스류)은 드래그 레시피가 팝업(프리폼)으로
@@ -418,14 +435,29 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // 1) 프로파일 로드 (성공만 캐싱, 실패 시 매번 재시도 + null config 로 진행)
         val config = loadProfilesConfig()
 
-        // 2) ADR-1 티어 ②: 분할 진입 전 스냅샷 실측 (best effort — 실패해도 진행)
-        val measurement = preMeasureAspect(SystemClock.uptimeMillis(), target)
-
-        // 3) 종횡비/배치 결정
+        // 2) 종횡비 결정 (ADR-1 3단 폴백 + DESIGN_12 §4 override tier 0)
         val profile = config?.profiles?.firstOrNull { it.packageName == target }
         val presetAspect = aspectOverride ?: config?.defaults?.aspect ?: DEFAULT_ASPECT
-        val resolved = AspectResolver.resolve(profile, measurement, presetAspect)
+        val measurement: AspectMeasurement?
+        val resolved: ResolvedAspect
+        if (aspectOverride != null) {
+            // [DESIGN_12 §4, 인접 결함 수정] aspectOverride(메뉴 프리셋 선택 / adb --ef aspect,
+            // 문서화된 "강제" 의미론)가 예전에는 tier ③ presetAspect 로만 주입돼 tier ② 측정에
+            // 밀렸다 — 사용자가 21:9 를 명시 선택해도 측정 1.778 이 조용히 이겼다(실증 확인).
+            // override 존재 시 tier 0 로 직접 채택하고 pre/confirm 샷을 전부 생략한다(지연 0,
+            // 레이트리밋 예산 절약, "강제" 의미론 정상화).
+            measurement = null
+            resolved = ResolvedAspect(aspectOverride, AspectSource.PRESET, null)
+        } else {
+            // ADR-1 티어 ②: 분할 진입 전 스냅샷 실측 (best effort — 실패해도 진행)
+            measurement = preMeasureAspect(SystemClock.uptimeMillis(), target)
+            resolved = AspectResolver.resolve(profile, measurement, presetAspect)
+        }
         resolvedAspect = resolved
+        // [DESIGN_12 §3.2] confirm 합치 게이트(handleDragDividerTo 첫 호출)가 쓸 세션 상태.
+        preMeasurement = measurement
+        sessionPresetAspect = presetAspect
+        requireAgreement = config?.defaults?.requireMeasurementAgreement ?: true
 
         // P3-3: 명시 오버라이드(메뉴 위/아래 선택)가 항상 최우선이고, 그다음 이 앱의 "마지막 성공
         // 배치"(store.lastSuccessfulPlacement), 그다음 프로파일/기본값, 최종 폴백은 TOP. 조용한
@@ -466,9 +498,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         Log.i(
             TAG,
             "arrange decision: target=$target label=$targetLabel aspectSource=${resolved.source} " +
-                "aspect=${resolved.aspect} placement=$placement placementSource=$placementSource " +
-                "dividerCenterY=${computedPlan.dividerCenterY} clamp=${computedPlan.clampReason} " +
-                "preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
+                "aspectOverride=$aspectOverride aspect=${resolved.aspect} placement=$placement " +
+                "placementSource=$placementSource dividerCenterY=${computedPlan.dividerCenterY} " +
+                "clamp=${computedPlan.clampReason} preMeasure=${measurement?.let { "conf=${it.confidence}" } ?: "none"}",
         )
 
         // [측정 2026-07-25] PROFILE(사용자가 고정한 진실) 종횡비 세션에서 오염된 재측정(컨트롤
@@ -476,6 +508,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // PROFILE 소스는 재측정이 오염되기 쉬운데도 그 결과가 신뢰된 배치를 덮어쓰는 구조적 결함 —
         // 보정은 신뢰 가능한 측정 경로(MEASURED/PRESET)에서만 켠다. config?.defaults?.closedLoopCorrection
         // 이 false 면 어떤 소스든 보정하지 않는다(사용자/프로파일이 명시적으로 끈 값 우선).
+        // [DESIGN_12 §4] aspectOverride(사용자 명시 "강제")도 동일 논리로 보정에서 제외한다 —
+        // verify 재측정이 사용자가 고른 종횡비를 재차 덮어쓰면 "강제" 의미론이 깨진다(잔여값은
+        // reportTerminal 이 토스트로 정직하게 보고한다).
         arrangeConfig = ArrangeConfig(
             residualTolerancePx = config?.defaults?.residualTolerancePx ?: 8,
             // [실기기 확인, 2026-07-25] 진입 단계 수는 레시피에 따라 달라진다 — DRAG(리사이저블
@@ -486,6 +521,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // ArrangeConfig 기본값 자체는 불변 — 이 세션 오버라이드만 확대한다.
             dragTimeoutMs = SESSION_DRAG_TIMEOUT_MS,
             closedLoopCorrection = (resolved.source != AspectSource.PROFILE) &&
+                aspectOverride == null &&
                 (config?.defaults?.closedLoopCorrection ?: true),
         )
 
@@ -574,7 +610,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
             }
             return try {
                 val scan = scanTarget.toLetterboxScan(rowStride = ROW_STRIDE)
-                LetterboxDetector.resolveAspect(scan)
+                val measurement = LetterboxDetector.resolveAspect(scan)
+                logMeasurement("pre/rows", measurement, LetterboxDetector.residualBars(scan), ROW_STRIDE)
+                measurement
             } catch (e: Exception) {
                 Log.w(TAG, "pre-measure 스캔 실패", e)
                 null
@@ -655,6 +693,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
         desiredPlacement = Placement.TOP
         effectivePlacement = Placement.TOP
         entryRecipe = EntryRecipe.DRAG
+        preMeasurement = null
+        sessionPresetAspect = DEFAULT_ASPECT
+        aspectConfirmed = false
+        requireAgreement = true
         // 세션 시작 시 숨긴 버블을 복원한다 (beginSession 의 setBubbleHiddenForArrange(true) 짝).
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
     }
@@ -732,9 +774,21 @@ class ArrangerAccessibilityService : AccessibilityService() {
         scope.launch {
             val target = targetPackage
             val screen = screenRect()
+            var realTargetY = targetY
+
+            // [DESIGN_12 §3.2] confirm 합치 게이트 — 세션의 첫 드래그 직전에 정확히 1회만 실행되고,
+            // MEASURED 후보 세션에서만 발동한다(PRESET/PROFILE/override 는 이미 확정값이라 스킵).
+            // 머신이 넘긴 targetY 는 이미 "자문(advisory) 값"이라는 선례가 있다(아래 스왑 실패
+            // 분기가 동일 변수를 재계산해 덮어씀) — confirm 재계획도 같은 realTargetY 를 덮어쓴다.
+            if (!aspectConfirmed) {
+                aspectConfirmed = true
+                if (requireAgreement && resolvedAspect?.source == AspectSource.MEASURED) {
+                    confirmMeasuredAspect(target, screen)?.let { newTargetY -> realTargetY = newTargetY }
+                }
+            }
+
             val actualPosition = actualVideoPanePosition(target, screen) ?: desiredPlacement
 
-            var realTargetY = targetY
             if (actualPosition != desiredPlacement) {
                 val handleForSwap = lastHandle
                 val swapped = if (handleForSwap != null) {
@@ -799,6 +853,109 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     dispatch(ArrangeEvent.DragResult(SystemClock.uptimeMillis(), completed))
                 }
             }
+        }
+    }
+
+    /**
+     * [DESIGN_12 §3.2] MEASURED 후보 세션의 첫 드래그 직전 confirm 측정 + 합치 판정.
+     * 합치 → MEASURED 확정 / 불합치·확인불가 → PRESET 폴백. 어느 쪽이든 [resolvedAspect] 를
+     * 갱신하고 재계획한 새 dividerCenterY 를 반환한다(모든 경로가 [finishConfirm] 으로 모이므로
+     * "측정 실패"가 "재계획 실패"로 번지지 않는다).
+     *
+     * 오염원(컨트롤/인트로)은 일시적이므로 시각(t0+진입 2~4s)·축(행→열)·컨텍스트(전체화면→페인
+     * 크롭)가 다른 두 측정의 합치만 신뢰한다 — 단일 프레임 conf 는 오염을 못 거른다(실측
+     * 0.60~0.97, DESIGN_12 §1).
+     */
+    private suspend fun confirmMeasuredAspect(targetPackage: String?, screen: IntRect): Int? {
+        val now = SystemClock.uptimeMillis()
+        val waitUntil = lastScreenshotAtMs + SCREENSHOT_MIN_INTERVAL_MS
+        if (now < waitUntil) {
+            // ADR-2 예외 허용 지점(함정 #3): 고정 지연이 아니라 lastScreenshotAtMs 기반
+            // 레이트리밋 계산 결과를 따르는 조건부 대기다.
+            delay(waitUntil - now)
+        }
+
+        val bitmap = captureScreen()
+        if (bitmap == null) {
+            Log.w(TAG, "confirm: 스크린샷 실패 — Unavailable 로 진행")
+            return finishConfirm(ConfirmOutcome.Unavailable, paneAspect = 0f)
+        }
+        try {
+            val paneRect = actualVideoPaneRect(targetPackage, screen)
+            if (paneRect == null) {
+                Log.w(TAG, "confirm: 대상 페인 rect 미발견 — Unavailable 로 진행")
+                return finishConfirm(ConfirmOutcome.Unavailable, paneAspect = 0f)
+            }
+
+            val crop = cropToRect(bitmap, paneRect)
+            if (crop == null) {
+                Log.w(TAG, "confirm: crop 실패 — Unavailable 로 진행")
+                return finishConfirm(ConfirmOutcome.Unavailable, paneAspect = 0f)
+            }
+            try {
+                // [DESIGN_12 §3.4] 분할 페인은 보통 영상보다 넓어(AR≈2.2) 좌우 필러박스가 생긴다 —
+                // 행축과 열축을 모두 스캔해 MeasurementConsensus.classifyConfirm 이 exactly-one
+                // 규칙으로 판정하게 한다.
+                val rowScan = crop.toLetterboxScan(rowStride = ROW_STRIDE)
+                val colScan = crop.toPillarboxScan(colStride = COL_STRIDE)
+                val rowMeasurement = LetterboxDetector.resolveAspect(rowScan)
+                val colMeasurement = LetterboxDetector.resolveAspectPillarbox(colScan)
+                val rowResidual = LetterboxDetector.residualBars(rowScan)
+                val colResidual = LetterboxDetector.residualBars(colScan)
+                logMeasurement("confirm/rows", rowMeasurement, rowResidual, ROW_STRIDE)
+                logMeasurement("confirm/cols", colMeasurement, colResidual, COL_STRIDE)
+
+                val outcome =
+                    MeasurementConsensus.classifyConfirm(rowMeasurement, rowResidual, colMeasurement, colResidual)
+                val paneAspect = paneRect.width.toFloat() / paneRect.height.toFloat()
+                return finishConfirm(outcome, paneAspect)
+            } finally {
+                crop.recycle()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /**
+     * [DESIGN_12 §3.2 4~5단계] pre×confirm 합치 판정 → [resolvedAspect] 갱신 → 재계획. confirm 의
+     * 모든 경로(성공/불합치/측정 실패)가 여기로 모인다 — 불합치도 PRESET 폴백으로 "결정"이라는
+     * 점에서 성공 경로와 동일하게 취급한다(조용한 실패 금지: verdict 를 항상 로그로 남긴다).
+     */
+    private fun finishConfirm(outcome: ConfirmOutcome, paneAspect: Float): Int {
+        val result = MeasurementConsensus.agree(preMeasurement, outcome, paneAspect)
+        val newResolved = result.adopted?.let { ResolvedAspect(it.value, AspectSource.MEASURED, it) }
+            ?: ResolvedAspect(sessionPresetAspect, AspectSource.PRESET, null)
+        resolvedAspect = newResolved
+        Log.i(
+            TAG,
+            "consensus: verdict=${result.verdict} outcome=$outcome " +
+                "pre=${preMeasurement?.let { "raw=${it.raw} snapped=${it.snapped}" } ?: "none"} " +
+                "→ aspect=${newResolved.aspect} source=${newResolved.source}",
+        )
+
+        val newPlan = SplitPlanner.plan(geometry, newResolved.aspect, desiredPlacement)
+        plan = newPlan
+        return newPlan.dividerCenterY
+    }
+
+    /**
+     * [DESIGN_12 §5] 측정 로깅 표준화 — 사고 당시 밴드 기하(topBarPx/bottomBarPx) 미기록이 사후
+     * 판별력 검증(설계 §2 대칭성 휴리스틱 등)을 막았다. pre/confirm 모든 측정 지점이 이 함수를
+     * 거쳐 축·raw·snap·conf·밴드 px 를 남긴다. band px 는 스캔 entry 단위이므로 실제 화면 px 로
+     * 환산하려면 stride 를 곱한다(ROW_STRIDE/COL_STRIDE — ScreenshotSampler 함정 참고).
+     */
+    private fun logMeasurement(tag: String, m: AspectMeasurement?, residual: ResidualBars?, stride: Int) {
+        if (m != null) {
+            Log.i(
+                TAG,
+                "measure[$tag]: method=${m.method} raw=${m.raw} snapped=${m.snapped} conf=${m.confidence} " +
+                    "band=${m.band.topBarPx * stride}/${m.band.bottomBarPx * stride}px",
+            )
+        } else if (residual != null) {
+            Log.i(TAG, "measure[$tag]: 밴드 없음 residual=${residual.totalPx * stride}px")
+        } else {
+            Log.i(TAG, "measure[$tag]: 밴드 없음 판정불가")
         }
     }
 
@@ -911,6 +1068,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     // residualBars() 는 이 상한 거부가 없어 "띠 없음(성공)" 을 (0,0) 으로, 판정 자체가
                     // 불가능한 경우(전면 검정/콘텐츠 과소)만 null 로 정확히 구분한다.
                     val residualPx = LetterboxDetector.residualBars(scan)?.totalPx?.times(ROW_STRIDE)
+
+                    // [DESIGN_12 §3.4/§7 v1 범위] 필러박스(좌우 잔여, 과소 이동) 맹점의 가시화 —
+                    // v1 은 로그 보고만 한다. verified 플래그/MeasureResult 이벤트 의미론 변경은
+                    // v1.5 로 이월(설계 §7 OUT) — 머신에 전달하는 인자는 절대 바꾸지 않는다.
+                    val colScan = crop.toPillarboxScan(colStride = COL_STRIDE)
+                    val residualColsPx = LetterboxDetector.residualBars(colScan)?.totalPx?.times(COL_STRIDE)
+                    Log.i(TAG, "verify: residualRows=${residualPx}px residualCols=${residualColsPx}px")
+
                     val correctedTargetY = measurement?.let {
                         SplitPlanner.plan(geometry, it.value, effectivePlacement).dividerCenterY
                     }
@@ -1146,6 +1311,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         /** ScreenshotSampler.toLetterboxScan 에 전달하는 값과 동일해야 band px → 실제 px 환산이 맞는다 */
         private const val ROW_STRIDE = 2
+
+        /**
+         * ScreenshotSampler.toPillarboxScan 에 전달하는 값과 동일해야 band px → 실제 px 환산이
+         * 맞는다(DESIGN_12 §3.4 confirm 열축 스캔 + verify residualCols 보고 공용).
+         */
+        private const val COL_STRIDE = 2
 
         private const val DEFAULT_ASPECT = 16f / 9f
 

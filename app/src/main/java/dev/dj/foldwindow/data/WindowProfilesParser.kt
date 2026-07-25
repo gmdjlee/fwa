@@ -86,6 +86,7 @@ object WindowProfilesParser {
             partner = partner,
             closedLoopCorrection = dto.closedLoopCorrection,
             residualTolerancePx = dto.residualTolerancePx,
+            requireMeasurementAgreement = dto.requireMeasurementAgreement,
         )
     }
 
@@ -158,6 +159,9 @@ private data class DefaultsDto(
     val partner: String,
     val closedLoopCorrection: Boolean,
     val residualTolerancePx: Int,
+    // DESIGN #12: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드(config/window_profiles.json)
+    // 에는 이 키가 없다. kotlinx.serialization 은 JSON 키가 없으면 이 기본값을 그대로 쓴다.
+    val requireMeasurementAgreement: Boolean = true,
 )
 
 @Serializable
