@@ -4,4 +4,11 @@
     <string name="probe_title">FoldWindow Probe</string>
     <string name="probe_service_label">FoldWindow Probe</string>
     <string name="probe_service_desc">Phase 0 진단용. 창 구성과 화면 종횡비를 측정합니다. 측정 결과는 기기 내부에만 저장됩니다.</string>
+
+    <!-- ⚠ 값 변경 금지: platform/SplitEntry.kt 의 step4 파트너 피커 폴백이 이 정확한 문자열("FW Panel")로
+         Recents 파트너 선택 화면에서 우리 앱을 찾는다. -->
+    <string name="panel_title">FW Panel</string>
+
+    <string name="arranger_service_label">FoldWindow 배치</string>
+    <string name="arranger_service_desc">현재 보고 있는 앱을 감지해 화면을 분할하고, 영상 종횡비에 맞춰 화면 위/아래 남는 공간을 한쪽으로 모아줍니다. 화면 캡처·창 정보 조회·터치 제스처 권한을 사용하며, 수집한 정보는 기기 밖으로 전송하지 않습니다.</string>
 </resources>

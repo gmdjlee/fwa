@@ -326,4 +326,63 @@ class LetterboxDetectorTest {
     fun `mismatched luma stats array size is rejected`() {
         LetterboxScan(FloatArray(10) { 0f }, 2184, FloatArray(5), FloatArray(10))
     }
+
+    // ── residualBars (검증 전용: "띠 없음(성공)" 과 "판정 불가" 를 구분) ────────
+
+    @Test
+    fun `residualBars returns zero for a full-bleed scan (perfect placement)`() {
+        val bars = LetterboxDetector.residualBars(scan(height = 1968, topBar = 0, bottomBar = 0))
+
+        assertNotNull(bars)
+        assertEquals(0, bars!!.topPx)
+        assertEquals(0, bars.bottomPx)
+        assertEquals(0, bars.totalPx)
+    }
+
+    @Test
+    fun `residualBars measures small symmetric residual bars`() {
+        val bars = LetterboxDetector.residualBars(scan(height = 200, topBar = 4, bottomBar = 4))
+
+        assertNotNull(bars)
+        assertEquals(4, bars!!.topPx)
+        assertEquals(4, bars.bottomPx)
+        assertEquals(8, bars.totalPx)
+    }
+
+    @Test
+    fun `residualBars returns null when the whole frame is black`() {
+        val rows = FloatArray(1968) { 1.0f }
+        assertNull(LetterboxDetector.residualBars(LetterboxScan(rows, 2184)))
+    }
+
+    @Test
+    fun `residualBars returns null when content fraction is below the minimum`() {
+        // 콘텐츠가 전체의 10% 미만 → detect() 와 동일하게 판정 불가로 거부한다
+        assertNull(LetterboxDetector.residualBars(scan(height = 1968, topBar = 900, bottomBar = 872)))
+    }
+
+    @Test
+    fun `residualBars measures one-sided bars`() {
+        val bars = LetterboxDetector.residualBars(scan(height = 1968, topBar = 370, bottomBar = 0))
+
+        assertNotNull(bars)
+        assertEquals(370, bars!!.topPx)
+        assertEquals(0, bars.bottomPx)
+        assertEquals(370, bars.totalPx)
+    }
+
+    @Test
+    fun `residualBars does not reject near-full content unlike detect (the semantics gap this fixes)`() {
+        // detect() 는 NO_LETTERBOX_FRACTION(0.99) 이상이면 null 을 반환한다 — 이것이 실기기에서
+        // 확인된 버그: 완벽에 가까운 배치(잔여 4px)를 "측정 불가"로 오판해 Done(verified=false) 를
+        // 보고했다. residualBars() 는 상한 거부가 없어 이 값을 정확히 측정한다.
+        val target = scan(height = 1968, topBar = 2, bottomBar = 2)
+
+        val bars = LetterboxDetector.residualBars(target)
+        val detected = LetterboxDetector.detect(target)
+
+        assertNotNull(bars)
+        assertEquals(4, bars!!.totalPx)
+        assertNull("detect() 는 상한 거부로 null 이어야 한다(대조군, 이 격차가 버그의 근원)", detected)
+    }
 }

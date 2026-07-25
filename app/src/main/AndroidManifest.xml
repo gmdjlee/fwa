@@ -7,6 +7,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Android 11+ 패키지 가시성: 대상 앱 라벨 조회(PackageManager.getApplicationLabel)에 필요.
+         라벨은 SplitEntry 의 Recents 카드 셀렉터 정밀도를 높인다 (라벨 없으면 "고급 옵션" 단독 매칭 → 다중 카드 오탐 위험). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
@@ -46,6 +55,50 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="dev.dj.foldwindow.probe.RUN_PROBE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- P2-5 / ADR-3: 파트너(비영상) 창. MAIN/LAUNCHER 필터가 필요한 이유: One UI 분할 화면
+             파트너 피커(SplitEntry step4 폴백, "FromRecentActivity")가 런처에 노출된 앱만 후보로
+             나열한다. 앱 서랍에 아이콘이 노출되는 부작용은 Phase 2에서는 수용하고, Phase 3에서
+             별도 태스크/숨김 아이콘 처리로 재검토한다. -->
+        <!-- launchMode 미지정(standard): singleTask 는 이전 전체화면 태스크를 재사용해
+             분할 배치를 파괴함 ([측정] 2026-07-25). -->
+        <activity
+            android:name=".ui.PanelActivity"
+            android:exported="true"
+            android:label="@string/panel_title"
+            android:resizeableActivity="true"
+            android:taskAffinity="dev.dj.foldwindow.panel"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- P2-1 실제 액추에이터 서비스. 상태 머신 구동, 분할 진입/드래그/재측정 오케스트레이션. -->
+        <service
+            android:name=".service.ArrangerAccessibilityService"
+            android:exported="true"
+            android:label="@string/arranger_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/arranger_accessibility_config" />
+        </service>
+
+        <!-- Phase 2 디버그 트리거. Phase 3에서 플로팅 버블(FloatingLauncherService)이 대체한다.
+             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다
+             (probe.ProbeTriggerReceiver 와 동일 근거). -->
+        <receiver
+            android:name=".service.ArrangeTriggerReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.dj.foldwindow.ARRANGE" />
             </intent-filter>
         </receiver>
 

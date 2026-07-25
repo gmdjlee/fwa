@@ -58,6 +58,14 @@ data class ContentBand(
     val height: Int get() = bottom - top
 }
 
+/**
+ * [residualBars] 전용 결과. "띠 없음(성공)" 과 "측정 불가" 를 구분하기 위해 [detect]/[ContentBand]
+ * 와 별개 타입으로 둔다 — null 은 오직 측정 불가를 뜻하고, 0줄은 유효한 성공 값이다.
+ */
+data class ResidualBars(val topPx: Int, val bottomPx: Int) {
+    val totalPx: Int get() = topPx + bottomPx
+}
+
 object LetterboxDetector {
 
     /** 이 비율 이상 어두우면 "검은 띠 행" 으로 본다 */
@@ -129,6 +137,44 @@ object LetterboxDetector {
             bottomBarPx = h - bottomExclusive,
             confidence = confidenceOf(rows, top, bottomExclusive, darkRowThreshold),
         )
+    }
+
+    /**
+     * 검증 전용: 배치 후 잔여 순흑 띠(px, 스캔 행 단위)를 잰다.
+     *
+     * [detect] 와 스캔 로직(위/아래에서 안쪽으로 벗겨내기)은 동일하지만, **[NO_LETTERBOX_FRACTION]
+     * 상한 거부가 없다.** [detect] 는 "띠가 사실상 없음"을 null 로 반환하기 때문에, 배치가
+     * 완벽하게 성공해 띠가 0줄이 된 경우와 애초에 판정할 수 없는 경우(전면 검정, 콘텐츠 과소)를
+     * 구분할 수 없다 — 이게 실기기에서 확인된 검증 단계의 의미론 공백이다: 완벽한 배치 후
+     * `Done(verified=false)` 로 잘못 보고되는 문제.
+     *
+     * 이 함수는 그 구분을 명시적으로 만든다:
+     * - 띠 0줄(완벽한 배치) → `ResidualBars(0, 0)` 반환 (성공으로 측정됨)
+     * - 판정 불가(전면 검정 또는 콘텐츠 비율 < [MIN_CONTENT_FRACTION]) → `null` 반환
+     *
+     * @return 잔여 띠. 측정 자체가 불가능하면 null (성공/실패가 아니라 "잴 수 없음"만 의미)
+     */
+    fun residualBars(
+        scan: LetterboxScan,
+        darkRowThreshold: Float = DEFAULT_DARK_ROW_THRESHOLD,
+    ): ResidualBars? {
+        val h = scan.height
+        val rows = scan.rowDarkRatio
+
+        var top = 0
+        while (top < h && rows[top] >= darkRowThreshold) top++
+
+        var bottomExclusive = h
+        while (bottomExclusive > top && rows[bottomExclusive - 1] >= darkRowThreshold) bottomExclusive--
+
+        val contentH = bottomExclusive - top
+        if (contentH <= 0) return null                                  // 전 화면이 검음 — 판정 불가
+
+        val fraction = contentH.toFloat() / h
+        if (fraction < MIN_CONTENT_FRACTION) return null                // 콘텐츠가 너무 작음 = 판정 불가
+
+        // detect() 와 달리 NO_LETTERBOX_FRACTION 상한 거부가 없다 — 여기서는 그것이 "성공"이다.
+        return ResidualBars(topPx = top, bottomPx = h - bottomExclusive)
     }
 
     /**
