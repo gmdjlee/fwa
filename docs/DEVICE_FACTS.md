@@ -220,6 +220,31 @@
 
 **미발동 경로 [미검증]** (설계 §5 예상과 일치): 피커 cycle-2 a11y 폴백 · 스왑 cycle-1/2 제스처 · 팝업 소멸→재탭 분기 · involution 가드 실개입 · budget-exhausted tail · 오버레이 가드 발동(세션 중 버블 자동 숨김이라 정상적으로 미발동) · 회전×2 폴백(스왑 전승이라 미발동).
 
+### [측정] #12 측정 합치 게이트 실기기 검증 (2026-07-25 밤 11차 — G1~G5 통과)
+
+빌드 = 커밋 2474ff3 + 현장 수정 2건(아래). 총 9 arrange 세션 9/9 done. 트리거 = broadcast(OVERRIDE top), 유튜브 BBB 앰비언트.
+
+| Gate | 시나리오 | 결과 |
+|---|---|---|
+| G1 사고 재현 | 추천 엔드스크린에서 트리거 | pre = **conf 0.70 쓰레기**(PURE_BLACK 1.197, band 118/26 — 구 시스템이면 divider 1780 채택) → confirm 양축 띠(2.55 conf 1.0 / 2.16 conf 0.999) → **BOTH_AXES_BARS** → PRESET 1236. "aspect-fit 영상 불가능" 규칙이 실제 추천 화면에서 발동 |
+| G2 컨트롤 오염 | 플레이어 탭 직후 트리거 | pre = band **370/160 비대칭**(스크럽 바 하단 잠식) → raw 1.519 → **snap 1.5** conf 0.566 (사고 클래스 1.333/1.12 동형) → confirm NoBars → 페인 AR 2.23 vs 1.5 = 48% 괴리 → **NO_BARS_INCONSISTENT** → PRESET → residual=0 |
+| G3 클린 회귀 ×3 | 전체화면 재생 중 트리거 | **3/3 SNAP_AGREE → MEASURED 채택**, residual=0, 총 소요 4.2~4.3s (기준선 4.1~4.7 내 — confirm +~0.3s 흡수) |
+| G4 앰비언트 | G1~G3 전체 | ADAPTIVE pre conf 0.51~0.59 ×5 전부 후보 게이트 통과, 클린 3회는 합치 채택 — 게이트가 정상 ADAPTIVE 를 죽이지 않음 |
+| G5 오버라이드 | `--ef aspect 2.3704` | `preMeasure=none`(pre 생략)·confirm/consensus 로그 0건(생략)·`aspectSource=PRESET aspectOverride=2.3704`·divider **928**(21:9 정확) — tier 0 완전 작동 |
+
+**confirm 크롭의 실측 오염원 2종 → 현장 수정 2건 (전부 픽셀 물증 후 수정)**:
+1. **최외곽 열 오염**: 페인 크롭 열축 스캔에서 entries [0..3]·[1089..1091] 분산 404~501 > ADAPTIVE_MAX_VARIANCE(400) — 라운드 코너 배경 누출(세로 마진 5%=49px < 코너 반경 ~80px) + 최외곽 열 엣지 렌더링(x=0 열 코너 밖에서도 luma 76 vs 글로우 36) + 우측 엣지 스트립(x≥2176 전 높이 luma 77~80). 첫/끝 entry 불통과 → adaptive "한쪽 스트립 0 → null" → 실재 글로우 밴드(각 ~112 entries, var≈8) 전체 소실 → NoBars 오판. **수정 = `toPillarboxScan` sideMarginPct 0.005 (entries 축 좌우 ~11px 제외)**
+2. **플레이어 크롬 오염**: 분할 진입 리사이즈 직후 유튜브가 페인에 크롬 상시 표시 — 축소 아이콘(x≈2126~2155, y≈890~945/977, luma 176~188)이 우측 스트립을 9 entries 에서 결정론 차단(두 세션 raw 소수 7자리 동일 = 정적 물증), 상단 타이틀 그라디언트가 행축 유사 밴드 conf 0.08 생성 → BOTH_AXES_BARS 오판정. **수정 = edgeMarginPct 0.05→0.12 (크롬 y-대역 제외, 977px 기준 상하 117px) + `classifyAxis` minConfidence(0.25) — 저신뢰 밴드는 BARS_MEASURED 불승격**. 수정 후 cols band **214/214 완벽 대칭** 3/3 재현
+
+부수 관측:
+- ADAPTIVE_MAX_VARIANCE(400)·MAX_BAR_LUMA(90) 등 도메인 상수는 **무변경** — 오염은 상수가 아니라 입력(스캔 범위) 문제였음 (함정 #7 준수)
+- confirm 축 판독은 페인 오버레이 상태에 따라 BARS_MEASURED/NoBars/BothAxes 로 변동하나 세 변형 전부 안전 처리 실증 (합치·불합치 판정 각 3경로 발동)
+- **글로우 필러박스에서 residualCols 순흑 블라인드**: G5 의 16:9-in-21:9 페인(실측 필러박스 존재)에서 verify residualCols=0 — 열린 질문 #13 v1.5(적응형 residual) 근거 보강
+- **BOTH_AXES_BARS 세션의 ADR-5 보정이 비영상 콘텐츠를 쫓음** (G1: 엔드스크린 verify residual 118 → 1236→1099 드리프트 1회, 정직 보고 종료) — v1.5 후보: BOTH_AXES_BARS 판정 시 보정도 생략 (콘텐츠 비영상 물증이므로)
+- 진입 직후 페인 컨트롤 소환은 **상시** (DESIGN_12 §8-4 미지 해소) — 12% 마진이 구조적으로 흡수
+
+**[미검증] 잔여**: 비-16:9 콘텐츠(영화 2.35 등)의 합치 채택 실측 0건 (16:9 만 검증) · `requireMeasurementAgreement=false` 롤백 레버 미실사용 · confirm 레이트리밋 백오프 대기 분기(진입 2~4s 라 자연 미발동) · 메뉴 프리셋 UI發 tier 0 (adb 경로만 검증, 배선은 코드 확인 완료)
+
 ---
 
 ## 검은 띠 실측 (프로브 E) — 실패 + 근본 원인
