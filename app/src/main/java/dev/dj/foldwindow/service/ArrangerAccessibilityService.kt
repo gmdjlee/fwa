@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
@@ -90,6 +91,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
     /** startArrange 호출과 첫 dispatch(Start) 사이의 짧은 창에서 중복 세션 시작을 막는다 */
     @Volatile
     private var sessionInFlight = false
+
+    /**
+     * dismissSplit() 중복 실행 방지용 가드. dismissSplit 은 machineState 가 Idle 인 동안에만
+     * 동작하는 별도 경로라 sessionInFlight 와 별개 플래그가 필요하다(P3-2).
+     */
+    @Volatile
+    private var dismissInFlight = false
 
     // ── 세션 컨텍스트 (터미널 상태에서 cleanupSession() 이 초기화한다) ──
     private var targetPackage: String? = null
@@ -190,6 +198,109 @@ class ArrangerAccessibilityService : AccessibilityService() {
     fun cancelArrange() {
         if (machineState == ArrangeState.Idle) return
         scope.launch { dispatch(ArrangeEvent.Cancel(SystemClock.uptimeMillis())) }
+    }
+
+    /**
+     * [미검증, P3-2] 현재 활성 분할 화면을 해제해 대상 앱을 전체화면으로 복귀시킨다.
+     * 진행 중인 배치 세션의 취소([cancelArrange])와는 다른 경로다 — 세션이 없어도(과거에
+     * 배치된 분할이 그대로 남아 있는 경우 포함) 활성 분할 자체를 푸는 기능이다.
+     *
+     * ADR-2 준수: 완료 확인은 전부 조건 폴링([DISMISS_POLL_INTERVAL_MS] 간격,
+     * [DISMISS_POLL_TIMEOUT_MS] 데드라인)이며 고정 지연으로 결과를 가정하지 않는다.
+     */
+    fun dismissSplit() {
+        if (machineState != ArrangeState.Idle || sessionInFlight) {
+            Log.w(TAG, "dismissSplit: 배치 진행 중 (state=$machineState) — 무시")
+            toast("배치 진행 중")
+            return
+        }
+        if (dismissInFlight) {
+            Log.w(TAG, "dismissSplit: 이미 해제 진행 중 — 무시")
+            return
+        }
+
+        dismissInFlight = true
+        scope.launch {
+            try {
+                performDismissSplit()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 조용한 실패 금지: 예측하지 못한 예외도 사용자에게 드러낸다.
+                Log.e(TAG, "performDismissSplit 중 예외", e)
+                toast("분할 해제 실패: 내부 오류")
+            } finally {
+                dismissInFlight = false
+            }
+        }
+    }
+
+    /**
+     * [미검증] dismissSplit() 의 실제 로직. 자기 패키지([PanelActivity]) 페인이 있는 쪽
+     * 가장자리로 디바이더를 드래그해 그 페인을 접는다 — One UI 는 디바이더가 최소 스냅에 닿으면
+     * 분할 자체를 해제하고 남은 페인을 전체화면으로 되돌린다(DEVICE_FACTS.md 의 "최소 스냅 슬라이드"
+     * 함정과 동일 메커니즘을 의도적으로 이용한다). 자기 페인을 못 찾으면 하단 가장자리로
+     * 폴백한다(조용한 실패 금지: 로그로 드러냄).
+     */
+    private suspend fun performDismissSplit() {
+        val screen = screenRect()
+        if (!dividerLocator.isSplitActive(safeWindows(), screen)) {
+            Log.i(TAG, "dismissSplit: 분할 화면이 아님")
+            toast("분할 화면이 아닙니다")
+            return
+        }
+
+        // 드래그 도중 버블 오버레이가 간섭하지 않도록 예방적으로 숨긴다(CLAUDE.md 함정 #22 계열 —
+        // 메뉴를 거치지 않는 adb 트리거 경로 등에도 동일하게 대응해야 한다).
+        FloatingLauncherService.instance?.setBubbleHiddenForArrange(true)
+        try {
+            val handle = dividerLocator.locate(safeWindows(), screen)
+            if (handle == null) {
+                Log.w(TAG, "dismissSplit: 디바이더 핸들 미발견")
+                toast("분할 해제 실패: 디바이더를 찾지 못함")
+                return
+            }
+
+            val selfPaneCenterY = actualVideoPaneRect(packageName, screen)
+                ?.let { (it.top + it.bottom) / 2 }
+            val collapseTowardTop = if (selfPaneCenterY != null) {
+                selfPaneCenterY < (screen.top + screen.bottom) / 2
+            } else {
+                Log.w(TAG, "dismissSplit: 자기 패널 페인 미발견 — 하단 가장자리 폴백")
+                false
+            }
+            // 화면 크기 비율/실측 핸들 기준으로만 계산한다(좌표 하드코딩 금지) — DividerDragger 가
+            // 핸들 크기만큼의 화면 경계 여유(EDGE_MARGIN_PX)로 다시 클램프해준다.
+            val dismissTargetY = if (collapseTowardTop) screen.top else screen.bottom
+
+            val dragCompleted = suspendCancellableCoroutine<Boolean> { cont ->
+                dividerDragger.drag(handle, dismissTargetY, screen, DragStrategy.SINGLE_STROKE) { completed ->
+                    if (cont.isActive) cont.resume(completed)
+                }
+            }
+            if (!dragCompleted) {
+                Log.w(TAG, "dismissSplit: 드래그 제스처 실패/취소")
+                toast("분할 해제 실패: 드래그 실패")
+                return
+            }
+
+            val settled = withTimeoutOrNull(DISMISS_POLL_TIMEOUT_MS) {
+                while (dividerLocator.isSplitActive(safeWindows(), screen)) {
+                    delay(DISMISS_POLL_INTERVAL_MS)
+                }
+                true
+            } ?: false
+
+            if (settled) {
+                Log.i(TAG, "dismissSplit: 성공")
+                toast("분할 해제 완료")
+            } else {
+                Log.w(TAG, "dismissSplit: 타임아웃 — 분할 해제 확인 실패")
+                toast("분할 해제 실패: 시간 초과")
+            }
+        } finally {
+            FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -305,10 +416,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
         cachedProfilesConfig?.let { return it }
 
         val text = withContext(Dispatchers.IO) {
-            runCatching { assets.open(PROFILES_ASSET_NAME).bufferedReader().use { it.readText() } }.getOrNull()
+            runCatching {
+                assets.open(WindowProfilesParser.PROFILES_ASSET_NAME).bufferedReader().use { it.readText() }
+            }.getOrNull()
         }
         if (text == null) {
-            Log.w(TAG, "profiles asset 읽기 실패 ($PROFILES_ASSET_NAME) — null config 로 진행")
+            Log.w(TAG, "profiles asset 읽기 실패 (${WindowProfilesParser.PROFILES_ASSET_NAME}) — null config 로 진행")
             return null
         }
 
@@ -886,7 +999,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
         private const val ROW_STRIDE = 2
 
         private const val DEFAULT_ASPECT = 16f / 9f
-        private const val PROFILES_ASSET_NAME = "window_profiles.json"
+
+        /**
+         * P3-2 dismissSplit() 조건 폴링 파라미터. DividerPopupRotator/PaneSwapper 와 같은 관례
+         * (150ms 간격)를 따른다. 실기기 미검증 신규 경로라 여유 있는 타임아웃(3s)으로 시작한다.
+         */
+        private const val DISMISS_POLL_INTERVAL_MS = 150L
+        private const val DISMISS_POLL_TIMEOUT_MS = 3_000L
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",

@@ -29,6 +29,13 @@ sealed interface ProfilesParseResult {
 
 object WindowProfilesParser {
 
+    /**
+     * window_profiles.json 이 assets 에 노출되는 파일명. SSOT — service/ArrangerAccessibilityService
+     * 와 service/FloatingLauncherService(P3-2 메뉴 프리셋 로드) 양쪽이 이 상수를 공유한다.
+     * 중복 정의 금지.
+     */
+    const val PROFILES_ASSET_NAME = "window_profiles.json"
+
     private val json = Json {
         ignoreUnknownKeys = true // note, 향후 추가 필드 등에 관대하게. 필수 필드 누락은 여전히 에러.
     }

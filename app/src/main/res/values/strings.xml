@@ -20,6 +20,12 @@
     <string name="toast_accessibility_off">접근성 서비스가 꺼져 있습니다</string>
     <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
 
+    <!-- P3-2: 버블 확장 메뉴(롱프레스) -->
+    <string name="bubble_menu_place_top">위로 배치</string>
+    <string name="bubble_menu_place_bottom">아래로 배치</string>
+    <string name="bubble_menu_dismiss_split">분할 해제</string>
+    <string name="bubble_menu_settings">설정</string>
+
     <!-- P3-4: OnboardingActivity -->
     <string name="onboarding_title">FoldWindow 시작하기</string>
     <string name="onboarding_permission_overlay_title">다른 앱 위에 표시</string>

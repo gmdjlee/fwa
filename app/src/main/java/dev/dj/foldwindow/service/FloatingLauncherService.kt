@@ -24,9 +24,21 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import dev.dj.foldwindow.R
+import dev.dj.foldwindow.data.ProfilesParseResult
+import dev.dj.foldwindow.data.WindowProfilesParser
+import dev.dj.foldwindow.domain.AspectPreset
+import dev.dj.foldwindow.domain.Placement
 import dev.dj.foldwindow.ui.OnboardingActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /**
@@ -34,17 +46,19 @@ import kotlin.math.abs
  * 포그라운드 서비스. Phase 2 의 adb 트리거([ArrangeTriggerReceiver])를 사용자용으로 대체한다.
  *
  * 동작:
- * - 탭: 접근성 서비스 인스턴스가 있으면 `startArrange(null, null)` (프로파일/기본값 적용).
- *   없으면 토스트 안내 후 [OnboardingActivity] 로 유도.
- * - 드래그: 버블 이동. 손을 떼면 가까운 좌/우 가장자리로 스냅.
- * - 롱프레스(드래그 없이 유지): [OnboardingActivity] 진입.
+ * - 탭: 메뉴가 열려 있으면 닫기 토글만 한다. 닫혀 있으면 접근성 서비스 인스턴스가 있을 때
+ *   `startArrange(null, null)` (프로파일/기본값 적용), 없으면 토스트 안내 후 [OnboardingActivity] 로 유도.
+ * - 드래그: 버블 이동. 손을 떼면 가까운 좌/우 가장자리로 스냅. 드래그가 시작되면 열려 있던
+ *   확장 메뉴는 닫는다(옛 위치에 뜬 메뉴가 무의미해지므로).
+ * - 롱프레스(드래그 없이 유지): 확장 메뉴([showMenu]) 토글 — 위/아래 배치, 분할 해제, 종횡비
+ *   프리셋, 설정(온보딩) 진입점을 제공한다(P3-2). 이미 열려 있으면 닫기 토글.
  *
  * ADR-2 참고: 이 서비스가 쓰는 지연(Handler.postDelayed 롱프레스 감지, ValueAnimator 스냅 애니메이션)은
  * 전부 표준 UI 제스처 인식/화면 전환 애니메이션이며 액추에이터 상태 대기가 아니다. 실제 배치 진행은
  * 전적으로 [ArrangerAccessibilityService] 의 상태 머신이 담당하고, 이 서비스는 트리거만 한다.
  *
- * 좌표 하드코딩 금지(CLAUDE.md 함정 #2, #5): 버블 위치 클램프·스냅은 매번
- * `windowManager.currentWindowMetrics` 를 재조회해 계산한다 — 화면 크기를 상수로 가정하지 않는다.
+ * 좌표 하드코딩 금지(CLAUDE.md 함정 #2, #5): 버블 위치 클램프·스냅, 확장 메뉴 위치 클램프는
+ * 매번 `windowManager.currentWindowMetrics` 를 재조회해 계산한다 — 화면 크기를 상수로 가정하지 않는다.
  *
  * [실측 2026-07-25, A/B 실험] 버블 오버레이 창이 떠 있는 동안 배치를 실행하면 SplitEntry step3
  * 피커發 PanelActivity 가 분할 페인이 아니라 **전체화면**으로 낙착해 자가 가드가 즉시 종료 →
@@ -54,12 +68,20 @@ import kotlin.math.abs
  * 않는 것으로 추정된다(메커니즘 불명 — 경험 법칙으로 대응). [setBubbleHiddenForArrange] 가
  * [ArrangerAccessibilityService] 의 세션 시작/종료에 맞춰 이 창을 완전히 제거/재부착한다
  * (INVISIBLE 로는 부족할 수 있음 — 원인이 "가시 창의 존재" 자체이므로 창 자체를 없앤다).
+ *
+ * P3-2: 같은 이유로 확장 메뉴 오버레이 창도 배치/해제 트리거 전 반드시 제거해야 한다 — 메뉴
+ * 항목 클릭 경로는 [dismissMenu] 를 동기 호출한 뒤에만 `startArrange`/`dismissSplit` 을 부르고
+ * ([dismissMenuThenArrange], [dismissMenuThenDismissSplit]), adb 트리거 등 메뉴를 거치지 않는
+ * 경로에 대비해 [setBubbleHiddenForArrange] 도 hidden=true 일 때 메뉴를 함께 제거한다.
  */
 class FloatingLauncherService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
+
+    /** P3-2 프리셋 asset 백그라운드 로드 전용. UI 상태 변경은 이 서비스도 메인 스레드로 단일화한다. */
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var bubbleView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -69,12 +91,20 @@ class FloatingLauncherService : Service() {
     /** [setBubbleHiddenForArrange] 안전 타이머 — 복원 신호가 안 오면 자동 재표시한다. UI 안전망 취소용. */
     private var hideSafetyRunnable: Runnable? = null
 
+    /** P3-2 확장 메뉴 오버레이. null 이면 닫혀 있음 — 그 자체가 열림/닫힘 상태다(별도 플래그 불필요). */
+    private var menuView: View? = null
+
+    /** window_profiles.json presets 캐시. null 이면 아직 로드 전이거나 파싱 실패(메뉴에서 프리셋 섹션 생략). */
+    private var cachedPresets: List<AspectPreset>? = null
+    private var presetsLoadStarted = false
+
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         createNotificationChannel()
         instance = this
+        preloadPresetsIfNeeded()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -98,7 +128,9 @@ class FloatingLauncherService : Service() {
     }
 
     override fun onDestroy() {
+        dismissMenu()
         removeBubble()
+        serviceScope.cancel()
         isRunning = false
         if (instance == this) instance = null
         super.onDestroy()
@@ -125,6 +157,7 @@ class FloatingLauncherService : Service() {
             hideSafetyRunnable = null
 
             if (hidden) {
+                dismissMenu() // 함정 #22: 배치 트리거가 어떤 경로로 오든(메뉴 클릭 외 adb 등) 메뉴 창도 반드시 제거
                 detachBubbleView()
                 val runnable = Runnable {
                     Log.w(
@@ -270,7 +303,7 @@ class FloatingLauncherService : Service() {
     }
 
     // ══════════════════════════════════════════════════════════
-    // 터치 제스처: 탭 = 배치 트리거, 드래그 = 이동+스냅, 롱프레스 = 온보딩
+    // 터치 제스처: 탭 = 배치 트리거, 드래그 = 이동+스냅, 롱프레스 = 확장 메뉴 토글(P3-2)
     // ══════════════════════════════════════════════════════════
 
     private inner class BubbleTouchListener(
@@ -288,10 +321,23 @@ class FloatingLauncherService : Service() {
         private var dragging = false
         private var longPressFired = false
 
+        /**
+         * ACTION_DOWN 시점에 메뉴가 열려 있었는지 스냅샷. 메뉴 창은 FLAG_WATCH_OUTSIDE_TOUCH 로
+         * 바깥 탭에도 스스로 닫히므로(showMenu() 의 ACTION_OUTSIDE 처리), ACTION_UP 시점에 다시
+         * `menuView` 를 읽으면 이미 null 로 바뀌어 있을 수 있어 "메뉴 재탭 = 닫기만" 요구사항이
+         * "닫기 + 배치 트리거" 로 오작동할 위험이 있다. DOWN 시점 스냅샷으로 이 경합을 막는다.
+         */
+        private var menuWasOpenAtDown = false
+
         private val longPressRunnable = Runnable {
             longPressFired = true
-            Log.i(TAG, "bubble long-press — 온보딩 진입")
-            launchOnboarding()
+            if (menuWasOpenAtDown) {
+                Log.i(TAG, "bubble long-press — 메뉴 재진입 닫기 토글")
+                dismissMenu()
+            } else {
+                Log.i(TAG, "bubble long-press — 확장 메뉴 열기")
+                showMenu()
+            }
         }
 
         override fun onTouch(v: View, event: MotionEvent): Boolean {
@@ -303,6 +349,7 @@ class FloatingLauncherService : Service() {
                     initialTouchY = event.rawY
                     dragging = false
                     longPressFired = false
+                    menuWasOpenAtDown = menuView != null
                     handler.postDelayed(longPressRunnable, longPressTimeoutMs)
                     return true
                 }
@@ -313,6 +360,7 @@ class FloatingLauncherService : Service() {
                     if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
                         dragging = true
                         handler.removeCallbacks(longPressRunnable)
+                        dismissMenu() // 드래그로 버블이 움직이면 옛 위치에 뜬 메뉴는 무의미하므로 닫는다
                     }
                     if (dragging) {
                         val bounds = windowManager.currentWindowMetrics.bounds
@@ -330,6 +378,7 @@ class FloatingLauncherService : Service() {
                     when {
                         longPressFired -> Unit // 이미 롱프레스 콜백에서 처리됨
                         dragging -> snapToEdge(view, params)
+                        menuWasOpenAtDown -> dismissMenu() // 메뉴 열려 있을 때 탭 재진입 = 닫기 토글
                         else -> onBubbleTap()
                     }
                     return true
@@ -379,6 +428,214 @@ class FloatingLauncherService : Service() {
         startActivity(intent)
     }
 
+    // ══════════════════════════════════════════════════════════
+    // P3-2 확장 메뉴: 롱프레스로 열리는 위/아래 배치·분할 해제·종횡비 프리셋·설정 팝업.
+    //
+    // 클래식 View + TYPE_APPLICATION_OVERLAY 로 만든다(오버레이 창에 Compose 금지 — 프로젝트
+    // 결정, lifecycle owner 함정 회피). bubbleView 와는 별개의 독립 창이라 버블 드래그/스냅과
+    // 서로 간섭하지 않는다.
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * 메뉴 오버레이 창을 연다. 이미 열려 있으면 아무것도 하지 않는다(열기/닫기 토글은 호출자
+     * 쪽에서 판단한다 — [BubbleTouchListener] 참고).
+     *
+     * 위치: 버블 근처에 붙이되 화면 경계를 넘지 않게 클램프한다. 화면 크기는 매번
+     * `windowManager.currentWindowMetrics` 를 재조회한다(좌표 하드코딩 금지, CLAUDE.md 함정 #2).
+     */
+    private fun showMenu() {
+        if (menuView != null) return
+        val bubble = bubbleView ?: return
+        val bubbleParams = layoutParams ?: return
+
+        val content = buildMenuContent()
+        // WindowManager 에 얹기 전 예상 크기를 재서 클램프 계산에 쓴다. 실제 최종 렌더 크기와
+        // 완전히 같지 않을 수 있지만, 화면 밖으로 크게 벗어나지 않게 하는 용도로는 충분하다.
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val menuWidth = content.measuredWidth
+        val menuHeight = content.measuredHeight
+
+        val bounds = windowManager.currentWindowMetrics.bounds
+        val bubbleSize = bubble.width.takeIf { it > 0 }
+            ?: (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
+
+        // 버블이 화면 좌/우 어느 쪽에 가까운지에 따라 메뉴 정렬을 바꿔 화면 밖으로 나가는 경우를 줄인다.
+        val screenCenterX = bounds.width() / 2
+        val bubbleCenterX = bubbleParams.x + bubbleSize / 2
+        var menuX = if (bubbleCenterX < screenCenterX) bubbleParams.x else bubbleParams.x + bubbleSize - menuWidth
+        var menuY = bubbleParams.y + bubbleSize
+        if (menuY + menuHeight > bounds.height()) {
+            menuY = bubbleParams.y - menuHeight // 아래쪽 공간이 부족하면 버블 위로 띄운다
+        }
+        menuX = menuX.coerceIn(0, (bounds.width() - menuWidth).coerceAtLeast(0))
+        menuY = menuY.coerceIn(0, (bounds.height() - menuHeight).coerceAtLeast(0))
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = menuX
+            y = menuY
+        }
+
+        content.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                dismissMenu()
+                true
+            } else {
+                false
+            }
+        }
+
+        runCatching { windowManager.addView(content, params) }
+            .onSuccess { menuView = content }
+            .onFailure { e -> Log.e(TAG, "메뉴 뷰 attach 실패", e) }
+    }
+
+    /**
+     * 메뉴 오버레이 창을 제거한다. 이미 닫혀 있으면 무시(멱등). 배치/분할 해제 트리거 직전에는
+     * 반드시 이 함수를 거쳐야 한다 — CLAUDE.md 함정 #22: 오버레이 창이 떠 있는 채로 배치가
+     * 돌면 피커發 파트너 창이 전체화면으로 낙착해 세션이 실패한다(실측).
+     */
+    private fun dismissMenu() {
+        val view = menuView ?: return
+        menuView = null
+        runCatching { windowManager.removeView(view) }
+            .onFailure { e -> Log.w(TAG, "메뉴 뷰 제거 실패", e) }
+    }
+
+    private fun buildMenuContent(): LinearLayout {
+        val density = resources.displayMetrics.density
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.menu_background)
+            val pad = (4 * density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+
+        container.addMenuItem(getString(R.string.bubble_menu_place_top)) {
+            dismissMenuThenArrange(Placement.TOP, null)
+        }
+        container.addMenuItem(getString(R.string.bubble_menu_place_bottom)) {
+            dismissMenuThenArrange(Placement.BOTTOM, null)
+        }
+        container.addMenuItem(getString(R.string.bubble_menu_dismiss_split)) {
+            dismissMenuThenDismissSplit()
+        }
+
+        // window_profiles.json presets 은 자산 파싱 성공 시에만 채워진다. 실패/미로드 시 섹션 자체를
+        // 생략한다(크래시 금지, 조용한 실패는 preloadPresetsIfNeeded 의 Log.w 로 이미 드러남).
+        val presets = cachedPresets
+        if (!presets.isNullOrEmpty()) {
+            container.addMenuDivider()
+            presets.forEach { preset ->
+                container.addMenuItem(preset.label) {
+                    // preset.aspect == null("자동 감지")이면 startArrange(null, null) 과 동일 의미가 된다.
+                    dismissMenuThenArrange(null, preset.aspect)
+                }
+            }
+        }
+
+        container.addMenuDivider()
+        container.addMenuItem(getString(R.string.bubble_menu_settings)) {
+            dismissMenu()
+            launchOnboarding()
+        }
+
+        return container
+    }
+
+    private fun LinearLayout.addMenuItem(label: String, onClick: () -> Unit) {
+        val density = resources.displayMetrics.density
+        val item = TextView(context).apply {
+            text = label
+            setTextColor(MENU_ITEM_TEXT_COLOR)
+            textSize = MENU_ITEM_TEXT_SIZE_SP
+            setBackgroundResource(R.drawable.menu_item_background)
+            val horizontal = (14 * density).toInt()
+            val vertical = (10 * density).toInt()
+            setPadding(horizontal, vertical, horizontal, vertical)
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+        addView(
+            item,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+        )
+    }
+
+    private fun LinearLayout.addMenuDivider() {
+        val density = resources.displayMetrics.density
+        val divider = View(context).apply { setBackgroundColor(MENU_DIVIDER_COLOR) }
+        val margin = (4 * density).toInt()
+        val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * density).toInt())
+        params.setMargins(margin, margin, margin, margin)
+        addView(divider, params)
+    }
+
+    /**
+     * 메뉴를 먼저 제거한 뒤(함정 #22) 배치를 트리거한다. 접근성 서비스 인스턴스가 없으면
+     * 기존 탭 동작과 동일하게 토스트 + 온보딩으로 유도한다.
+     */
+    private fun dismissMenuThenArrange(placement: Placement?, aspect: Float?) {
+        dismissMenu()
+        val service = ArrangerAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, getString(R.string.toast_accessibility_off), Toast.LENGTH_LONG).show()
+            launchOnboarding()
+            return
+        }
+        service.startArrange(placement, aspect)
+    }
+
+    /** 메뉴를 먼저 제거한 뒤(함정 #22) 분할 해제를 트리거한다. */
+    private fun dismissMenuThenDismissSplit() {
+        dismissMenu()
+        val service = ArrangerAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, getString(R.string.toast_accessibility_off), Toast.LENGTH_LONG).show()
+            launchOnboarding()
+            return
+        }
+        service.dismissSplit()
+    }
+
+    /**
+     * window_profiles.json 의 presets 를 백그라운드에서 1회 로드해 캐싱한다. 실패해도 재시도하지
+     * 않는다(무한 재시도 금지) — 메뉴는 그냥 프리셋 섹션 없이 뜬다. 서비스 생성 시점(onCreate)에
+     * 미리 불러 두므로 사용자가 실제로 메뉴를 열 때는 대개 이미 준비돼 있다.
+     */
+    private fun preloadPresetsIfNeeded() {
+        if (presetsLoadStarted) return
+        presetsLoadStarted = true
+        serviceScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    assets.open(WindowProfilesParser.PROFILES_ASSET_NAME).bufferedReader().use { it.readText() }
+                }.getOrNull()
+            }
+            if (text == null) {
+                Log.w(TAG, "preloadPresetsIfNeeded: profiles asset 읽기 실패 — 메뉴에서 프리셋 섹션 생략")
+                return@launch
+            }
+            when (val result = WindowProfilesParser.parse(text)) {
+                is ProfilesParseResult.Success -> cachedPresets = result.config.presets
+                is ProfilesParseResult.Failure -> {
+                    result.errors.forEach { Log.w(TAG, "preloadPresetsIfNeeded: 파싱 오류: $it") }
+                }
+            }
+        }
+    }
+
     private fun savePosition(x: Int, y: Int) {
         prefs.edit().putInt(PREF_BUBBLE_X, x).putInt(PREF_BUBBLE_Y, y).apply()
     }
@@ -389,6 +646,13 @@ class FloatingLauncherService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val BUBBLE_SIZE_DP = 56
         private const val SNAP_ANIM_DURATION_MS = 200L
+
+        // P3-2 확장 메뉴 스타일. 과한 꾸밈 없이 bubble_background 와 톤만 맞춘다.
+        // -1 은 0xFFFFFFFF(불투명 흰색 ARGB)의 32비트 부호있는 Int 표현과 동일하다 — hex 리터럴이
+        // Int 범위를 넘는 애매함을 피하기 위해 직접 값으로 적었다.
+        private const val MENU_ITEM_TEXT_COLOR = -1
+        private const val MENU_ITEM_TEXT_SIZE_SP = 15f
+        private const val MENU_DIVIDER_COLOR = 0x33FFFFFF
 
         /**
          * setBubbleHiddenForArrange(true) 후 복원 신호가 오지 않을 때 자동 재표시까지의 유예.
