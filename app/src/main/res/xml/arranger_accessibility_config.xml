@@ -6,9 +6,10 @@
   canPerformGestures             : 디바이더 드래그(DividerDragger), 페인 전환 탭(PaneSwapper)
   canRetrieveWindowContent       : Recents/팝업 노드 탐색 (SplitEntry, PaneSwapper)
   canTakeScreenshot              : letterbox 사전측정 + 폐루프 보정 실측 (ADR-1 ②, ADR-5)
+  typeViewClicked                : #20 포렌식 로그 — View.performClick() 실제 발화 여부 판별용
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeViewClicked"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
     android:canPerformGestures="true"

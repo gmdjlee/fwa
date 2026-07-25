@@ -9,6 +9,8 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import dev.dj.foldwindow.domain.ClickCyclePlan
+import dev.dj.foldwindow.domain.ClickMechanism
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.PaneGeometry
 import kotlinx.coroutines.CancellationException
@@ -46,8 +48,21 @@ import kotlin.coroutines.resume
  * 머신에 되먹임한다. 상태(재시도 횟수, 타임아웃 판정)는 전부 머신 쪽 책임이다.
  *
  * ADR-2: 고정 지연 금지. 모든 대기는 (조건 폴링 + 타임아웃) 으로 구현한다.
+ *
+ * [#20, 2026-07-25] step3/menuStep4 의 피커 탭은 [ClickCyclePlan] 기반 클릭-사이클
+ * 에스컬레이션([clickUntilCondition])으로 재구현됐다 (docs/DESIGN_20_CLICK_CYCLE.md).
  */
-class SplitEntry(private val service: AccessibilityService) {
+class SplitEntry(
+    private val service: AccessibilityService,
+    /**
+     * [#20] 제스처 탭(GESTURE_TAP)은 손가락 입력과 동일한 히트테스트 경로를 타므로, 자기 앱의
+     * 터치 가능 오버레이(플로팅 버블/확장 메뉴)가 화면 위에 떠 있으면 그 오버레이가 탭을
+     * 가로채 대상 노드까지 도달하지 못한다 — ACTION_CLICK 에는 없던 새 실패 모드다(함정 #22
+     * 계열). platform 계층은 service/ 를 몰라야 하므로(레이어링 유지) 판정 자체는 이 람다로
+     * 주입받는다 — 서비스가 `FloatingLauncherService.hasAttachedOverlayWindow()` 를 넘긴다.
+     */
+    private val ownOverlayVisible: () -> Boolean,
+) {
 
     /** 핸들 탭 → "시계 방향으로 회전" 팝업 클릭 로직은 서비스 레이어의 위치 교정 폴백과 공유한다. */
     private val rotator = DividerPopupRotator(service)
@@ -226,14 +241,20 @@ class SplitEntry(private val service: AccessibilityService) {
     // ══════════════════════════════════════════════════════════
 
     /**
-     * 두 전략을 순서대로 시도한다:
-     *  1. PRIMARY (실측 경로): launcher `FromRecentActivity` 피커에서 우리 패널 라벨 노드를 탭.
-     *  2. FALLBACK [측정 2026-07-25]: `startActivity(panelIntent)` (LAUNCH_ADJACENT).
-     *     분할 선택 중에는 전체화면으로 떠서 분할 선택 상태를 파괴함 — 피커 경로 실패 시에만.
+     * [#20 재작성, 2026-07-25] launcher `FromRecentActivity` 피커에서 우리 패널 라벨 노드를
+     * [ClickCyclePlan.PICKER] 로 클릭-사이클 에스컬레이션한다 (docs/DESIGN_20_CLICK_CYCLE.md).
      *
-     * 성공 조건(공통): [isSplitPairPresent] — 패키지 2종(대상·자기 자신) 존재 **그리고**
+     * 옛 전략2(FALLBACK, `startActivity(ctx.panelIntent)` LAUNCH_ADJACENT)는 완전히 삭제했다.
+     * [측정 2026-07-25] 분할 선택 중 LAUNCH_ADJACENT 는 전체화면으로 떠서 전략1(피커)이 만든
+     * 분할 선택 상태 자체를 파괴했고, 구조적으로 성공 실측 0회였다. 게다가 예산은 항상
+     * true 를 반환하는 죽은 ACTION_CLICK(피커 폴백 미발동, DESIGN_20 §1 [code-certain])의
+     * 단일 수렴 폴링에 전부 소진돼 전략2가 ~0ms 예산으로 발화 — 3연속 동일 실패를 만드는
+     * 재시도 오염원이었다. `EntryContext.panelIntent` 필드 자체는 유지한다(서비스가 여전히
+     * 생성해서 넘긴다) — 이 함수가 더 이상 쓰지 않을 뿐이다.
+     *
+     * 성공 조건: [isSplitPairPresent] — 패키지 2종(대상·자기 자신) 존재 **그리고**
      * 두 창의 IntRect 가 [PaneGeometry.isTopBottomSplit] 통과. (패키지 존재만으로는 팝업/
-     * LAUNCH_ADJACENT 전체화면 강탈을 성공으로 오판할 수 있었다 — PROGRESS.md 열린 질문 #18.)
+     * 전체화면 강탈을 성공으로 오판할 수 있었다 — PROGRESS.md 열린 질문 #18.)
      */
     private suspend fun step3PlacePartner(ctx: EntryContext, timeoutMs: Long): Boolean {
         // [회귀 예방, 2026-07-25] step2 와 동일한 함정: 이전 시도의 클릭/드래그가 정착 지연으로
@@ -242,34 +263,9 @@ class SplitEntry(private val service: AccessibilityService) {
             Log.i(TAG, "step3: 분할 쌍 이미 존재 — 피커 탭 생략")
             return true
         }
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
-
-        // 전략 1 (실측 경로): Recents 파트너 피커에서 우리 패널 항목 탭. 예산의 약 60% 할당.
-        val pickerBudget = minOf(timeoutMs * 6 / 10, remaining())
-        val pickerClicked = clickWhenFound(pickerBudget, "step3 panel-picker") { findPanelPickerNode() }
-        if (pickerClicked) {
-            if (pollUntil(remaining()) { isSplitPairPresent(ctx) }) {
-                Log.i(TAG, "step3: 전략1(실측 피커 경로) 로 성공")
-                return true
-            }
-            Log.w(TAG, "step3: 전략1 클릭 후 분할 쌍 미수렴 — 전략2(LAUNCH_ADJACENT)로 폴백")
-        } else {
-            Log.w(TAG, "step3: 전략1 피커 노드 발견/클릭 실패 — 전략2(LAUNCH_ADJACENT)로 폴백")
+        return clickUntilCondition(timeoutMs, "step3 panel-picker", ClickCyclePlan.PICKER, ::findPanelPickerNode) {
+            isSplitPairPresent(ctx)
         }
-
-        // [측정 2026-07-25] 분할 선택 중 LAUNCH_ADJACENT 는 전체화면으로 떠서 분할 선택 상태를
-        // 파괴함 — 최후 폴백으로만.
-        val fallbackLaunched = runCatching { service.startActivity(ctx.panelIntent) }.isSuccess
-        if (!fallbackLaunched) {
-            Log.w(TAG, "step3: 전략2 startActivity 실패")
-            return false
-        }
-        val fallbackOk = pollUntil(remaining()) { isSplitPairPresent(ctx) }
-        if (fallbackOk) {
-            Log.i(TAG, "step3: 전략2(startActivity LAUNCH_ADJACENT 폴백) 로 성공")
-        }
-        return fallbackOk
     }
 
     // ══════════════════════════════════════════════════════════
@@ -327,7 +323,9 @@ class SplitEntry(private val service: AccessibilityService) {
     // ══════════════════════════════════════════════════════════
 
     /**
-     * 동작: [findPanelPickerNode] 로 찾은 파트너(우리 패널) 노드를 클릭 (DRAG 레시피 step3 와 동일 셀렉터 재사용).
+     * [#20 재작성, 2026-07-25] [findPanelPickerNode] 로 찾은 파트너(우리 패널) 노드를
+     * [ClickCyclePlan.PICKER] 로 클릭-사이클 에스컬레이션한다 (DRAG 레시피 step3 와 동일 셀렉터
+     * 재사용, docs/DESIGN_20_CLICK_CYCLE.md).
      * 성공 조건: 패키지 2종 존재 ∧ [PaneGeometry.isLeftRightSplit] ([isSplitPairPresentLeftRight]).
      */
     private suspend fun menuStep4TapPartnerInPicker(ctx: EntryContext, timeoutMs: Long): Boolean {
@@ -336,15 +334,9 @@ class SplitEntry(private val service: AccessibilityService) {
             Log.i(TAG, "menuStep4: 좌우 분할 쌍 이미 존재 — 피커 탭 생략")
             return true
         }
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
-
-        val clicked = clickWhenFound(remaining(), "menuStep4 panel-picker") { findPanelPickerNode() }
-        if (!clicked) {
-            Log.w(TAG, "menuStep4: 파트너 피커 노드 발견/클릭 실패")
-            return false
+        return clickUntilCondition(timeoutMs, "menuStep4 panel-picker", ClickCyclePlan.PICKER, ::findPanelPickerNode) {
+            isSplitPairPresentLeftRight(ctx)
         }
-        return pollUntil(remaining()) { isSplitPairPresentLeftRight(ctx) }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -613,6 +605,100 @@ class SplitEntry(private val service: AccessibilityService) {
     }
 
     /**
+     * [#20] 클릭-사이클 에스컬레이션 (docs/DESIGN_20_CLICK_CYCLE.md §2-2). [step3PlacePartner],
+     * [menuStep4TapPartnerInPicker] 가 쓴다.
+     *
+     * [budgetMs] 예산 안에서 최대 [MAX_CLICK_CYCLES] 사이클을 돈다. 매 사이클:
+     *  1. 디스패치 전 [condition] 선체크 — 이전 사이클의 클릭이 늦게 정착했거나, 늦은 폴링
+     *     주기에 이미 원하는 상태가 됐으면 새 디스패치 없이 즉시 성공 처리한다.
+     *  2. [find] 로 노드 재탐색(`pollForValue`) — 못 찾으면 다음 사이클로.
+     *  3. 스테일 가드([AccessibilityNodeInfo.refresh]) — phantom 노드에 탭하지 않는다.
+     *  4. [plan.mechanismFor] 가 정한 메커니즘으로 디스패치.
+     *  5. 검증 슬라이스([plan.verifySliceMs]) 동안 [condition] 폴링.
+     * 3사이클을 다 써도 수렴하지 않으면 잔여 예산 전부를 [condition] 폴링에 마지막으로 쓴다
+     * (늦은 정착 최종 흡수).
+     *
+     * `AccessibilityNodeInfo.performAction(ACTION_CLICK)` 의 true 반환은 "노드가 살아있고
+     * clickable" 만 보장하고 실제 클릭 핸들러 실행 여부는 보장하지 않는다([ClickCyclePlan] KDoc
+     * 참고) — 그래서 이 함수는 디스패치 성공(dispatched)과 [condition] 수렴(실제 효과)을
+     * 분리해서 판정한다. 거부된 디스패치(dispatched=false)는 검증 슬라이스를 생략하고 바로
+     * 다음 사이클로 넘어간다 — 애초에 반영될 리 없는 디스패치를 위해 800ms 를 낭비하지 않는다.
+     */
+    private suspend fun clickUntilCondition(
+        budgetMs: Long,
+        what: String,
+        plan: ClickCyclePlan,
+        find: () -> AccessibilityNodeInfo?,
+        condition: () -> Boolean,
+    ): Boolean {
+        val startedAtMs = SystemClock.uptimeMillis()
+        val deadline = startedAtMs + budgetMs
+        fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
+        fun elapsedMs() = SystemClock.uptimeMillis() - startedAtMs
+
+        for (cycle in 0 until MAX_CLICK_CYCLES) {
+            if (remaining() <= 0) break
+
+            if (condition()) {
+                Log.i(TAG, "clickCycle: [$what] converged cycle=$cycle mech=none elapsedMs=${elapsedMs()}")
+                return true
+            }
+
+            val node = pollForValue(minOf(plan.findSliceMs, remaining())) { find() }
+            if (node == null) {
+                Log.w(TAG, "clickCycle: [$what] cycle=$cycle node-not-found")
+                continue
+            }
+
+            // 스테일 가드: 트리 갱신 사이 phantom 매치에 탭을 날리지 않는다.
+            val fresh = runCatching { node.refresh() }.getOrDefault(false)
+            if (!fresh) {
+                Log.w(TAG, "clickCycle: [$what] cycle=$cycle stale-node")
+                continue
+            }
+
+            val mechanism = plan.mechanismFor(cycle)
+            val dispatched = when (mechanism) {
+                ClickMechanism.GESTURE_TAP -> {
+                    if (ownOverlayVisible()) {
+                        // 제스처 탭은 히트테스트 기반이라 자기 터치 가능 오버레이가 탭을 삼킨다
+                        // (ACTION_CLICK 엔 없던 실패 모드) — 조용히 넘기지 않고 명시 실패로 드러낸다.
+                        Log.e(TAG, "clickCycle: [$what] own touchable overlay present — tap would be swallowed")
+                        return false
+                    }
+                    tapNodeCenter(node)
+                }
+
+                ClickMechanism.A11Y_ACTION -> {
+                    val clickable = clickableAncestorOrSelf(node)
+                    val clicked = clickable != null &&
+                        runCatching { clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
+                            .getOrDefault(false)
+                    // clickable 조상이 없거나 ACTION_CLICK 이 false 면 같은 사이클 안에서 즉시 제스처로 폴백.
+                    if (clicked) true else tapNodeCenter(node)
+                }
+            }
+            val mechLabel = if (mechanism == ClickMechanism.GESTURE_TAP) "gesture" else "a11y"
+            Log.i(TAG, "clickCycle: [$what] cycle=$cycle mech=$mechLabel dispatched=$dispatched")
+
+            if (!dispatched) continue // 거부된 디스패치엔 검증 슬라이스를 낭비하지 않는다.
+
+            if (pollUntil(minOf(plan.verifySliceMs, remaining())) { condition() }) {
+                Log.i(TAG, "clickCycle: [$what] converged cycle=$cycle mech=$mechLabel elapsedMs=${elapsedMs()}")
+                return true
+            }
+        }
+
+        // 3사이클 소진 후 잔여 예산 전부를 늦은 정착 최종 흡수에 쓴다.
+        if (pollUntil(remaining()) { condition() }) {
+            Log.i(TAG, "clickCycle: [$what] converged cycle=$MAX_CLICK_CYCLES mech=none elapsedMs=${elapsedMs()}")
+            return true
+        }
+        Log.w(TAG, "clickCycle: [$what] budget exhausted after $MAX_CLICK_CYCLES cycles")
+        return false
+    }
+
+    /**
      * [budgetMs] 안에서 [find] 로 노드를 폴링 탐색해 발견 즉시 클릭한다.
      * 트리 갱신 직후 일시적 미조회(윈도우 churn)에 대비해 탐색 자체를 재시도한다.
      * 클릭까지 성공하면 true. 예산 소진 시 false.
@@ -620,6 +706,9 @@ class SplitEntry(private val service: AccessibilityService) {
      * 클릭 해석 순서 (실측: 라벨 TextView 는 isClickable=false 인 경우가 있어 ACTION_CLICK 이 항상 실패할 수 있음):
      *  1. 매치 노드에서 부모로 올라가며 isClickable 인 조상(또는 자신)에 ACTION_CLICK
      *  2. 실패 시 매치 노드 중심 좌표에 50ms 탭 제스처 디스패치 (성공 여부는 호출자의 성공 조건 폴링이 판정)
+     *
+     * [#20] 잔여 호출자(menuStep2/3, DividerPopupRotator 와 동형의 자체 구현)만 남았다 —
+     * step3/menuStep4 는 [clickUntilCondition] 으로 이전됐다.
      */
     private suspend fun clickWhenFound(
         budgetMs: Long,
@@ -696,8 +785,10 @@ class SplitEntry(private val service: AccessibilityService) {
     companion object {
         private const val TAG = "FWSplitEntry"
         private const val POLL_INTERVAL_MS = 150L
-        private const val PRIMARY_STRATEGY_MAX_MS = 1500L
         private const val TAP_DURATION_MS = 50L
+
+        /** [#20] clickUntilCondition 최대 사이클 수 (docs/DESIGN_20_CLICK_CYCLE.md §2-2). */
+        private const val MAX_CLICK_CYCLES = 3
     }
 }
 

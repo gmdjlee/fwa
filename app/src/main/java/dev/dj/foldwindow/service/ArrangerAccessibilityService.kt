@@ -129,7 +129,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
         instance = this
         dividerDragger = DividerDragger(this)
         paneSwapper = PaneSwapper(this)
-        splitEntry = SplitEntry(this)
+        // [#20] 오버레이 가드 판정원은 in-process 상태(FloatingLauncherService 창 부착 여부)다 —
+        // a11y 창 목록은 touchable 플래그를 노출하지 않고 자기 오버레이가 목록 자체를 오염시킬 수
+        // 있다(함정 #25). platform 계층은 service/ 를 몰라야 하므로 람다로 주입한다.
+        splitEntry = SplitEntry(this) { FloatingLauncherService.hasAttachedOverlayWindow() }
         popupRotator = DividerPopupRotator(this)
         Log.i(TAG, "arranger service connected")
     }
@@ -150,6 +153,17 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // 만 쓰므로 Recents 진입 중 런처가 잠깐 포그라운드가 돼도 세션이 오염되지 않는다.
                 lastForegroundPkg = pkg
             }
+        }
+        // [#20 포렌식, 2026-07-25] `View.performClick()` 은 리스너 유무와 무관하게 이 이벤트를
+        // 무조건 발화한다(AOSP 검증, docs/DESIGN_20_CLICK_CYCLE.md §2-4) — "잘못된/리스너 없는
+        // 뷰에서 실행됨" 과 "실행 자체가 없었음"을 logcat 에서 구분하기 위한 무행동(non-actuating)
+        // 로그다. 세션 진행 중에만 남긴다 — 평시(세션 밖)까지 남기면 로그가 폭주한다.
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            (machineState != ArrangeState.Idle || sessionInFlight)
+        ) {
+            // event.source 접근은 스테일 노드에서 예외를 던질 수 있어 runCatching 으로 방어한다.
+            val viewId = runCatching { event.source?.viewIdResourceName }.getOrNull()
+            Log.i(TAG, "FORENSIC viewClicked pkg=${event.packageName} cls=${event.className} viewId=$viewId")
         }
     }
 
@@ -724,7 +738,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             if (actualPosition != desiredPlacement) {
                 val handleForSwap = lastHandle
                 val swapped = if (handleForSwap != null) {
-                    paneSwapper.swap(handleForSwap, SWAP_TIMEOUT_MS) {
+                    paneSwapper.swap(handleForSwap, SWAP_TIMEOUT_MS, ::awaitDividerSettled) {
                         actualVideoPanePosition(target, screenRect()) == desiredPlacement
                     }
                 } else {
@@ -787,6 +801,28 @@ class ArrangerAccessibilityService : AccessibilityService() {
             }
         }
     }
+
+    /**
+     * [#20] `PaneSwapper.swap` 의 정착 게이트 콜백. [DIVIDER_SETTLE_POLL_INTERVAL_MS] 간격으로
+     * 연속 2회 [dividerLocator.locate] 결과(핸들)가 non-null 이고 완전히 동일하면([DividerHandle]
+     * 은 data class 라 구조적 동등성) "정착"으로 본다 — 회전/드래그 직후 애니메이션이 끝나기 전의
+     * 클릭 무효화(docs/DESIGN_20_CLICK_CYCLE.md §1 [inferred])에 대응한다.
+     *
+     * ADR-2 준수: 조건 폴링(withTimeoutOrNull + delay 루프)이며 고정 지연으로 "다 됐겠지" 를
+     * 가정하지 않는다. best-effort — 타임아웃되면 false 를 돌려줄 뿐 예외를 던지지 않는다
+     * (PaneSwapper 가 로그만 남기고 사이클 루프로 진행을 계속한다).
+     */
+    private suspend fun awaitDividerSettled(budgetMs: Long): Boolean =
+        withTimeoutOrNull(budgetMs) {
+            var prev: DividerHandle? = null
+            while (true) {
+                val cur = dividerLocator.locate(safeWindows(), screenRect())
+                if (cur != null && cur == prev) return@withTimeoutOrNull true
+                prev = cur
+                delay(DIVIDER_SETTLE_POLL_INTERVAL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        } ?: false
 
     /**
      * [측정 2026-07-25] `PaneSwapper.swap` ("창 전환" 노드 클릭) result=true 인데 실제 스왑이
@@ -1083,6 +1119,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 흡수하도록 3000ms 로 확대.
          */
         private const val SWAP_TIMEOUT_MS = 3000L
+
+        /** [#20] [awaitDividerSettled] 연속 2회 일치 판정 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
+        private const val DIVIDER_SETTLE_POLL_INTERVAL_MS = 150L
 
         /**
          * [측정 2026-07-25] PaneSwapper.swap 실패 폴백(회전×2)의 회전 1회당 예산.

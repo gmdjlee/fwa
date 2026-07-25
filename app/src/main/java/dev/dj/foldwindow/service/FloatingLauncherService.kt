@@ -106,13 +106,24 @@ class FloatingLauncherService : Service() {
 
     private var bubbleView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+
+    /**
+     * [#20] 메인 스레드에서만 변이되지만, [hasAttachedOverlayWindow] 가 a11y 서비스의 코루틴
+     * 스코프(다른 스레드일 수 있음)에서 읽는다 — 스테일 읽기를 막기 위해 `@Volatile` 을 붙인다.
+     */
+    @Volatile
     private var bubbleAttached = false
     private var snapAnimator: ValueAnimator? = null
 
     /** [setBubbleHiddenForArrange] 안전 타이머 — 복원 신호가 안 오면 자동 재표시한다. UI 안전망 취소용. */
     private var hideSafetyRunnable: Runnable? = null
 
-    /** P3-2 확장 메뉴 오버레이. null 이면 닫혀 있음 — 그 자체가 열림/닫힘 상태다(별도 플래그 불필요). */
+    /**
+     * P3-2 확장 메뉴 오버레이. null 이면 닫혀 있음 — 그 자체가 열림/닫힘 상태다(별도 플래그 불필요).
+     * [#20] [bubbleAttached] 와 동일한 이유로 `@Volatile` — [hasAttachedOverlayWindow] 가 다른
+     * 스레드에서 읽는다.
+     */
+    @Volatile
     private var menuView: View? = null
 
     /** window_profiles.json presets 캐시. null 이면 아직 로드 전이거나 파싱 실패(메뉴에서 프리셋 섹션 생략). */
@@ -715,5 +726,16 @@ class FloatingLauncherService : Service() {
         @Volatile
         var instance: FloatingLauncherService? = null
             private set
+
+        /**
+         * [#20] 오버레이 가드: `SplitEntry.clickUntilCondition` 의 GESTURE_TAP 디스패치 전 판정원.
+         * 제스처 탭은 히트테스트 기반이라 자기 터치 가능 오버레이(버블/확장 메뉴)가 화면 위에
+         * 떠 있으면 그 오버레이가 탭을 가로채 대상 노드까지 도달하지 못한다(함정 #22 계열을
+         * 클릭-사이클 에스컬레이션에 맞춰 강제화). a11y 창 목록이 아니라 in-process 상태를 직접
+         * 본다 — a11y 창 목록은 touchable 여부를 노출하지 않고 자기 오버레이 자체가 그 목록을
+         * 오염시킬 수 있다(함정 #25).
+         */
+        fun hasAttachedOverlayWindow(): Boolean =
+            instance?.let { it.bubbleAttached || it.menuView != null } ?: false
     }
 }
