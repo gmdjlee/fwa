@@ -712,10 +712,13 @@ class FloatingLauncherService : Service() {
 
         /**
          * setBubbleHiddenForArrange(true) 후 복원 신호가 오지 않을 때 자동 재표시까지의 유예.
-         * ArrangerAccessibilityService 의 세션 타임아웃(가장 긴 경로도 수십 초 내)보다 넉넉히
-         * 길게 잡아, 정상 세션 도중에는 절대 발동하지 않게 한다. UI 안전망일 뿐 ADR-2 대상 아님.
+         * 이론 최악 세션 = MENU 5스텝 × 3시도 × 3s + 디바이더 4s + 드래그 12s(세션 오버라이드)
+         * + verify ≈ 70s > 종전 30s. 조기 복원은 세션 중 오버레이 재출현 = 함정 #22(피커發
+         * 파트너 전체화면 낙착) 자충수 — 워치독은 액추에이터 사망 시 최후 복구만 담당하므로
+         * 큰 값이 안전. 실측 최장 세션 12s (2026-07-28, 15차까지 관측).
+         * UI 안전망일 뿐 ADR-2 대상 아님.
          */
-        private const val HIDE_SAFETY_TIMEOUT_MS = 30_000L
+        private const val HIDE_SAFETY_TIMEOUT_MS = 90_000L
 
         /** [OnboardingActivity] 가 버블 실행 여부를 표시하기 위한 토글 상태. */
         @Volatile
