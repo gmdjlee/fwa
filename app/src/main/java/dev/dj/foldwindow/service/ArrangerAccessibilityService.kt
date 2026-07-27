@@ -48,6 +48,7 @@ import dev.dj.foldwindow.platform.DragStrategy
 import dev.dj.foldwindow.platform.EntryContext
 import dev.dj.foldwindow.platform.EntryRecipe
 import dev.dj.foldwindow.platform.FoldStateMonitor
+import dev.dj.foldwindow.platform.HingeAngleMonitor
 import dev.dj.foldwindow.platform.PaneSwapper
 import dev.dj.foldwindow.platform.ResizeModeDetector
 import dev.dj.foldwindow.platform.SplitEntry
@@ -115,6 +116,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private val flexPolicy = FlexModePolicy()
     private var foldMonitor: FoldStateMonitor? = null
     private var flexCheckJob: Job? = null
+
+    /**
+     * 힌지 각도 구독(각도 안정성 게이트 입력). 플렉스 진입(arm)에서만 켜고 이탈/발화/게이트 거부
+     * 시 끈다 — 상시 구독은 배터리 낭비다. 인스턴스는 재사용한다("센서 없음" 1회 로그 상태 보존).
+     */
+    private var hingeMonitor: HingeAngleMonitor? = null
 
     /** 기본 런처 패키지. onServiceConnected() 에서 1회 해석 — 자동 트리거 게이트 5(포그라운드 부적합)의 제외 대상 */
     private var homePackage: String? = null
@@ -201,6 +208,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         instance = null
         tickJob?.cancel()
         foldMonitor?.stop()
+        hingeMonitor?.stop()
         scope.cancel()
         screenshotExecutor.shutdown()
         super.onDestroy()
@@ -441,20 +449,77 @@ class ArrangerAccessibilityService : AccessibilityService() {
      * [FoldStateMonitor] 콜백. 매 자세 방출마다 호출되지만 실제 스케줄은 [FlexModePolicy] 가
      * HALF_OPENED_HORIZONTAL "진입"에서만 발급한다(동일 자세 중복 방출은 흡수됨).
      *
-     * ADR-2 예외 허용 지점(브리프 근거): 이 delay 는 폴딩 센서 신호의 디바운스다 — "UI 상태가
-     * 갖춰졌을 것"을 가정하는 고정 지연이 아니다. delay 후에도 [FlexModePolicy.shouldTriggerNow] 가
-     * 자세가 여전히 HALF_OPENED_HORIZONTAL 로 유지됐는지 재검증하고, 그걸 통과해야만
-     * [evaluateFlexAutoTrigger] 의 게이트 체인이 최종 발화 여부를 판정한다 — delay 자체는 성공을
-     * 가정하지 않는다.
+     * 진입 시 [HingeAngleMonitor] 구독을 함께 켜고(각도 안정성 게이트 입력), 이탈 시 폴링 종료와
+     * 함께 끈다(배터리 위생). [FlexModePolicy] 는 이탈 분기에서 스스로 disarm + 각도 히스토리
+     * 클리어를 수행한다.
      */
     private fun onFoldPosture(posture: FoldPosture) {
-        val checkAtMs = flexPolicy.onPosture(posture, SystemClock.uptimeMillis()) ?: return
-        flexCheckJob?.cancel()
-        flexCheckJob = scope.launch {
-            delay((checkAtMs - SystemClock.uptimeMillis()).coerceAtLeast(0))
-            if (flexPolicy.shouldTriggerNow(SystemClock.uptimeMillis())) {
-                evaluateFlexAutoTrigger()
+        val checkAtMs = flexPolicy.onPosture(posture, SystemClock.uptimeMillis())
+
+        if (posture != FoldPosture.HALF_OPENED_HORIZONTAL) {
+            // 플렉스 이탈 — 진행 중인 조건 폴링을 끊고 각도 구독을 해제한다.
+            flexCheckJob?.cancel()
+            flexCheckJob = null
+            hingeMonitor?.stop()
+
+            // [실기기 물증, 2026-07-27 23:54] 닫힌 기기를 여는 도중 ~90°에서 멈칫하면 힌지 각도
+            // 게이트가 "노트북 자세"로 오판해 FLEX 자동 배치가 발화한다. 발화 시점엔 "열다 멈칫"과
+            // "노트북 자세 의도"가 힌지 신호만으로 구분 불가 — 유일한 판별자는 사후 신호다. FLEX 로
+            // 시작된 세션이 진행 중인데 자세가 HALF_OPENED_HORIZONTAL 을 벗어나면(FLAT/UNKNOWN 등
+            // 사용자가 이어서 완전히 펴거나 접었다는 뜻) "의도 번복"으로 보고 세션을 취소한다.
+            // 세션 활성 판정은 startArrange 의 "이미 배치 진행 중" 체크와 동일한 관용구를 그대로
+            // 쓴다. sessionPlacementSource == "FLEX" 조건 덕분에 수동 트리거(OVERRIDE/LAST_SUCCESS
+            // 등, 사용자가 시작한 행위)는 자세가 바뀌어도 취소되지 않고, 세션이 이미 Done/Failed 로
+            // 정리됐다면(cleanupSession 이 machineState 를 Idle 로 되돌리므로) 이 조건 자체가
+            // 거짓이 돼 배치 완료 후 기기를 펴서 시청하는 정상 사용례를 건드리지 않는다.
+            if ((machineState != ArrangeState.Idle || sessionInFlight) && sessionPlacementSource == "FLEX") {
+                Log.i(TAG, "flex session cancelled: posture-exit")
+                cancelArrange()
             }
+            return
+        }
+        // 동일 자세 중복 보고(checkAtMs == null)는 진행 중인 폴링을 방해하지 않는다.
+        if (checkAtMs == null) return
+
+        val monitor = hingeMonitor ?: HingeAngleMonitor(this).also { hingeMonitor = it }
+        monitor.start { angleDeg, atMs -> flexPolicy.onHingeAngle(angleDeg, atMs) }
+
+        flexCheckJob?.cancel()
+        flexCheckJob = scope.launch { awaitFlexTrigger(checkAtMs) }
+    }
+
+    /**
+     * 플렉스 자동 발화 대기 루프.
+     *
+     * ADR-2: 첫 delay 는 [FlexModePolicy] 가 발급한 디바운스 시각에 "도달"하기 위한 수단일 뿐
+     * 성공을 가정하지 않는다 — 도달 후 [FlexModePolicy.shouldTriggerNow] 가 (a) 자세 유지 (b)
+     * 디바운스 경과 (c) 힌지 각도 정지를 실제로 재검증한다. 그중 각도 조건은 시간이 지난다고
+     * 저절로 참이 되지 않으므로(기기를 계속 접는 중이면 계속 거짓) 이후는
+     * [FLEX_ANGLE_POLL_INTERVAL_MS] 간격 **조건 폴링**이다.
+     *
+     * [실기기 물증, 2026-07-27] 완전히 닫는 동작이 HALF_OPENED 대역을 ~2s(2표본 2.1s/1.95s)
+     * 체류해 800ms 디바운스가 닫는 도중 만료 → 오발화(닫힌 기기에서 Recents 진입 시도 →
+     * ENTRY_STEP_FAILED). 예전에는 이 재검증이 1회뿐이라 "지금 불안정" == "이번 진입 포기"였는데,
+     * 그 판정을 폴링으로 바꿔 "접는 중엔 안 쏘고, 노트북 자세로 멎으면 그때 쏜다"가 됐다.
+     *
+     * 종료 조건: 발화(게이트 체인까지 진행) 또는 [FlexModePolicy.isArmed] == false — 자세 이탈이
+     * 무장을 해제하므로 별도 타임아웃이 필요 없다(이탈은 [onFoldPosture] 가 job 자체도 취소한다).
+     * 폴링 재시도는 로그를 남기지 않는다(스팸 방지) — 최종 발화/스킵 로그만 남는다.
+     */
+    private suspend fun awaitFlexTrigger(checkAtMs: Long) {
+        try {
+            delay((checkAtMs - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            while (flexPolicy.isArmed) {
+                if (flexPolicy.shouldTriggerNow(SystemClock.uptimeMillis())) {
+                    evaluateFlexAutoTrigger()
+                    return
+                }
+                delay(FLEX_ANGLE_POLL_INTERVAL_MS)
+            }
+        } finally {
+            // 이 진입 구간이 실제로 끝났을 때만 센서를 놓는다. 취소 사유가 "재진입"이면
+            // (onFoldPosture 가 새 구독을 이미 시작하고 재무장했으므로) 건드리면 안 된다.
+            if (!flexPolicy.isArmed) hingeMonitor?.stop()
         }
     }
 
@@ -1518,6 +1583,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 정착되는 즉시 통과하고, 정말 없으면 이 시간 뒤 정직하게 "분할 화면이 아닙니다".
          */
         private const val SPLIT_STATE_SETTLE_TIMEOUT_MS = 2_000L
+
+        /**
+         * P3-5 플렉스 각도 안정성 조건 폴링 간격([awaitFlexTrigger]). 각도가 멎은 뒤
+         * [FlexModePolicy.ANGLE_QUIET_MS](600ms) 를 채워야 발화하므로, 그보다 충분히 촘촘하면서
+         * (체감 지연 ≤ 이 값) 메인 스레드 부담이 없는 값이다 — 매 틱의 작업은 산술 비교 몇 번뿐이다.
+         * 파일 내 다른 조건 폴링(150~200ms 관례)과 같은 부류이며 고정 지연이 아니다(ADR-2).
+         */
+        private const val FLEX_ANGLE_POLL_INTERVAL_MS = 250L
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",

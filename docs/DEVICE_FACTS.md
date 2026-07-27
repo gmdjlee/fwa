@@ -392,10 +392,11 @@
 
 ---
 
-## P3-5 FoldingFeature (미검증)
+## P3-5 FoldingFeature 실기기 검증 (2026-07-27~28 15차 — 5항목 전부 통과)
 
-구현 완료(코드 리뷰 + 단위 테스트 220개 통과 + assembleDebug 통과), **실기기 미검증**. 아래 항목은
-Fold 7 실기기에서 확인 전까지 [미검증]으로 유지한다.
+검증 기기 = SM-F966N / One UI 8 / API 36. 5항목 **전부 최종 빌드 기준 통과**.
+단 항목 1·3 은 **수정 전 빌드에서 실패가 실측**됐고 그 물증이 설계를 바꿨으므로 항목별로 이력을 남긴다
+(항목 3 은 "완전 닫기는 800ms 미만으로 지나간다"는 **설계 가정 자체가 반증**된 경우다).
 
 ### 컴파일타임에 이미 해소된 사항 (참고 — 아래 실기기 항목과 구분할 것)
 
@@ -406,15 +407,102 @@ Fold 7 실기기에서 확인 전까지 [미검증]으로 유지한다.
 - `FoldingFeature.bounds`(→ `DisplayFeature.bounds`)는 `android.graphics.Rect` — `platform/FoldStateMonitor`
   의 힌지 좌표 로그(`hingeBounds=...`)가 그대로 실좌표로 쓸 수 있다.
 
-### 실기기 검증 대상
+### [측정] 항목 1 — `@UiContext` 수용 컨텍스트 (수정 필요했음 → 3-인자 WindowContext 채택)
 
-| # | 항목 | 확인 방법 |
+| 후보 | 결과 | 물증 |
 |---|---|---|
-| 1 | `windowLayoutInfo()` 가 접근성 서비스 컨텍스트(`AccessibilityService` 자신)를 `@UiContext` 로 수용하는가. 거부되면 `createWindowContext(TYPE_ACCESSIBILITY_OVERLAY)` 폴백이 실제로 방출을 받는가. 둘 다 실패하면 `FoldStateMonitor` 가 크래시 없이 `Log.w` 만 남기고 기능이 조용히 꺼지는지 | logcat `FWFoldStateMonitor` 태그로 후보 실패/성공 로그 확인 (`onServiceConnected` 직후) |
-| 2 | One UI 8 노트북 자세(책상에 세워 반접기, 힌지 수평)에서 실제로 `FoldingFeature.state=HALF_OPENED` + `orientation=HORIZONTAL` 이 방출되는가 + 힌지 `bounds` 실측값 | 노트북 자세로 접고 logcat `fold posture changed: ... -> HALF_OPENED_HORIZONTAL hingeBounds=...` 확인 |
-| 3 | 기기를 완전히 닫는 동작이 HALF_OPENED(수평) 상태를 일시 통과하는 시간이 `FlexModePolicy.DEFAULT_STABILITY_MS`(800ms) 미만인지 — 즉 완전히 닫을 때 자동 배치가 오발화하지 않는지. 닫은 뒤 화면이 꺼지면서 방출이 끊기는지, 아니면 마지막 값이 고착되는지(4번 게이트 `display-off` 가 실제로 오발화를 막아주는지) | 완전히 닫는 동작을 반복하며 `flex auto-arrange trigger`/`skipped: reason=display-off` 로그 유무 확인 |
-| 4 | E2E: 유튜브 가로 전체화면 재생 → 노트북 자세로 반접기 → 800ms 안정화 후 자동 상단 배치(검은 띠 제거) | logcat `flex auto-arrange trigger: target=com.google.android.youtube` → `arrange decision: ... placementSource=FLEX` → `arrange done` 확인 + 육안 검은 띠 |
-| 5 | FLEX 로 결정된 세션이 `store.saveLastSuccessfulPlacement` 를 호출하지 않는 회귀(4번 세션 직후 수동 트리거 시 `placementSource=LAST_SUCCESS` 로 과거 값이 나오는지, FLEX 값으로 오염되지 않는지) | 4번 E2E 직후 평지로 펴고 버블/broadcast 로 수동 무override 트리거 → `placementSource` 가 FLEX 이전의 값(또는 PROFILE/DEFAULTS/FALLBACK)인지 확인 |
+| ① 서비스 자신(`AccessibilityService`) | ❌ **구독 거부** | androidx.window 1.3.0 `WindowLayoutComponentImpl.assertUiContext` → `IllegalArgumentException: Context must be a UI Context with display association, which should be an Activity, WindowContext or InputMethodService` |
+| (구) 2-인자 `createWindowContext(TYPE_ACCESSIBILITY_OVERLAY, null)` | ❌ **생성 자체 불가** | `UnsupportedOperationException: Tried to obtain display from a Context not associated with one` — 서비스 컨텍스트에 display 연결이 없다. 구독까지 가지도 못함 → **죽은 코드로 삭제** |
+| ② **3-인자 `createWindowContext(display, TYPE_ACCESSIBILITY_OVERLAY, null)`** | ✅ **채택 (방출 수신 확인)** | display = `DisplayManager.getDisplay(DEFAULT_DISPLAY)`, API 31+ 가드 |
+
+- 두 실패 에러가 가리키는 원인은 동일하다 — **"display 를 명시적으로 연결하라"**. 3-인자 경로가 그 요구를 정확히 충족한다.
+- **전멸 시 조용한 격하 실증** (수정 전 빌드에서 관측): 크래시 없음 · `Log.w` 만 남기고 폴드 감지 기능만 꺼짐 · `arranger service connected` 정상. 설계 의도(기능 격하 ≠ 서비스 사망) 그대로 동작.
+
+### [측정] 항목 2 — 노트북 자세 방출 + `orientation` 의미론 실측
+
+| 상태 | posture | hingeBounds |
+|---|---|---|
+| 노트북 자세 + **가로 창** | `HALF_OPENED_HORIZONTAL` | `Rect(0, 984 - 2184, 984)` — 내부 화면 가로 좌표, 힌지 수평선 **y=984** |
+| 노트북 자세 + **포트레이트 고정(회전 잠금)** | `HALF_OPENED_VERTICAL` | `Rect(984, 0 - 984, 2184)` |
+| 닫힘/전환 중 (방출 지속, **커버 디스플레이 기하 1080×2520**) | HALF_OPENED_* | `Rect(540, 0 - 540, 2520)` / `Rect(0, 540 - 2520, 540)` |
+| 완전 닫힘 | `UNKNOWN` | null |
+
+- **`orientation` 은 물리 힌지 방향이 아니라 창 상대 좌표 의미론이다.** 회전 잠금으로 포트레이트가 고정돼 있으면 물리적으로 노트북 자세여도 `HALF_OPENED_VERTICAL` 이 나온다. 13차 캠페인의 `cmd window user-rotation lock 1` 잔재 때문에 실측으로 발견됨.
+  - **⚠ 함정: 검증/사용 전 `adb shell cmd window user-rotation free` 확인 필수.**
+  - 함의 [추정]: FLEX 티어 조건이 `HALF_OPENED_HORIZONTAL` 이므로(항목 5) 회전 잠금 상태에서는 자동 배치가 통째로 발화하지 않는다. 실사용 영향은 별도 측정 필요 [미검증].
+- 닫는 도중에도 방출이 끊기지 않고 **좌표계가 내부 화면 → 커버 디스플레이로 갈아탄다** — 힌지 좌표를 소비하는 쪽은 디스플레이 기하를 함께 봐야 한다.
+
+### [측정] 항목 3 — 완전 닫기 오발화: 설계 가정 반증 → 2층 방어 구현·검증
+
+**설계 가정 반증**: 닫기 동작의 HALF_OPENED 대역 체류 시간 3표본 = **2.1s / 1.95s / 1.2s**.
+전부 `FlexModePolicy.DEFAULT_STABILITY_MS`(800ms) 초과 — "완전 닫기는 800ms 미만으로 통과한다"는 가정은 **반증**됐다.
+
+**오발화 물증** (수정 전 빌드, 07-27 23:31): 대역 진입 **+803ms** 에 트리거 → 1.15s 뒤 완전 닫힘 → 닫힌 기기에서 Recents 진입 시도 3회 → `ENTRY_STEP_FAILED`.
+`display-off` 게이트는 +800ms 시점에 **화면이 아직 켜져 있어 무력**했다.
+→ 디바운스 상수 증액은 "느린 닫기 꼬리"에 다시 뚫리는 타이밍 도박(ADR-2 위반)이라 기각하고, 조건 신호 2층으로 대응.
+
+#### 방어 1층 — 힌지 각도 안정성 게이트 [측정]
+
+신규 `platform/HingeAngleMonitor` + `domain/FlexModePolicy` 확장.
+
+- **`Sensor.TYPE_HINGE_ANGLE` Fold 7 실노출 확인**: 도(deg) 단위, 노트북 자세 **≈90.0**, 완전 닫힘 **0.0**, **on-change 방출**(정지 시 침묵 = 샘플 부재 자체가 정지의 증거).
+- 게이트 = 대역 **[45°, 135°]** ∧ (**침묵 ≥600ms** ∨ **600ms 윈도 스프레드 ≤8°**).
+- **정상 속도 닫기 2/2 차단** (스윕 90→0 로그로 가시).
+- 센서 무가용 시 **통과로 격하** (기능 보존 — 종전 디바운스 단독 의미론).
+
+#### 방어 2층 — FLEX 세션 자세-이탈 취소 [측정]
+
+`service/ArrangerAccessibilityService`. 1층을 통과하는 잔여 클래스를 세션 중에 되돌린다.
+
+- **멈칫 동반 느린 닫기**(대역 내 정지 ≥850ms)는 1층을 통과해 발화한다 → 이후 자세가 `HALF_OPENED_HORIZONTAL` 을 이탈하면 진행 중 FLEX 세션을 **기존 cancel 경로로 취소**.
+- 실증: `flex session cancelled: posture-exit` → `Failed(reason=CANCELLED)` (07-28 00:04:42).
+- **수동 세션(OVERRIDE 등)은 비대상** — 사용자가 명시적으로 건 배치는 자세로 취소하지 않는다.
+- **Done 이후엔 취소하지 않는다** — 완료 배치 유지 실증 (Done 3.2s 후 펴기, 분할 유지, 07-28 00:05).
+
+### [측정] 항목 4 — E2E 자동 상단 배치 (2회 재현)
+
+유튜브 가로 전체화면 → 노트북 자세 → **접기에서 완료까지 7.1s** (트리거 지연 ≈1.05s = 디바운스 800ms + 각도 침묵 600ms **중첩** + 조건 폴링 250ms).
+
+로그 체인:
+
+```
+fold posture changed: FLAT -> HALF_OPENED_HORIZONTAL
+hinge angle=90.0                      (1샘플 후 침묵)
+flex auto-arrange trigger: target=com.google.android.youtube (source=active-window)
+arrange decision: aspectSource=CACHED placement=TOP placementSource=FLEX dividerCenterY=1236
+  → DRAG 3스텝 전부 1시도 통과 → 드래그 → verify residualRows=84
+  → ADR-5 보정 1회 (target 1153) → residual 0
+arrange done: verified=true residual=0 adjusted=true desired=TOP effective=TOP
+```
+
+- **픽셀 물증**: 상단 페인 영상 **풀블리드(검은 띠 0)**, 하단 FW Panel.
+- 부수 실증: `purgeStalePanelTasks` 잔존 패널 1개 제거 · 힌지 모니터 수명주기 정상(arm 시 start, 트리거/이탈 시 stop).
+
+### [측정] 항목 5 — FLEX last-success 비오염
+
+| 단계 | 트리거 | 결정 | 결과 |
+|---|---|---|---|
+| 기준선 | 수동 `--es placement bottom` | `placementSource=OVERRIDE placement=BOTTOM` | done → **BOTTOM 저장** |
+| 검증 | (항목 4 의 FLEX TOP 세션 done 직후) 평지(FLAT)에서 수동 **무override** 트리거 | **`placementSource=LAST_SUCCESS placement=BOTTOM`** | done residual=0 — **FLEX 값(TOP)으로 오염되지 않음** |
+
+- 동시 실증: **FLAT 상태에선 FLEX 티어 비활성** — 티어 조건은 "결정 시점 posture == `HALF_OPENED_HORIZONTAL`".
+
+### 신규 함정·한계 (15차 발견)
+
+1. **폴드 전환 중 일시 창의 포그라운드 오염** [측정]: 회전 잠금 해제 직후 삼성 월렛(`com.samsung.android.spay`) quick 카드가 event-tracked 포그라운드를 오염 → 게이트 5 통과 → **월렛 대상 자동 세션**이 걸렸다 (07-27 23:20 실측, `ENTRY_STEP_FAILED` 로 자멸). 유튜브 등 실사용 대상은 **active-window 소스가 정상 타게팅**. → v1.5 후보: 포그라운드 안정성 윈도.
+2. **재열기 멈칫 한계** [측정 + 설계 결정]: 닫힘→열기 도중 대역 내 ~90°에서 **≥1.4s(디바운스+침묵) 멈칫**하면 정당한 "닫힌 채 → 노트북 자세로 열기"와 **물리적으로 구분 불가** → 발화 수용이 설계 결정. 이어서 즉시 펴면 2층 취소가 정리하지만, **Done 이후 늦게 펴면 완주된 TOP 분할이 잔존**한다(복구 = 버블 메뉴 분할 해제 또는 패널 finish). 키가드 게이트는 정당 사용례(잠긴 채 열어 자세 잡고 얼굴 인식)를 죽여 **기각** — v1.5 재검토.
+3. **닫힘 전환 중 `isSplitActive` 오판 1회 관측** [측정, 재현성 미확인]: 닫히는 도중 시작된 세션이 `CheckingSplit` 에서 active=true 로 오판(직전 상태는 전체화면 확인됨). 창 목록 혼란 추정 — 자세-이탈 취소로 무해화됐다. **재현 시도 미실시, 관측 기록만.**
+4. **발화 지연 체감치** [측정]: 자세 정착 후 **≈1.05~1.7s** (디바운스 800 + 침묵 600 겹침 + 폴링 250).
+
+### 파일 변경 요약 (15차)
+
+| 파일 | 변경 |
+|---|---|
+| `platform/FoldStateMonitor.kt` | 후보 체인 = ① 서비스 자신(타 OS 대비 유지) ② **3-인자 display WindowContext(실채택)** ③ `createDisplayContext` 체인(예비). SDK 31 가드 |
+| `platform/HingeAngleMonitor.kt` **(신규)** | `TYPE_HINGE_ANGLE` 래퍼. 샘플마다 `Log.d`, 센서 부재 시 `Log.w` 1회 |
+| `domain/FlexModePolicy.kt` | `onHingeAngle`/`isAngleStable` 추가(순수 Kotlin 유지). 불안정 시 armed 유지 |
+| `service/ArrangerAccessibilityService.kt` | 250ms 조건 폴링(`awaitFlexTrigger`), 자세-이탈 시 FLEX 세션 취소 |
+| 테스트 | 220 → **230** (`FlexModePolicyTest` 14 → 24) |
 
 ### 설계상 알려진 잔여 (v1.5 후보, 코드 변경 아님)
 
