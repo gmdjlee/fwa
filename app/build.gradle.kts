@@ -29,7 +29,11 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        aidl = true // P4-1: Shizuku UserService(IShellExec.aidl) 사용을 위해 AGP 8+ 에서 명시 활성화
+        buildConfig = true // P4-1: ShizukuShell 이 BuildConfig.APPLICATION_ID/DEBUG/VERSION_CODE 를 참조
+    }
 
     sourceSets {
         // config/window_profiles.json 이 SSOT. 복제하지 않고 assets 로 직접 노출한다.
@@ -55,6 +59,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

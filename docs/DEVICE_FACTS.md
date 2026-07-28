@@ -619,3 +619,24 @@ P4-2(파트너 위젯)·P4-3(커버 자동 해제)·P4-4(앱 페어 바로가기
 - `am start --windowingMode 1` 로 기존 freeform 태스크 전체화면 복귀 시도 → 인텐트만 기존 인스턴스에 전달되고 모드 전환 안 됨 [측정 1회] — 복귀 수단으로 부적합, 홈 이동으로 화면 정리
 
 **판정: F1·F2 통과 → P4-1 진행 확정. 후보 A(Shizuku 셸 명령: `am start --windowingMode 5` + `am task resize`) 채택.** 후보 B(binder/HiddenApiBypass) 불필요. 상세 설계 갱신 = `docs/DESIGN_P41_FREEFORM.md`.
+
+### P4-1 구현 세션 추가 실측 (2026-07-28 같은 날 — qa D1·D2 해소 근거)
+
+- **팝업 초기 배치**: mode 5 실행 직후 태스크 bounds `Rect(354, 150 - 1803, 2123)` — 초기 top y=**150** → `PopupPlanner.TOP_MARGIN=150` 의 근거 (좌우 354/165 비대칭은 One UI 자체 배치 — 플래너는 중앙 정렬 정책 사용)
+- **`am stack list` 원문 46행 캡처**: 태스크 행은 **단일 물리 행** (taskId·컴포넌트·bounds·visible·topActivity 가 한 줄). RootTask 헤더·configuration 행이 사이에 끼는 다행 구조. 실측 행 원문:
+  `  taskId=4971: com.google.android.youtube/com.google.android.youtube.app.honeycomb.Shell$HomeActivity bounds=[200,300][1200,2100] userId=0 visible=true topActivity=ComponentInfo{...}`
+  freeform 태스크 포함 노출 확인. `StackListParser` 정규식을 원문 46행에 대조 → 태스크 행 10개 전부 정확 추출 (qa D2 해소, 동일 원문이 `StackListParserTest` 픽스처로 들어감)
+- freeform 태스크 bounds 는 mode 5 재실행(기존 태스크 프런트 이동) 후에도 유지됨 [측정 1회]
+- 기기에 **Shizuku 미설치** (`pm list packages` 0건) — P4-1 E2E 는 Shizuku 앱 설치·활성화 선행 필요
+
+### P4-1 구현분 — 실기기 검증 대기 (전 항목 [미검증], Shizuku 설치 선행)
+
+| # | 항목 |
+|---|---|
+| 1 | Shizuku 설치→활성(무선 디버깅)→권한 허용 → 온보딩 카드 3분기 (미설치→앱 실행 유도 토스트 / ping→권한 요청 다이얼로그 / granted 표시) |
+| 2 | 버블 메뉴 「팝업으로 열기」 노출 조건 — Shizuku 미가용 시 항목 숨김, 가용 전환 시 메뉴 재오픈만으로 출현 |
+| 3 | `ShizukuShell.exec` 최초 `bindUserService` 바인드 지연(50ms/3s 폴링 내 완료) · binder 사망 후 재바인드 |
+| 4 | E2E: 전면 앱 → 메뉴 탭 → `am start --windowingMode 5`($ 컴포넌트 작은따옴표) → 창 출현 폴링 → `am stack list` taskId → `am task resize` → bounds 검증 ±8px → `popup done` 로그 |
+| 5 | UNRESIZEABLE(넷플릭스) 대상 E2E + **F5 잔여분: DRM 팝업 재생** |
+| 6 | 버블 오버레이 존재 상태 팝업 낙착 무결성 — adb 프로브에선 무해 관측, Shizuku UserService 경유(shell uid 동일) 재확인 |
+| 7 | `boundsMatch` ±8px 허용오차 적정성 — F3 은 오차 0 실측이나 a11y bounds 보고 지연 여지 |

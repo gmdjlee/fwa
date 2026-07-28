@@ -26,6 +26,9 @@
     <string name="bubble_menu_dismiss_split">분할 해제</string>
     <string name="bubble_menu_settings">설정</string>
 
+    <!-- P4-1: 팝업(freeform) 모드. Shizuku 가용 시에만 메뉴에 노출된다 -->
+    <string name="bubble_menu_open_popup">팝업으로 열기</string>
+
     <!-- P4-4: 홈 화면 고정 바로가기(FloatingLauncherService.exportAppPair / PairShortcutActivity) -->
     <string name="bubble_menu_export_pair">앱 페어 바로가기 만들기</string>
     <string name="toast_export_accessibility_off">접근성 서비스를 먼저 켜 주세요</string>
@@ -42,6 +45,8 @@
     <string name="onboarding_permission_accessibility_desc">화면을 분할하고 영상 비율에 맞춰 재배치하기 위해 필요합니다.</string>
     <string name="onboarding_permission_notification_title">알림 (선택)</string>
     <string name="onboarding_permission_notification_desc">버블 실행 중 상태 알림을 표시합니다. 버블 동작에 필수는 아닙니다.</string>
+    <string name="onboarding_permission_shizuku_title">Shizuku (선택)</string>
+    <string name="onboarding_permission_shizuku_desc">팝업 모드에 필요합니다. Shizuku 앱 설치·활성화 후 권한을 허용하세요.</string>
     <string name="onboarding_action_grant">권한 설정으로 이동</string>
     <string name="onboarding_action_granted">허용됨</string>
     <string name="onboarding_action_required">권한 필요</string>

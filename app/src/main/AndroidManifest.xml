@@ -163,5 +163,15 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- P4-1: Shizuku 클라이언트 등록. Shizuku 앱/서비스가 이 provider 존재로 우리 앱을
+             인식하고 권한 요청·UserService 바인드를 중개한다. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
     </application>
 </manifest>

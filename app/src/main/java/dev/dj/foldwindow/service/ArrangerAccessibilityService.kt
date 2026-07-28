@@ -35,10 +35,12 @@ import dev.dj.foldwindow.domain.LetterboxDetector
 import dev.dj.foldwindow.domain.MeasurementConsensus
 import dev.dj.foldwindow.domain.PaneGeometry
 import dev.dj.foldwindow.domain.Placement
+import dev.dj.foldwindow.domain.PopupPlanner
 import dev.dj.foldwindow.domain.ResidualBars
 import dev.dj.foldwindow.domain.ResolvedAspect
 import dev.dj.foldwindow.domain.SplitPlan
 import dev.dj.foldwindow.domain.SplitPlanner
+import dev.dj.foldwindow.domain.StackListParser
 import dev.dj.foldwindow.domain.WindowGeometry
 import dev.dj.foldwindow.domain.WindowProfilesConfig
 import dev.dj.foldwindow.platform.DividerDragger
@@ -69,6 +71,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
+import kotlin.math.abs
 
 /**
  * P2-1 실제 액추에이터 서비스. ArrangeStateMachine(순수 리듀서)을 구동하고,
@@ -120,6 +123,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
      */
     @Volatile
     private var foregroundAwaitInFlight = false
+
+    /**
+     * [P4-1] [startPopup] 진행 중 재진입 가드. 상태 머신을 쓰지 않는 경로라
+     * sessionInFlight/dismissInFlight 와 별개 플래그가 필요하다(같은 패턴).
+     */
+    @Volatile
+    private var popupInFlight = false
 
     // ── P3-5 FoldingFeature 연동 (서비스 수명 전체 유지 — cleanupSession() 이 건드리지 않는다.
     // sessionPlacementSource 만 예외로 세션 필드다, 아래 세션 컨텍스트 블록 참고) ──
@@ -423,6 +433,166 @@ class ArrangerAccessibilityService : AccessibilityService() {
         } finally {
             FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // P4-1: 팝업(freeform) 모드 — Shizuku 셸 명령
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * 현재 전면 앱을 One UI 팝업(freeform) 창으로 재배치한다(DESIGN_P41_FREEFORM.md 후보 A).
+     *
+     * `ArrangeStateMachine` 은 쓰지 않는다(머신 무변경 원칙) — 셸 명령 1회 + 태스크 조회 +
+     * 리사이즈 1회뿐이라 상태 머신을 구동할 만큼 단계가 많지 않고, 이 흐름 자체가 조건 폴링 +
+     * 타임아웃 + 명시적 실패로 이미 ADR-2 를 만족한다.
+     *
+     * 흐름: 전면 패키지 확인 → 종횡비 결정(override 없이 profile → defaults.aspect →
+     * DEFAULT_ASPECT, [beginSession] 과 동일한 소스) → [PopupPlanner] 로 bounds 산출 →
+     * `am start --windowingMode 5` → 대상 창 출현 폴링 → `am stack list` 로 taskId 조회 →
+     * `am task resize` → bounds 검증 폴링. 각 단계 실패는 Log.w + 토스트로 드러내고 즉시
+     * 중단한다(조용한 실패 금지).
+     */
+    fun startPopup() {
+        if (machineState != ArrangeState.Idle || sessionInFlight) {
+            Log.w(TAG, "startPopup: 이미 배치 진행 중 (state=$machineState)")
+            toast("이미 배치 진행 중")
+            return
+        }
+        if (popupInFlight) {
+            Log.w(TAG, "startPopup: 이미 팝업 진행 중 — 중복 요청 무시")
+            return
+        }
+        if (!ShizukuShell.isReady()) {
+            Log.w(TAG, "startPopup: Shizuku 미가용")
+            toast("Shizuku 를 사용할 수 없습니다")
+            return
+        }
+
+        val activePkg = activeAppPackage()
+        val target = activePkg ?: lastForegroundPkg
+        if (target == null) {
+            Log.w(TAG, "startPopup: 대상 앱(포그라운드 패키지)을 찾지 못함")
+            toast("대상 앱을 찾지 못했습니다")
+            return
+        }
+        Log.i(TAG, "startPopup: target=$target source=${if (activePkg != null) "active-window" else "event-tracked"}")
+
+        popupInFlight = true
+        scope.launch {
+            try {
+                performStartPopup(target)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 조용한 실패 금지: 예측하지 못한 예외도 사용자에게 드러낸다.
+                Log.e(TAG, "performStartPopup 중 예외", e)
+                toast("팝업 배치 실패: 내부 오류")
+            } finally {
+                popupInFlight = false
+            }
+        }
+    }
+
+    private suspend fun performStartPopup(target: String) {
+        // 종횡비: [beginSession] 과 동일한 폴백 소스지만 팝업엔 override/측정/캐시 티어가 없다
+        // (v1 정책 — 단발 배치라 폐루프 보정 대상이 아님).
+        val config = loadProfilesConfig()
+        val profile = config?.profiles?.firstOrNull { it.packageName == target }
+        val aspect = profile?.aspect ?: config?.defaults?.aspect ?: DEFAULT_ASPECT
+
+        val screen = screenRect()
+        val bounds = PopupPlanner.plan(screen.width, screen.height, aspect)
+        Log.i(TAG, "startPopup: target=$target aspect=$aspect bounds=$bounds")
+
+        val component = runCatching { packageManager.getLaunchIntentForPackage(target)?.component }.getOrNull()
+        if (component == null) {
+            Log.w(TAG, "startPopup: 런치 컴포넌트를 찾지 못함 (target=$target)")
+            toast("앱을 실행할 수 없습니다")
+            return
+        }
+
+        // 작은따옴표 필수 — 컴포넌트 클래스명에 '$' 가 올 수 있다(예: YouTube Shell$HomeActivity,
+        // DEVICE_FACTS.md 「P4-1 프로브 F1~F6」 부수 실측 참고).
+        val startResult = ShizukuShell.exec(
+            "am start --windowingMode 5 -n '${component.flattenToString()}'",
+            SHELL_EXEC_TIMEOUT_MS,
+        )
+        if (startResult == null) {
+            Log.w(TAG, "startPopup: am start 실행 실패 (Shizuku exec 응답 없음)")
+            toast("팝업 실행 실패")
+            return
+        }
+        Log.i(TAG, "startPopup: am start result=$startResult")
+
+        val windowAppeared = withTimeoutOrNull(POPUP_WINDOW_POLL_TIMEOUT_MS) {
+            while (!hasApplicationWindow(target)) {
+                delay(POPUP_POLL_INTERVAL_MS)
+            }
+            true
+        } ?: false
+        if (!windowAppeared) {
+            Log.w(TAG, "startPopup: ${POPUP_WINDOW_POLL_TIMEOUT_MS}ms 내 대상 창 미관측")
+            toast("팝업 배치 실패: 창을 찾지 못함")
+            return
+        }
+
+        val stackListOutput = ShizukuShell.exec("am stack list", SHELL_EXEC_TIMEOUT_MS)
+        val taskId = stackListOutput?.let { StackListParser.taskIdFor(it, target) }
+        if (taskId == null) {
+            Log.w(TAG, "startPopup: taskId 조회 실패 (target=$target)")
+            toast("팝업 배치 실패: 태스크를 찾지 못함")
+            return
+        }
+
+        val resizeResult = ShizukuShell.exec(
+            "am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}",
+            SHELL_EXEC_TIMEOUT_MS,
+        )
+        if (resizeResult == null) {
+            Log.w(TAG, "startPopup: am task resize 실행 실패 (taskId=$taskId)")
+            toast("팝업 배치 실패: 크기 조정 실패")
+            return
+        }
+
+        val verified = withTimeoutOrNull(POPUP_VERIFY_TIMEOUT_MS) {
+            while (!boundsMatch(target, bounds)) {
+                delay(POPUP_POLL_INTERVAL_MS)
+            }
+            true
+        } ?: false
+
+        if (verified) {
+            Log.i(TAG, "popup done: pkg=$target bounds=$bounds")
+        } else {
+            // 명시적 실패 상태(ADR-2) — 조용히 넘어가지 않고 잔여 상태를 그대로 보고한다.
+            Log.w(TAG, "startPopup: ${POPUP_VERIFY_TIMEOUT_MS}ms 내 bounds 일치 확인 실패 (taskId=$taskId)")
+            toast("팝업 배치 실패")
+        }
+    }
+
+    private fun hasApplicationWindow(targetPackage: String): Boolean =
+        safeWindows().any { w ->
+            runCatching { w.type }.getOrNull() == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                runCatching { w.root?.packageName?.toString() }.getOrNull() == targetPackage
+        }
+
+    /**
+     * [target] 의 APPLICATION 창 bounds 가 [expected] 와 [POPUP_BOUNDS_TOLERANCE_PX] 이내로
+     * 일치하는지. F6(DEVICE_FACTS.md)에서 팝업 창 bounds = 태스크 bounds 1:1 로 노출됨이
+     * 확인됐으므로, 기존 창 열거 경로를 그대로 재사용해 폴링할 수 있다.
+     */
+    private fun boundsMatch(target: String, expected: IntRect): Boolean {
+        val window = safeWindows().firstOrNull { w ->
+            runCatching { w.type }.getOrNull() == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                runCatching { w.root?.packageName?.toString() }.getOrNull() == target
+        } ?: return false
+        val rect = Rect()
+        if (!runCatching { window.getBoundsInScreen(rect) }.isSuccess) return false
+        val tol = POPUP_BOUNDS_TOLERANCE_PX
+        return abs(rect.left - expected.left) <= tol &&
+            abs(rect.top - expected.top) <= tol &&
+            abs(rect.right - expected.right) <= tol &&
+            abs(rect.bottom - expected.bottom) <= tol
     }
 
     /**
@@ -1752,6 +1922,21 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 콜드 스타트(프로세스 생성 포함)까지 흡수할 여유값이다.
          */
         private const val SHORTCUT_FOREGROUND_TIMEOUT_MS = 5_000L
+
+        /** [P4-1] [ShizukuShell.exec] 개별 셸 명령(am start/am stack list/am task resize) 타임아웃. */
+        private const val SHELL_EXEC_TIMEOUT_MS = 5_000L
+
+        /** [P4-1] [startPopup] 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
+        private const val POPUP_POLL_INTERVAL_MS = 150L
+
+        /** [P4-1] `am start --windowingMode 5` 실행 후 대상 APPLICATION 창 출현 대기 최대 시간. */
+        private const val POPUP_WINDOW_POLL_TIMEOUT_MS = 5_000L
+
+        /** [P4-1] `am task resize` 후 bounds 일치 확인 최대 시간. */
+        private const val POPUP_VERIFY_TIMEOUT_MS = 3_000L
+
+        /** [P4-1] 팝업 창 bounds 검증 허용 오차(px). F3(DEVICE_FACTS)에서 resize 는 오차 0으로 실측됐으나, a11y bounds 보고 지연을 감안한 여유값. */
+        private const val POPUP_BOUNDS_TOLERANCE_PX = 8
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",

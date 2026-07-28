@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
@@ -41,9 +42,11 @@ import dev.dj.foldwindow.R
 import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.service.ArrangerAccessibilityService
 import dev.dj.foldwindow.service.FloatingLauncherService
+import dev.dj.foldwindow.service.ShizukuShell
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 
 /**
  * P3-4: 온보딩 — 오버레이/접근성/알림 권한 유도 + 버블 시작·중지 + 사용 안내.
@@ -57,6 +60,8 @@ class OnboardingActivity : ComponentActivity() {
     private var overlayGranted by mutableStateOf(false)
     private var accessibilityGranted by mutableStateOf(false)
     private var notificationGranted by mutableStateOf(false)
+    /** P4-1: 팝업(freeform) 모드 선택 권한. 설치·실행·권한 허용 전부를 [ShizukuShell.isReady] 로 재평가한다. */
+    private var shizukuReady by mutableStateOf(false)
     private var bubbleRunning by mutableStateOf(false)
 
     /**
@@ -87,10 +92,12 @@ class OnboardingActivity : ComponentActivity() {
                         overlayGranted = overlayGranted,
                         accessibilityGranted = accessibilityGranted,
                         notificationGranted = notificationGranted,
+                        shizukuReady = shizukuReady,
                         bubbleRunning = bubbleRunning,
                         onOverlayClick = ::requestOverlayPermission,
                         onAccessibilityClick = ::openAccessibilitySettings,
                         onNotificationClick = ::requestNotificationPermission,
+                        onShizukuClick = ::requestShizuku,
                         onToggleBubble = ::toggleBubble,
                     )
                 }
@@ -113,6 +120,7 @@ class OnboardingActivity : ComponentActivity() {
         } else {
             true // API 33 미만은 런타임 알림 권한 자체가 없음 — 항상 충족으로 취급
         }
+        shizukuReady = ShizukuShell.isReady()
         bubbleRunning = FloatingLauncherService.isRunning
     }
 
@@ -131,6 +139,27 @@ class OnboardingActivity : ComponentActivity() {
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    /**
+     * [P4-1] Shizuku 카드 탭 처리. 3단계:
+     * 1) 바인더 자체가 없음(Shizuku 앱 미실행) → 앱 실행 시도, 미설치면 안내 토스트
+     * 2) 바인더는 있으나 권한 미허용 → [ShizukuShell.requestPermission] 으로 권한 요청 다이얼로그
+     * 3) 이미 준비됨 → 상태만 재평가(다른 분기와 동일하게 [refreshState] 로 수렴)
+     */
+    private fun requestShizuku() {
+        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
+            val launchIntent = packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+            if (launchIntent != null) {
+                startActivity(launchIntent)
+            } else {
+                Toast.makeText(this, "Shizuku 앱을 설치하세요", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        ShizukuShell.requestPermission {
+            runOnUiThread { refreshState() }
         }
     }
 
@@ -168,6 +197,10 @@ class OnboardingActivity : ComponentActivity() {
         // onResume 재진입 시 refreshState() 가 실제 상태로 다시 맞춘다.
         bubbleRunning = !bubbleRunning
     }
+
+    companion object {
+        private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+    }
 }
 
 @Composable
@@ -175,10 +208,12 @@ private fun OnboardingScreen(
     overlayGranted: Boolean,
     accessibilityGranted: Boolean,
     notificationGranted: Boolean,
+    shizukuReady: Boolean,
     bubbleRunning: Boolean,
     onOverlayClick: () -> Unit,
     onAccessibilityClick: () -> Unit,
     onNotificationClick: () -> Unit,
+    onShizukuClick: () -> Unit,
     onToggleBubble: () -> Unit,
 ) {
     Column(
@@ -207,6 +242,12 @@ private fun OnboardingScreen(
             description = stringResource(R.string.onboarding_permission_notification_desc),
             granted = notificationGranted,
             onClick = onNotificationClick,
+        )
+        PermissionCard(
+            title = stringResource(R.string.onboarding_permission_shizuku_title),
+            description = stringResource(R.string.onboarding_permission_shizuku_desc),
+            granted = shizukuReady,
+            onClick = onShizukuClick,
         )
 
         val bubbleReady = overlayGranted && accessibilityGranted

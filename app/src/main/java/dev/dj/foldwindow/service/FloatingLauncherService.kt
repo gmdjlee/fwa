@@ -597,6 +597,13 @@ class FloatingLauncherService : Service() {
         container.addMenuItem(getString(R.string.bubble_menu_export_pair)) {
             exportAppPair()
         }
+        // P4-1: Shizuku 가용할 때만 노출한다(설계 확정 — 미가용 시 항목 자체를 숨긴다,
+        // DESIGN_P41_FREEFORM.md §4 "Shizuku 없이 동작하는 폴백 경로 없음").
+        if (ShizukuShell.isReady()) {
+            container.addMenuItem(getString(R.string.bubble_menu_open_popup)) {
+                dismissMenuThenPopup()
+            }
+        }
 
         // window_profiles.json presets 은 자산 파싱 성공 시에만 채워진다. 실패/미로드 시 섹션 자체를
         // 생략한다(크래시 금지, 조용한 실패는 preloadPresetsIfNeeded 의 Log.w 로 이미 드러남).
@@ -673,6 +680,22 @@ class FloatingLauncherService : Service() {
             return
         }
         service.dismissSplit()
+    }
+
+    /**
+     * [P4-1] 메뉴를 먼저 제거한 뒤(함정 #22) 팝업(freeform) 배치를 트리거한다. 버블 자체는
+     * freeform 낙착에 무해함이 프로브에서 확인됐으므로([DESIGN_P41_FREEFORM.md] §4), 배치
+     * 세션처럼 버블 창을 숨길 필요는 없다 — 스크림(메뉴)만 제거하면 된다.
+     */
+    private fun dismissMenuThenPopup() {
+        dismissMenu()
+        val service = ArrangerAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, getString(R.string.toast_accessibility_off), Toast.LENGTH_LONG).show()
+            launchOnboarding()
+            return
+        }
+        service.startPopup()
     }
 
     // ══════════════════════════════════════════════════════════
