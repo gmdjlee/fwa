@@ -716,6 +716,86 @@ Shizuku v13.6.0 을 GitHub 공식 릴리스에서 adb 설치, `libshizuku.so` �
 2. purgeStalePanelTasks 를 세션 시작이 아닌 Done 후/유휴 시로 이동 (자충 제거)
 3. 피커 앱 그리드(⋮⋮) 탐색 폴백
 
+→ **설계 확정: `docs/DESIGN_27_PANEL_CARD.md`** — 아래 18차 프로브 결과가 후보 판정을 뒤집었다.
+
+---
+
+## 18차 프로브 — #27 결함 원인 확정 + 수정 방향 판정 (2026-07-28 밤, adb 전용, 코드 무변경)
+
+기기 SM-F966N / One UI 8 / API 36, 펼침 1968×2184 세로. 버블 FGS 미기동(함정 #22 무개입 조건), 접근성 ON.
+**전 항목 코드 변경 없이 adb 만으로 판정했다.**
+
+### ① purge 자충 — 단일 로그 시퀀스로 물증화 [확정]
+
+```
+카드 확인      dumpsys recents 패널 태스크 = 1
+ARRANGE 발사   FWArranger: purgeStalePanelTasks: 잔존 패널 태스크 1 개 제거
+               FWArranger: arrange decision: target=com.android.settings …
+카드 재확인    dumpsys recents 패널 태스크 = 0
+               transition: EnteringSplit(step=3, attempt=3) -> Failed(reason=ENTRY_STEP_FAILED)
+               arrange failed: reason=ENTRY_STEP_FAILED
+```
+**자기 코드가 자기 전제를 지우고 그 부재로 실패**하는 인과가 한 시퀀스로 확정됐다.
+
+### ② G1 통과 — `finish()` 는 분할을 해소하면서 카드를 남긴다 [확정]
+
+- 분할(설정 상단 / FW Panel 하단, 메모 위젯 렌더) 상태에서 패널 페인 BACK
+- 결과: 양 stage `visible=false … sz=0` → **분할 해소**
+- 패널 태스크: `Recent #1 … Activities=[] autoRemoveRecents=false` → **카드 생존**
+- 분할-선택 재진입 시 피커 **1번 항목(MRU)** 으로 「FW Panel」 출현 (`label b=[156,1729][279,1804]`)
+- → `finishAndRemoveTask` 의 `removeTask` 부분은 **어떤 실측에도 요구되지 않은 초과 동작**임이 확정
+
+### ③ G3 통과 — 액티비티가 죽은 카드도 정상 낙착한다 [확정 · purge premise 반증]
+
+`Activities=[]`(액티비티 인스턴스 0, 태스크 레코드만) 카드를 피커에서 탭:
+```
+Task{9d55257 #5022 A=10659:dev.dj.foldwindow.panel} mode=multi-window stage=side/bottom bounds=[0,1099][1968,2184]
+Task{6e775d5 #5025 A=1000:com.android.settings.root} mode=multi-window stage=main/top  bounds=[0,0][1968,1085]
+```
+- 정상 상하 분할, **동일 taskId 재사용**, 전체화면 강탈 0, 자가 가드 로그 침묵
+- → **purge 의 원래 근거(2026-07-25 「잔존 카드 탭 → 전체화면 재사용 → 분할 파괴」)가 이 기기·OS 에서 반증됐다.**
+  그 실측은 ⓐ `launchMode=singleTask` 시절 ⓑ 버블 숨김(함정 #22) 도입 **이전**이라, 이미 다른 수정으로 해소된 상태였을 가능성이 높다
+
+### ④ 피커 구조 실측 — 후보 ③(앱 그리드) 취약 확정
+
+- 피커 = `com.sec.android.app.launcher/…fromrecent.FromRecentActivity`, 헤더 「앱 선택」 + `list_container` GridView 「최근 앱」 섹션
+- 헤더에 **`all_apps_button`**(desc 「모든 앱 버튼」, `b=[1734,1135][1851,1279]`)·**`search_button`** 존재
+  → **resource-id 셀렉터라 로케일 무관** (열린 질문 #6 의 다국어 우려는 이 두 노드엔 비적용)
+- 그러나 탭해서 연 앱 서랍(`overlay_apps_list`, 아이콘 87개) **1페이지에 FW Panel 부재**, 노출된 `scrollable` 노드 **0**
+  → 페이징/검색 없이 도달 불가. **최후 폴백으로만** 유지
+- 부수: recents **오버뷰**에는 FW Panel 미노출인데 **피커**에는 노출 — 두 UI 의 소스가 다르다 (`mHasBeenVisible=false` 태스크 취급 차이 추정)
+
+### ⑤ 카드 복구 수단 실측 (개발 편의)
+
+`adb shell "am start -n dev.dj.foldwindow/.ui.PanelActivity > /dev/null; input keyevent 3"`
+→ HOME 이 `onPause` 를 불러 자가 가드 job 을 취소 → 카드 생성 + 액티비티 STOPPED 생존 (가드 로그 침묵 확인).
+**구현에는 쓰지 말 것** — 타이밍 의존이라 ADR-2 위반. 캠페인 중 카드 0 상태 복구용 도구로만 사용한다.
+
+### ⑥ AOSP 사실관계 [확정 — 소스 라인 확인]
+
+| 사실 | 함의 |
+|---|---|
+| `autoRemoveFromRecents` 기본 = 일반 액티비티 **false**, document 액티비티 true. `Task#cleanUpResourcesForDestroy` → `shouldAutoRemoveFromRecents()` false 면 `mRecentTasks.remove` 미실행 | ② 의 근거 |
+| **함정**: `shouldAutoRemoveFromRecents()` 는 `!hasChild() && !getHasBeenVisible()` 이면 **강제 제거** | **한 번도 보인 적 없는 태스크는 finish 시 카드가 사라진다.** 소환 카드는 1회 가시화되거나 액티비티를 아예 안 만드는 수단을 써야 함 |
+| 죽은 카드 탭 → `startActivityFromRecents` → `task.intent` 재실행, `Task#setIntent` 은 **extras 보존** | 열린 질문 #28(base intent 오염)이 [이론]→**[확정]**. 재부팅 후 디스크 복원 경로는 [불명] |
+| `ActivityOptions.makeTaskLaunchBehind()` 공개(API 21). NEW_DOCUMENT 동반 필요, singleInstance/singleTask 미지원(패널은 standard), **`onResume` 미호출**(`mDoResume=false`) → STOPPED 정착. 완료 시 `handleLaunchTaskBehindCompleteLocked` 가 `mRecentTasks.add` | 소환 수단 B1. 자가 가드 구조적 무발화 |
+| `moveTaskToBack(true)` = 제거 경로 미트리거 → 카드 잔존·액티비티 STOPPED 생존 | 소환 수단 B2 성립 근거 |
+| **`ActivityManager.addAppTask()`**(API 21) = *"a new recents entry … will exist **without an activity**"*. 명시 ComponentName + NEW_DOCUMENT + **RETAIN_IN_RECENTS** 필요, 썸네일 인자, 실패 -1(앱당 상한) | **액티비티 미시작 = 포그라운드 무접촉.** 소환 1순위(B0) |
+
+### 잔여 프로브 (구현 중/후)
+
+| # | 확인 | 통과 기준 |
+|---|---|---|
+| G2 | B0 `addAppTask()` One UI 8 수용 | 반환 ≥0 ∧ 포그라운드 유지 ∧ 피커 출현 ∧ 탭 시 분할 낙착 (실패 시 B1→B2 강등) |
+| G4 | 결함 재현 E2E | 커버 자동 해제로 카드 0 → 즉시 배치 → 3연속 done |
+| G5 | prune × 소환 무자충 | `pruneExtraPanelTasks: 보존 1` ∧ 카드 생존 ∧ step3 성공 |
+| G6 | 재설치 스테일 회귀 | 태스크 생성 → 재설치 → 배치 1회 성공 (③ 으로 premise 반증됐으므로 확인 성격) |
+| G7 | 위 「함정」 회귀 | 소환 카드가 미가시 상태로 finish 되는 경로 부재 (B0 는 액티비티 미생성이라 비대상) |
+
+### 기기 잔여 상태
+
+패널 태스크 #5029 복구 완료(액티비티 STOPPED 생존). 회전 설정 무변경. 분할 미활성. 임시 빌드 없음(코드 무변경 캠페인).
+
 **심각도**: 높음 — P4-3 커버 자동 해제가 이 상태를 일상 사용에서 재생산한다. P4-3 활성 배포 전 수정 필수.
 
 ### 부수 실증·관측
