@@ -25,30 +25,30 @@ class PanelTaskPolicyTest {
     private fun other(id: Int, last: Long = 0L) = PanelTaskSnapshot(id, OTHER_CLASS, last)
     private fun unknownComponent(id: Int, last: Long = 0L) = PanelTaskSnapshot(id, null, last)
 
-    // ── needsSummon / pruneTargets: 해피 패스 ────────────────────────
+    // ── hasPanelTask / pruneTargets: 해피 패스 ───────────────────────
 
     @Test
-    fun `빈 목록이면 소환이 필요하고 정리 대상도 없다`() {
+    fun `빈 목록이면 패널 태스크가 없고 정리 대상도 없다`() {
         val tasks = emptyList<PanelTaskSnapshot>()
 
-        assertTrue(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertFalse(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         assertEquals(emptyList<Int>(), PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS))
     }
 
     @Test
-    fun `패널이 아닌 태스크만 있으면 소환이 필요하고 정리 대상도 없다`() {
+    fun `패널이 아닌 태스크만 있으면 패널 태스크가 없고 정리 대상도 없다`() {
         val tasks = listOf(other(1), other(2, last = 500))
 
-        assertTrue(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertFalse(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         assertEquals(emptyList<Int>(), PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS))
     }
 
     @Test
-    fun `패널 태스크가 정확히 1개면 소환이 불필요하고 그 하나는 보존되어 정리 대상이 없다`() {
+    fun `패널 태스크가 정확히 1개면 패널이 존재하고 그 하나는 보존되어 정리 대상이 없다`() {
         // 타 컴포넌트가 섞여 있어도 패널 개수 판정에는 영향이 없어야 한다.
         val tasks = listOf(other(1), panel(2, last = 100), other(3))
 
-        assertFalse(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertTrue(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         assertEquals(emptyList<Int>(), PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS))
     }
 
@@ -57,7 +57,7 @@ class PanelTaskPolicyTest {
         // MRU = id20 (lastActiveMs=300 최댓값) → 보존. id10, id30 이 입력에 나온 순서 그대로 반환.
         val tasks = listOf(panel(10, last = 100), panel(20, last = 300), panel(30, last = 200))
 
-        assertFalse(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertTrue(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         val result = PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS)
         assertEquals(listOf(10, 30), result)
         assertEquals(2, result.size) // 반환 크기 == 패널 개수(3) - 보존 1
@@ -72,17 +72,17 @@ class PanelTaskPolicyTest {
         // id2 만 반환.
         val tasks = listOf(unknownComponent(99, last = 999), panel(1, last = 100), panel(2, last = 50))
 
-        assertFalse(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertTrue(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         val result = PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS)
         assertEquals(listOf(2), result)
         assertFalse(result.contains(99))
     }
 
     @Test
-    fun `모든 항목이 componentClassName null 이면 패널로 셀 수 없으므로 소환이 필요하다`() {
+    fun `모든 항목이 componentClassName null 이면 패널로 셀 수 없다`() {
         val tasks = listOf(unknownComponent(1, last = 100), unknownComponent(2, last = 200))
 
-        assertTrue(PanelTaskPolicy.needsSummon(tasks, PANEL_CLASS))
+        assertFalse(PanelTaskPolicy.hasPanelTask(tasks, PANEL_CLASS))
         assertEquals(emptyList<Int>(), PanelTaskPolicy.pruneTargets(tasks, PANEL_CLASS))
     }
 

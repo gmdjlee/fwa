@@ -34,8 +34,6 @@ class WindowProfilesParserTest {
         assertEquals(true, config.defaults.flexAutoTopPlacement)
         // SSOT 시드에는 coverAutoDismiss 키도 없다 — 부재 시 기본 true 로 동작해야 한다(P4-3).
         assertEquals(true, config.defaults.coverAutoDismiss)
-        // SSOT 시드에는 panelCardPreflight 키도 없다 — 부재 시 기본 true 로 동작해야 한다(#27/B).
-        assertEquals(true, config.defaults.panelCardPreflight)
         assertEquals(6, config.presets.size)
         assertEquals(5, config.profiles.size)
 
@@ -281,32 +279,6 @@ class WindowProfilesParserTest {
         assertEquals(false, success.config.defaults.coverAutoDismiss)
     }
 
-    // ── panelCardPreflight 토글 (#27/B) ────────────────────────────
-
-    @Test
-    fun `panelCardPreflight defaults to true when the key is omitted`() {
-        val result = WindowProfilesParser.parse(validJson())
-        val success = result as? ProfilesParseResult.Success
-            ?: fail("expected Success but was $result").let { return }
-        assertEquals(true, success.config.defaults.panelCardPreflight)
-    }
-
-    @Test
-    fun `panelCardPreflight explicit false is honored`() {
-        val result = WindowProfilesParser.parse(validJson(panelCardPreflight = false))
-        val success = result as? ProfilesParseResult.Success
-            ?: fail("expected Success but was $result").let { return }
-        assertEquals(false, success.config.defaults.panelCardPreflight)
-    }
-
-    @Test
-    fun `panelCardPreflight explicit true is honored`() {
-        val result = WindowProfilesParser.parse(validJson(panelCardPreflight = true))
-        val success = result as? ProfilesParseResult.Success
-            ?: fail("expected Success but was $result").let { return }
-        assertEquals(true, success.config.defaults.panelCardPreflight)
-    }
-
     // ── 헬퍼 ─────────────────────────────────────────────────────
 
     private fun assertFailure(result: ProfilesParseResult): ProfilesParseResult.Failure {
@@ -324,7 +296,6 @@ class WindowProfilesParserTest {
      * @param cacheMeasuredAspect null 이면 키 자체를 생략한다(부재 시 기본값 검증용, DESIGN #12 §6).
      * @param flexAutoTopPlacement null 이면 키 자체를 생략한다(부재 시 기본값 검증용, P3-5).
      * @param coverAutoDismiss null 이면 키 자체를 생략한다(부재 시 기본값 검증용, P4-3).
-     * @param panelCardPreflight null 이면 키 자체를 생략한다(부재 시 기본값 검증용, #27/B).
      */
     private fun validJson(
         schema: String = "fold-window-profiles/1",
@@ -335,7 +306,6 @@ class WindowProfilesParserTest {
         cacheMeasuredAspect: Boolean? = null,
         flexAutoTopPlacement: Boolean? = null,
         coverAutoDismiss: Boolean? = null,
-        panelCardPreflight: Boolean? = null,
         presetsJson: String = """[ { "id": "16:9", "aspect": 1.7778, "label": "16:9" } ]""",
         profilesJson: String = "[]",
     ): String {
@@ -351,9 +321,6 @@ class WindowProfilesParserTest {
         val coverAutoDismissField = coverAutoDismiss
             ?.let { ""","coverAutoDismiss": $it""" }
             ?: ""
-        val panelCardPreflightField = panelCardPreflight
-            ?.let { ""","panelCardPreflight": $it""" }
-            ?: ""
         return """
         {
           "schema": "$schema",
@@ -362,7 +329,7 @@ class WindowProfilesParserTest {
             "placement": "$defaultsPlacement",
             "partner": "$defaultsPartner",
             "closedLoopCorrection": true,
-            "residualTolerancePx": $defaultsResidualTolerancePx$requireMeasurementAgreementField$cacheMeasuredAspectField$flexAutoTopPlacementField$coverAutoDismissField$panelCardPreflightField
+            "residualTolerancePx": $defaultsResidualTolerancePx$requireMeasurementAgreementField$cacheMeasuredAspectField$flexAutoTopPlacementField$coverAutoDismissField
           },
           "presets": $presetsJson,
           "profiles": $profilesJson

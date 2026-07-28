@@ -51,14 +51,6 @@ data class ProfileDefaults(
      * 분할이 그대로 유지되며 수동 해제만 가능)으로 되돌아간다.
      */
     val coverAutoDismiss: Boolean = true,
-    /**
-     * [#27/B, DESIGN_27 §3.4] 롤백 레버. true(기본) 면 `beginSession` 말미(dispatch(Start) 직전)
-     * 에서 FW Panel 최근 태스크 카드 부재를 감지해 소환하는 안전망([ensurePanelCard])이 켜진다.
-     * false 면 소환 시도 자체가 스킵된다(즉시 반환) — **소환만 제어**하며, 축 A(파괴 제거:
-     * `finish()` 격하, `pruneExtraPanelTasks` MRU 1개 보존)는 이 레버의 대상이 아니다. 되돌릴
-     * 이유가 결함 재생산뿐인 축 A와 달리, 축 B는 안전망이라 끄고 싶을 수 있어 별도 레버를 둔다.
-     */
-    val panelCardPreflight: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */

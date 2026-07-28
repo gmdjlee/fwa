@@ -167,8 +167,8 @@ class PanelActivity : ComponentActivity() {
          * 피커에서 탭할 때마다(`startActivityFromRecents` → base intent 재실행) `onCreate` 가
          * 이 extra 를 읽고 즉시 finish() 되어 분할 쌍이 성립하지 않는 영구 실패 루프가 된다
          * ([ArrangerAccessibilityService.performDismissSplit] 의 `hasPanelTask()` 사전 확인이
-         * 이를 막는다). 향후 추가될 **패널 카드 소환 인텐트(`ensurePanelCard` 등)는 extras
-         * 무탑재가 계약**이다 — 이 extra 를 실어 보내면 안 된다.
+         * 이를 막는다). **태스크를 새로 만들 수 있는 인텐트에는 이 extra 를 절대 실으면 안
+         * 된다** — 위 오염 경로가 그대로 재현된다.
          */
         const val EXTRA_FINISH_PANEL = "dev.dj.foldwindow.EXTRA_FINISH_PANEL"
 

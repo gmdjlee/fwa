@@ -810,3 +810,94 @@ Task{6e775d5 #5025 A=1000:com.android.settings.root} mode=multi-window stage=mai
 1. P4-3 항목 1·2 **물리 접기** — 화면 꺼짐/잠금 실상태에서 발화·해소 (에뮬은 커버 디스플레이 활성 상태라 등가 아님)
 2. P4-1 항목 5 **DRM 육안** — 넷플릭스 팝업 재생 화면이 실제로 보이는지 (캡처 불가 원리)
 3. (참고) P4-3 항목 3 물리 600ms 재펴기 — 인간 조작으로 사실상 도달 불가, 미검증 수용 권고
+
+---
+
+## 19차 — #27 v1 실기기 캠페인 (2026-07-28 밤)
+
+> 대상 빌드 `c252a01` (축 A + 축 B + #28). 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`
+> 기기 SM-F966N(R3CY8029XBF), 내부 화면 1968×2184, 회전 free(잠금 미사용)
+
+### 한 줄 결론
+
+**축 A(파괴 제거)는 전부 통과했고, 축 B(소환)는 실패했다 — 그것도 "안 되는" 실패가 아니라
+소환이 만든 카드가 step3 를 깨뜨리는 유해 실패다. 그리고 축 B 의 존재 이유였던
+「카드 0 = 배치 불능」 전제 자체가 5/5 로 반증됐다.**
+
+### 게이트 결과
+
+| 게이트 | 판정 | 근거 |
+|---|---|---|
+| G2 소환(B1) | ❌ **실패(유해)** | 소환 자체는 성공(`panel-card: summoned(mode=launch-behind)`, 14ms)하나 그 카드를 step3 가 탭하면 **전체화면 낙착** → 자가 가드 3회 발화 → `ENTRY_STEP_FAILED` |
+| G4 결함 재현 | ✅ 통과 | `cover auto-dismiss fired` → 분할 해소 → **카드 생존**(17차엔 여기서 소멸) → 이어서 **3/3 done**, 전부 `already-present`, `node-not-found` 0 |
+| G5 prune 무자충 | ✅ 통과 | 패널 태스크 2개 상태에서 `pruneExtraPanelTasks: 보존 1 / 제거 1` → 남은 카드로 step3 성공 → `done verified=true residual=0` |
+| G6 재설치 스테일 | ✅ 통과 | 재설치로 `Activities=[]` 죽은 카드 → 배치 1회 `done`, 자가 가드 침묵, `already-present` |
+| G7 AOSP 함정 | ✅ 미발동 | 소환 카드(`mHasBeenVisible=false`)가 가드 finish 된 뒤에도 **카드 잔존** — `FLAG_ACTIVITY_RETAIN_IN_RECENTS` 가 `shouldAutoRemoveFromRecents` 강제 제거를 상쇄한 것으로 추정 |
+| 레버 회귀 | ✅ 통과 | `panelCardPreflight=false` → `panel-card: lever-off` ∧ 소환 시도 0 ∧ 축 A 정상 |
+
+### [확정] G2 실패의 원인 — 소환이 base intent 를 오염시킨다
+
+동일 세션·동일 기기에서 **카드 종류만 바꾼 대조 실험**:
+
+| 카드 출처 | base intent flags | step3 결과 |
+|---|---|---|
+| `makeTaskLaunchBehind()` 소환 (taskId 5036) | `flg=0x18182000` = NEW_TASK\|**MULTIPLE_TASK**\|**NEW_DOCUMENT**\|RETAIN_IN_RECENTS | **전체화면 낙착** → `fullscreen 상태 감지` ×3 → `ENTRY_STEP_FAILED` |
+| 런처 형태 실행 (taskId 5038) | `flg=0x10000000` = NEW_TASK only | **분할 페인 정상 낙착** → `arrange done verified=true residual=0` |
+
+죽은 카드 탭은 `startActivityFromRecents` → **base intent 재실행**이다(18차 Q2). 소환이 실은
+`NEW_DOCUMENT|MULTIPLE_TASK` 는 그대로 보존되어, 피커 탭 시 분할 스테이지가 아니라
+**새 문서 태스크(전체화면)** 로 라우팅된다. **#28 과 동일한 결함 클래스이며 대상만 extras → flags 다.**
+
+로그 원문(소환 카드 세션):
+```
+23:48:28.096 panel-card: summoned(mode=launch-behind)
+23:48:30.451 EnteringSplit(step=3, attempt=1)
+23:48:31.917 PanelActivity: fullscreen 상태 감지 — 파트너 전용 액티비티이므로 종료
+23:48:33.054 EnteringSplit(step=3, attempt=2)   (이하 attempt=3 동형)
+23:48:38.265 arrange failed: reason=ENTRY_STEP_FAILED
+```
+
+부수 [확정]: 소환 시점에는 가드가 **발화하지 않았다**(첫 가드 로그가 step3 시도 이후) —
+Q3 의 "`makeTaskLaunchBehind` 는 `onResume` 미호출" 예측은 **맞다**. 실패는 소환 순간이 아니라
+**그 카드를 탭할 때** 발생한다.
+
+### [확정] 축 B 의 전제 반증 — 카드 0 에서도 step3 는 정상 동작한다 (5/5)
+
+레버 off(소환 없음) + 패널 카드 **0개** 상태에서 배치를 시도한 5회 전부 `arrange done`,
+step3 는 **attempt 1 에서 성공**(`node-not-found` 0건).
+
+| 카드 0 유도 방법 | 시도 | 결과 |
+|---|---|---|
+| `adb uninstall` 후 재설치 (신규 설치) | 3 | 3/3 done |
+| `pm clear` (설치 시점 유지 — 신규 설치 교란 배제) | 2 | 2/2 done |
+
+`pm clear` 표본이 **"신규 설치 앱이라 피커에 노출된 것"이라는 교란을 배제**한다.
+즉 피커는 recents 카드가 아닌 **앱 목록**에서도 「FW Panel」을 제공한다
+(`PanelActivity` 의 MAIN/LAUNCHER 노출이 근거로 추정). 18차 후보 ③ 조사는 `all_apps_button`
+으로 연 **앱 서랍**을 봤을 뿐, 피커 기본 화면의 앱 목록은 확인 대상이 아니었다.
+
+⇒ DESIGN_27 §1.3 의 구조 진단 「카드를 만드는 경로 0개」는 **부정확**하다. 카드가 없어도
+피커에 노드가 존재하므로 소환은 **불필요**하다.
+
+### [미해결] 그렇다면 17차 3전멸의 진짜 원인은?
+
+17차 `node-not-found` 4회 연속(카드 0)은 이 캠페인에서 **재현되지 않았다**(카드 0 에서 5/5 성공).
+따라서 「카드 0 → step3 불능」 인과는 **불완전한 설명**이다. 17차엔 다른 요인(피커 화면 상태,
+purge 가 세션 내에서 카드를 지운 타이밍, 스크롤/레이아웃 차이)이 함께 작용했을 가능성이 크다.
+축 A 는 이 미해결과 무관하게 정당하다(자기 코드가 자기 전제를 지우는 초과 동작 제거).
+
+### 부수 관측
+
+- `RecentTaskInfo` 는 dumpsys 에 `lastActiveTime` 을 노출한다(예: 276753305). 공개 API 접근 가능
+  여부는 별개 — 현재 구현은 0 전달 + `appTasks` MRU-first 순서 타이브레이크이며, G5 에서
+  **의도대로 최신 카드가 보존**됐다(제거된 것은 오염 카드 5036)
+- 카드 0 세션의 pre 측정이 `aspect=0.972332 conf=0.575` → `dividerCenterY=1780
+  (HIT_MAX_PANE_CEILING)` 로 낙착 후 보정으로 수렴(`residual=114`) — #12 v1.5 범위, 이번 캠페인 무관
+- `cmd device_state` 원복 명령은 `reset` 이 아니라 **`cmd device_state state reset`**
+  (17차 기록의 표기 정정)
+
+### 기기 잔여 상태
+
+레버 실험용 JSON 은 원복 완료(`config/window_profiles.json` 무변경). 기기에는 **레버 off 빌드가
+설치된 상태**이며 DataStore 는 `pm clear` 로 초기화됐다(버블 설정·placement 기록 소실). 회전 free.
+분할 미활성. 패널 카드 1개(정상 형태).

@@ -38,19 +38,23 @@ data class PanelTaskSnapshot(
 /**
  * FW Panel 최근 태스크 카드의 존재·과잉 여부를 판정하는 순수 정책.
  *
- * [DESIGN_27 §3.2/§3.3] `needsSummon` 은 축 B(소환 안전망)가 사용할 예정이나, 결함 #27 축 A
- * 작업(파괴 제거)에서는 시그니처만 확정하고 호출부에 배선하지 않는다. `pruneTargets` 가
+ * [DESIGN_27 §3.2/§3.3] `hasPanelTask` 는 #28 폴백 가드([ArrangerAccessibilityService]
+ * `performDismissSplit` 의 인텐트 폴백 진입 여부 판정)가 사용한다. `pruneTargets` 가
  * `pruneExtraPanelTasks`(구 `purgeStalePanelTasks`)의 유일한 판정 근거다.
  */
 object PanelTaskPolicy {
 
     /**
-     * [panelClassName] 소유 태스크가 [tasks] 안에 하나도 없으면 true.
+     * [panelClassName] 소유 태스크가 [tasks] 안에 하나 이상 있으면 true.
      * `componentClassName == null`(조회 실패)은 패널이 아닌 것으로 취급한다(오탐으로 인한
-     * 불필요한 소환 방지).
+     * 오판정 방지).
+     *
+     * 용도: #28 폴백 가드([ArrangerAccessibilityService.hasPanelTask]) — 우리 패널 태스크가
+     * 없는데 `FLAG_ACTIVITY_NEW_TASK` 인텐트로 해제를 시도하면 새 태스크가 생겨 base intent
+     * 오염(#28)이 발생하므로, 그 인텐트 폴백을 실행해도 되는지의 사전 조건으로 쓰인다.
      */
-    fun needsSummon(tasks: List<PanelTaskSnapshot>, panelClassName: String): Boolean =
-        tasks.none { it.componentClassName == panelClassName }
+    fun hasPanelTask(tasks: List<PanelTaskSnapshot>, panelClassName: String): Boolean =
+        tasks.any { it.componentClassName == panelClassName }
 
     /**
      * 패널([panelClassName]) 태스크가 2개 이상 쌓였을 때 MRU(가장 최근 활성) 1개를 제외한

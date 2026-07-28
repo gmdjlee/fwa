@@ -90,7 +90,6 @@ object WindowProfilesParser {
             cacheMeasuredAspect = dto.cacheMeasuredAspect,
             flexAutoTopPlacement = dto.flexAutoTopPlacement,
             coverAutoDismiss = dto.coverAutoDismiss,
-            panelCardPreflight = dto.panelCardPreflight,
         )
     }
 
@@ -172,8 +171,6 @@ private data class DefaultsDto(
     val flexAutoTopPlacement: Boolean = true,
     // P4-3: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드에는 이 키가 없다(신규 레버 의미론).
     val coverAutoDismiss: Boolean = true,
-    // #27/B: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드에는 이 키가 없다(신규 레버 의미론).
-    val panelCardPreflight: Boolean = true,
 )
 
 @Serializable
