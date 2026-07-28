@@ -26,6 +26,7 @@ import dev.dj.foldwindow.domain.AspectMeasurement
 import dev.dj.foldwindow.domain.AspectResolver
 import dev.dj.foldwindow.domain.AspectSource
 import dev.dj.foldwindow.domain.ConfirmOutcome
+import dev.dj.foldwindow.domain.CoverDismissPolicy
 import dev.dj.foldwindow.domain.FailureReason
 import dev.dj.foldwindow.domain.FlexModePolicy
 import dev.dj.foldwindow.domain.FoldPosture
@@ -111,6 +112,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
     @Volatile
     private var dismissInFlight = false
 
+    /**
+     * [P4-4] [startArrangeWhenForeground] 의 조건 폴링이 이미 진행 중임을 나타내는 가드.
+     * 바로가기를 빠르게 여러 번 탭하는 등으로 동일/다른 대상에 대한 폴링이 중복 기동되는 것을
+     * 막는다 — sessionInFlight/dismissInFlight 와 같은 패턴이지만, 이 폴링은 상태 머신이 시작되기
+     * 전 단계(머신은 아직 Idle)라 그 두 플래그만으로는 커버되지 않는다.
+     */
+    @Volatile
+    private var foregroundAwaitInFlight = false
+
     // ── P3-5 FoldingFeature 연동 (서비스 수명 전체 유지 — cleanupSession() 이 건드리지 않는다.
     // sessionPlacementSource 만 예외로 세션 필드다, 아래 세션 컨텍스트 블록 참고) ──
     private val flexPolicy = FlexModePolicy()
@@ -125,6 +135,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     /** 기본 런처 패키지. onServiceConnected() 에서 1회 해석 — 자동 트리거 게이트 5(포그라운드 부적합)의 제외 대상 */
     private var homePackage: String? = null
+
+    // ── P4-3 커버 화면 전환 자동 분할 해제 (서비스 수명 전체 유지, flexPolicy 와 별개 정책 인스턴스) ──
+    private val coverPolicy = CoverDismissPolicy()
+    private var coverCheckJob: Job? = null
 
     // ── 세션 컨텍스트 (터미널 상태에서 cleanupSession() 이 초기화한다) ──
     private var targetPackage: String? = null
@@ -442,6 +456,71 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     // ══════════════════════════════════════════════════════════
+    // P4-4: 홈 화면 고정 바로가기 지원
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * 현재 전면 앱 패키지. 자기 앱·런처(homePackage)·시스템 UI 는 null 로 취급한다.
+     * [beginSession] 의 타깃 결정과 같은 소스([activeAppPackage] 1차, [lastForegroundPkg] 이벤트
+     * 추적 폴백)를 읽되, 세션 상태([targetPackage] 등)는 전혀 건드리지 않는 읽기 전용 함수다.
+     * [FloatingLauncherService] 의 바로가기 export(exportAppPair)와 [startArrangeWhenForeground]
+     * 양쪽이 쓴다.
+     */
+    fun foregroundPackageForExport(): String? {
+        val pkg = activeAppPackage() ?: lastForegroundPkg ?: return null
+        if (pkg == packageName || pkg == homePackage || pkg == "com.android.systemui") return null
+        return pkg
+    }
+
+    /**
+     * `PairShortcutActivity` 발 트램펄린 진입점 — 대상 앱이 전면에 올 때까지 조건 폴링한 뒤
+     * [startArrange] 를 호출한다. 바로가기가 대상 앱을 막 `startActivity` 로 실행한 직후라
+     * 접근성 창 목록/포그라운드 추적이 그 전환을 아직 반영하지 못했을 수 있어([awaitWindowsSettled]
+     * 와 동일 계열의 문제) 고정 지연 대신 [foregroundPackageForExport] 결과 자체를 조건으로
+     * 폴링한다(ADR-2: 조건 폴링 + 타임아웃 + 명시적 실패).
+     *
+     * 이 폴링은 상태 머신 진입 전 사전 단계라 [machineState] 는 시작조차 하지 않는다 — 타임아웃은
+     * 머신의 Failed 가 아니라 이 함수 자신의 토스트+로그로 드러낸다.
+     */
+    fun startArrangeWhenForeground(targetPkg: String) {
+        if (machineState != ArrangeState.Idle || sessionInFlight) {
+            Log.w(TAG, "startArrangeWhenForeground: 이미 배치 진행 중 (state=$machineState)")
+            toast("이미 배치 진행 중")
+            return
+        }
+        if (foregroundAwaitInFlight) {
+            Log.w(TAG, "startArrangeWhenForeground: 이미 대기 중인 폴링이 있음 — 중복 요청 무시 (target=$targetPkg)")
+            return
+        }
+
+        foregroundAwaitInFlight = true
+        scope.launch {
+            try {
+                val reached = withTimeoutOrNull(SHORTCUT_FOREGROUND_TIMEOUT_MS) {
+                    while (foregroundPackageForExport() != targetPkg) {
+                        delay(SHORTCUT_FOREGROUND_POLL_INTERVAL_MS)
+                    }
+                    true
+                } ?: false
+
+                if (reached) {
+                    Log.i(TAG, "startArrangeWhenForeground: 대상 전면 확인 — 배치 시작 (target=$targetPkg)")
+                    startArrange(placementOverride = null, aspectOverride = null)
+                } else {
+                    Log.w(
+                        TAG,
+                        "startArrangeWhenForeground: ${SHORTCUT_FOREGROUND_TIMEOUT_MS}ms 내 대상 전면 " +
+                            "미도달 — 배치 취소 (target=$targetPkg)",
+                    )
+                    toast("대상 앱이 전면으로 오지 않아 배치를 취소했습니다")
+                }
+            } finally {
+                foregroundAwaitInFlight = false
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
     // P3-5: 플렉스(노트북 자세) 자동 트리거
     // ══════════════════════════════════════════════════════════
 
@@ -455,6 +534,29 @@ class ArrangerAccessibilityService : AccessibilityService() {
      */
     private fun onFoldPosture(posture: FoldPosture) {
         val checkAtMs = flexPolicy.onPosture(posture, SystemClock.uptimeMillis())
+
+        // ── P4-3 커버 화면 전환 자동 분할 해제 ──────────────────────
+        // flex 분기보다 먼저 처리한다: 아래 flex 분기는 posture != HALF_OPENED_HORIZONTAL(UNKNOWN
+        // 포함)이면 조기 return 하므로, 그 뒤에 두면 정작 UNKNOWN 진입에서 이 로직이 실행되지 않는다.
+        //
+        // ADR-2 준수(기존 flexCheckJob/awaitFlexTrigger 와 동일 패턴): 아래 delay 는
+        // CoverDismissPolicy 가 예약한 디바운스 시각에 "도달"하기 위한 수단일 뿐 성공을 가정하지
+        // 않는다 — 도달 후 evaluateCoverAutoDismiss() 가 shouldDismissNow 로 자세가 여전히
+        // UNKNOWN 인지 실제로 재검증한다.
+        val coverCheckAtMs = coverPolicy.onPosture(posture, SystemClock.uptimeMillis())
+        if (posture != FoldPosture.UNKNOWN) {
+            // 커버 화면 이탈(또는 애초에 UNKNOWN 이 아님) — 예약된 재검증을 취소한다.
+            coverCheckJob?.cancel()
+            coverCheckJob = null
+        } else if (coverCheckAtMs != null) {
+            // UNKNOWN 새 진입 — 재검증을 예약한다. 동일 자세 중복 보고(coverCheckAtMs == null)는
+            // 이미 진행 중인 예약을 건드리지 않는다.
+            coverCheckJob?.cancel()
+            coverCheckJob = scope.launch {
+                delay((coverCheckAtMs - SystemClock.uptimeMillis()).coerceAtLeast(0))
+                evaluateCoverAutoDismiss()
+            }
+        }
 
         if (posture != FoldPosture.HALF_OPENED_HORIZONTAL) {
             // 플렉스 이탈 — 진행 중인 조건 폴링을 끊고 각도 구독을 해제한다.
@@ -577,6 +679,56 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // placement 는 여기서 넘기지 않는다 — beginSession 의 placement 체인(FLEX 티어)이
         // flexPolicy.posture 를 직접 참조해 TOP 을 강제한다(자동·수동 단일 메커니즘, 브리프 근거).
         startArrange(placementOverride = null, aspectOverride = null)
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // P4-3: 커버 화면 전환 자동 분할 해제
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * [CoverDismissPolicy] 가 예약한 디바운스 시각 이후 호출되는 게이트 체인. 순서대로 검사하고
+     * 첫 실패에서 사유를 로그로 남긴 뒤 반환한다. [FlexModePolicy] 의 disarm 과 달리
+     * [CoverDismissPolicy] 는 게이트 거부 시 별도 해제가 필요 없다 — 에피소드는 살아있는 채로
+     * 남고(같은 디바운스 재검증을 다시 통과할 일이 없으므로 재발화 위험 없음), 자세가 실제로
+     * 바뀌면 [onFoldPosture] 가 에피소드 자체를 취소한다.
+     *
+     * 자동 스킵은 토스트를 띄우지 않는다: 이 트리거는 사용자 조작이 아니라 자세(센서) 이벤트로
+     * 자동 발화되므로 매 스킵마다 토스트를 띄우면 오히려 사용자를 방해한다(원칙 비대상 — P3-5
+     * evaluateFlexAutoTrigger 의 동일한 선례를 따른다). 대신 Log.i 로 사유를 항상 남긴다.
+     *
+     * [dismissSplit] 을 호출하지 않는다: dismissSplit 의 isSplitActive 2초 폴링은 커버 디스플레이의
+     * 접근성 창 목록 상태가 미지수라 신뢰할 수 없다. [PanelActivity] 를 직접 finish 시키는 것이
+     * 분할 해소 트리거라는 사실은 실측으로 확정됐다([PanelActivity] companion object KDoc 참고).
+     */
+    private suspend fun evaluateCoverAutoDismiss() {
+        val leverOn = loadProfilesConfig()?.defaults?.coverAutoDismiss ?: true
+        if (!leverOn) {
+            Log.i(TAG, "cover auto-dismiss skipped: reason=lever-off")
+            return
+        }
+
+        // flexPolicy.posture 를 "최신 자세" 필드로 재사용한다 — onFoldPosture 가 매 콜백마다
+        // flexPolicy.onPosture 를 가장 먼저 호출하므로 이 시점의 값이 곧 최신 관측 자세다.
+        if (!coverPolicy.shouldDismissNow(flexPolicy.posture, SystemClock.uptimeMillis())) {
+            Log.i(TAG, "cover auto-dismiss skipped: reason=posture-bounced")
+            return
+        }
+
+        if (machineState != ArrangeState.Idle || sessionInFlight) {
+            // 진행 중인 배치 세션에서 패널을 뽑으면 세션이 파괴된다 — 다음 폴드 이벤트로 재시도되게 둔다.
+            Log.i(TAG, "cover auto-dismiss skipped: reason=session-active")
+            return
+        }
+
+        val panel = PanelActivity.instance
+        if (panel == null) {
+            Log.i(TAG, "cover auto-dismiss skipped: reason=no-panel")
+            return
+        }
+
+        Log.i(TAG, "cover auto-dismiss fired")
+        runCatching { panel.finishAndRemoveTask() }
+            .onFailure { Log.w(TAG, "cover auto-dismiss: finishAndRemoveTask 실패", it) }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1591,6 +1743,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 파일 내 다른 조건 폴링(150~200ms 관례)과 같은 부류이며 고정 지연이 아니다(ADR-2).
          */
         private const val FLEX_ANGLE_POLL_INTERVAL_MS = 250L
+
+        /** [P4-4] [startArrangeWhenForeground] 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
+        private const val SHORTCUT_FOREGROUND_POLL_INTERVAL_MS = 150L
+
+        /**
+         * [P4-4] [startArrangeWhenForeground] 최대 대기. 바로가기가 대상 앱을 막 실행한 시점부터
+         * 콜드 스타트(프로세스 생성 포함)까지 흡수할 여유값이다.
+         */
+        private const val SHORTCUT_FOREGROUND_TIMEOUT_MS = 5_000L
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",

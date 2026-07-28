@@ -26,6 +26,11 @@ object ProfileStoreMapping {
     const val KEY_BUBBLE_X = "bubble_x"
     const val KEY_BUBBLE_Y = "bubble_y"
 
+    /** [P4-2] 파트너 창 위젯 모드/메모 저장 키. 신규 키라 마이그레이션 대상은 아니지만, 이미 배포된
+     * 빌드가 있을 수 있으므로 향후에도 이름 변경 금지(기존 bubble_* 와 동일한 이유) */
+    const val KEY_PANEL_WIDGET_MODE = "panel_widget_mode"
+    const val KEY_PANEL_MEMO = "panel_memo"
+
     /** 앱별 "마지막 성공 placement" 저장 키를 만든다. 패키지명이 비어 있으면 저장 자체가 무의미하므로 거부한다 */
     fun placementKeyFor(packageName: String): String {
         require(packageName.isNotBlank()) { "packageName must not be blank" }
@@ -68,4 +73,28 @@ object ProfileStoreMapping {
         if (raw == null || raw.isNaN() || raw.isInfinite()) return null
         return if (raw in MIN_ASPECT..MAX_ASPECT) raw else null
     }
+
+    // ── 파트너 창 위젯 모드 / 메모 (P4-2) ──────────────────────────
+
+    private val PANEL_WIDGET_MODES = setOf("CLOCK", "MEMO", "BLACK")
+
+    /**
+     * 저장된 문자열 -> 검증된 위젯 모드 문자열. [placementFromStorage] 와 동형 패턴 — null/공백/
+     * 허용집합 밖 값은 전부 null 을 반환한다(디스크 오염이 크래시로 이어지면 안 되고, "복원 실패는
+     * 상위 폴백에 위임"이 올바른 처리다 — 여기서는 ui.PanelWidgetMode.fromStorage 의 CLOCK 기본값이
+     * 그 폴백이다). ui 계층 enum 을 여기서 직접 반환하지 않는 이유: data/ 는 domain/ 만 참조할 수
+     * 있고 ui/ 를 참조하면 계층 역전이 된다 — 그래서 검증을 통과한 원본 문자열만 돌려주고, enum
+     * 변환 책임은 호출부(ui)에 남겨둔다.
+     */
+    fun panelWidgetModeFromStorage(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        return if (raw in PANEL_WIDGET_MODES) raw else null
+    }
+
+    /** 파트너 창 메모 저장 상한(문자 수). TextField 무한 성장으로 인한 DataStore 파일 비대화 방지 */
+    const val PANEL_MEMO_MAX_CHARS = 4000
+
+    /** 상한을 넘는 메모는 앞부분 [PANEL_MEMO_MAX_CHARS]자만 남기고 절단한다. 상한 이하 값은 그대로 반환한다 */
+    fun sanitizePanelMemo(raw: String): String =
+        if (raw.length > PANEL_MEMO_MAX_CHARS) raw.substring(0, PANEL_MEMO_MAX_CHARS) else raw
 }

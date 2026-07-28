@@ -10,8 +10,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -28,6 +32,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import dev.dj.foldwindow.R
 import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.data.ProfilesParseResult
@@ -35,13 +42,16 @@ import dev.dj.foldwindow.data.WindowProfilesParser
 import dev.dj.foldwindow.domain.AspectPreset
 import dev.dj.foldwindow.domain.Placement
 import dev.dj.foldwindow.ui.OnboardingActivity
+import dev.dj.foldwindow.ui.PairShortcutActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /**
@@ -584,6 +594,9 @@ class FloatingLauncherService : Service() {
         container.addMenuItem(getString(R.string.bubble_menu_dismiss_split)) {
             dismissMenuThenDismissSplit()
         }
+        container.addMenuItem(getString(R.string.bubble_menu_export_pair)) {
+            exportAppPair()
+        }
 
         // window_profiles.json presets 은 자산 파싱 성공 시에만 채워진다. 실패/미로드 시 섹션 자체를
         // 생략한다(크래시 금지, 조용한 실패는 preloadPresetsIfNeeded 의 Log.w 로 이미 드러남).
@@ -662,6 +675,112 @@ class FloatingLauncherService : Service() {
         service.dismissSplit()
     }
 
+    // ══════════════════════════════════════════════════════════
+    // P4-4: 홈 화면 고정 바로가기(앱 페어 export)
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * 메뉴 "앱 페어 바로가기 만들기" 트리거. 현재 전면 앱을 식별해 홈 화면에 고정 가능한
+     * 바로가기([PairShortcutActivity] 트램펄린 인텐트)를 시스템에 요청한다.
+     *
+     * 1) [dismissMenu] 를 먼저 호출한다 — 다른 메뉴 트리거 항목([dismissMenuThenArrange] 등)과
+     * 동일한 이유다: 스크림이 떠 있으면 접근성 창 목록의 활성 창 판독이 우리 창으로 오염된다
+     * (함정 #22 계열).
+     * 2) 스크림 제거 직후에는 접근성 창 목록 재구축이 비원자적이라([PROGRESS #25],
+     * [ArrangerAccessibilityService] 의 dismissSplit/awaitWindowsSettled 와 동일 실측 근거) 고정
+     * 지연 대신 [ArrangerAccessibilityService.foregroundPackageForExport] 가 non-null 값을 낼 때까지
+     * 조건 폴링한다(ADR-2).
+     */
+    private fun exportAppPair() {
+        dismissMenu()
+
+        val service = ArrangerAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, getString(R.string.toast_export_accessibility_off), Toast.LENGTH_LONG).show()
+            return
+        }
+
+        serviceScope.launch {
+            val pkg = withTimeoutOrNull(EXPORT_FOREGROUND_TIMEOUT_MS) {
+                var found = service.foregroundPackageForExport()
+                while (found == null) {
+                    delay(EXPORT_FOREGROUND_POLL_INTERVAL_MS)
+                    found = service.foregroundPackageForExport()
+                }
+                found
+            }
+
+            if (pkg == null) {
+                Log.w(TAG, "exportAppPair: ${EXPORT_FOREGROUND_TIMEOUT_MS}ms 내 대상 앱 식별 실패")
+                Toast.makeText(
+                    this@FloatingLauncherService,
+                    getString(R.string.toast_export_target_not_found),
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@launch
+            }
+
+            requestPinShortcut(pkg)
+        }
+    }
+
+    /**
+     * [pkg] 를 대상으로 하는 홈 화면 고정 바로가기를 시스템에 요청한다. 인텐트는
+     * [PairShortcutActivity] 를 트램펄린으로 거쳐 `startArrangeWhenForeground` 를 호출한다.
+     * 라벨/아이콘 조회가 실패해도(예: 조회 시점과 고정 시점 사이 제거된 앱) 바로가기 생성 자체는
+     * 계속한다 — 패키지명/우리 앱 아이콘으로 폴백한다(조용한 실패 금지: 원인은 로그로 남긴다).
+     */
+    private fun requestPinShortcut(pkg: String) {
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this)) {
+            Log.w(TAG, "requestPinShortcut: 이 런처는 바로가기 고정을 지원하지 않음")
+            Toast.makeText(this, getString(R.string.toast_pin_shortcut_unsupported), Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val label = runCatching {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        }.getOrDefault(pkg)
+
+        val icon = runCatching {
+            IconCompat.createWithBitmap(drawableToBitmap(packageManager.getApplicationIcon(pkg)))
+        }.getOrElse { e ->
+            Log.w(TAG, "requestPinShortcut: 대상 앱 아이콘 조회 실패 — 우리 앱 아이콘으로 폴백", e)
+            IconCompat.createWithResource(this, R.drawable.ic_bubble)
+        }
+
+        val shortcutIntent = Intent(Intent.ACTION_VIEW)
+            .setClass(this, PairShortcutActivity::class.java)
+            .putExtra(PairShortcutActivity.EXTRA_TARGET_PACKAGE, pkg)
+
+        val shortcutInfo = ShortcutInfoCompat.Builder(this, "pair_$pkg")
+            .setShortLabel(label)
+            .setIcon(icon)
+            .setIntent(shortcutIntent)
+            .build()
+
+        runCatching { ShortcutManagerCompat.requestPinShortcut(this, shortcutInfo, null) }
+            .onFailure { e -> Log.e(TAG, "requestPinShortcut: 바로가기 고정 요청 실패", e) }
+    }
+
+    /**
+     * Drawable → Bitmap 변환 유틸(P4-4, [IconCompat.createWithBitmap] 입력용). 이미
+     * [BitmapDrawable] 이면 내부 비트맵을 그대로 재사용하고, 그렇지 않으면(벡터 등) intrinsic
+     * 크기로 캔버스에 그려 비트맵화한다. intrinsic 크기가 0 이하인 방어적 경우 1x1 로
+     * 폴백한다(크래시 금지 — 호출부는 어차피 runCatching 으로 감싸져 있지만 이 함수 자체도
+     * 안전해야 한다).
+     */
+    private fun drawableToBitmap(drawable: Drawable): Bitmap {
+        (drawable as? BitmapDrawable)?.bitmap?.let { return it }
+        val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 1
+        val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 1
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return bitmap
+    }
+
     /**
      * window_profiles.json 의 presets 를 백그라운드에서 1회 로드해 캐싱한다. 실패해도 재시도하지
      * 않는다(무한 재시도 금지) — 메뉴는 그냥 프리셋 섹션 없이 뜬다. 서비스 생성 시점(onCreate)에
@@ -719,6 +838,14 @@ class FloatingLauncherService : Service() {
          * UI 안전망일 뿐 ADR-2 대상 아님.
          */
         private const val HIDE_SAFETY_TIMEOUT_MS = 90_000L
+
+        /**
+         * [P4-4] exportAppPair() 의 대상 앱 식별 조건 폴링 간격/타임아웃. dismissMenu() 직후
+         * 접근성 창 목록 재구축이 비원자적이라는 실측 근거(dismissSplit 의 동일 값 선례,
+         * [ArrangerAccessibilityService] KDoc 참고)를 그대로 재사용한다.
+         */
+        private const val EXPORT_FOREGROUND_POLL_INTERVAL_MS = 150L
+        private const val EXPORT_FOREGROUND_TIMEOUT_MS = 2_000L
 
         /** [OnboardingActivity] 가 버블 실행 여부를 표시하기 위한 토글 상태. */
         @Volatile

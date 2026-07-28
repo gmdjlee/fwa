@@ -135,4 +135,72 @@ class ProfileStoreMappingTest {
     fun `aspectFromStorage above MAX_ASPECT maps to null`() {
         assertNull(ProfileStoreMapping.aspectFromStorage(4.1f))
     }
+
+    // ── panelWidgetModeFromStorage 허용값 왕복 (P4-2) ─────────────
+
+    @Test
+    fun `panelWidgetModeFromStorage accepts CLOCK`() {
+        assertEquals("CLOCK", ProfileStoreMapping.panelWidgetModeFromStorage("CLOCK"))
+    }
+
+    @Test
+    fun `panelWidgetModeFromStorage accepts MEMO`() {
+        assertEquals("MEMO", ProfileStoreMapping.panelWidgetModeFromStorage("MEMO"))
+    }
+
+    @Test
+    fun `panelWidgetModeFromStorage accepts BLACK`() {
+        assertEquals("BLACK", ProfileStoreMapping.panelWidgetModeFromStorage("BLACK"))
+    }
+
+    // ── panelWidgetModeFromStorage 오염값 방어 ────────────────────
+
+    @Test
+    fun `panelWidgetModeFromStorage null raw value maps to null`() {
+        assertNull(ProfileStoreMapping.panelWidgetModeFromStorage(null))
+    }
+
+    @Test
+    fun `panelWidgetModeFromStorage blank raw value maps to null`() {
+        assertNull(ProfileStoreMapping.panelWidgetModeFromStorage("   "))
+    }
+
+    @Test
+    fun `panelWidgetModeFromStorage lowercase clock is not accepted`() {
+        assertNull(ProfileStoreMapping.panelWidgetModeFromStorage("clock"))
+    }
+
+    @Test
+    fun `panelWidgetModeFromStorage unknown value maps to null`() {
+        assertNull(ProfileStoreMapping.panelWidgetModeFromStorage("PURPLE"))
+    }
+
+    // ── sanitizePanelMemo 절단 경계 ────────────────────────────────
+
+    @Test
+    fun `sanitizePanelMemo leaves text under the limit unchanged`() {
+        val text = "a".repeat(10)
+        assertEquals(text, ProfileStoreMapping.sanitizePanelMemo(text))
+    }
+
+    @Test
+    fun `sanitizePanelMemo leaves text exactly at the limit unchanged`() {
+        val text = "a".repeat(ProfileStoreMapping.PANEL_MEMO_MAX_CHARS)
+        val result = ProfileStoreMapping.sanitizePanelMemo(text)
+        assertEquals(ProfileStoreMapping.PANEL_MEMO_MAX_CHARS, result.length)
+        assertEquals(text, result)
+    }
+
+    @Test
+    fun `sanitizePanelMemo truncates text exceeding the limit`() {
+        val text = "a".repeat(ProfileStoreMapping.PANEL_MEMO_MAX_CHARS + 500)
+        val result = ProfileStoreMapping.sanitizePanelMemo(text)
+        assertEquals(ProfileStoreMapping.PANEL_MEMO_MAX_CHARS, result.length)
+        assertEquals("a".repeat(ProfileStoreMapping.PANEL_MEMO_MAX_CHARS), result)
+    }
+
+    @Test
+    fun `sanitizePanelMemo handles empty string`() {
+        assertEquals("", ProfileStoreMapping.sanitizePanelMemo(""))
+    }
 }

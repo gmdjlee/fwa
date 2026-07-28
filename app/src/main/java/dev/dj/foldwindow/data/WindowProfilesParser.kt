@@ -89,6 +89,7 @@ object WindowProfilesParser {
             requireMeasurementAgreement = dto.requireMeasurementAgreement,
             cacheMeasuredAspect = dto.cacheMeasuredAspect,
             flexAutoTopPlacement = dto.flexAutoTopPlacement,
+            coverAutoDismiss = dto.coverAutoDismiss,
         )
     }
 
@@ -168,6 +169,8 @@ private data class DefaultsDto(
     val cacheMeasuredAspect: Boolean = true,
     // P3-5: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드에는 이 키가 없다(신규 레버 의미론).
     val flexAutoTopPlacement: Boolean = true,
+    // P4-3: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드에는 이 키가 없다(신규 레버 의미론).
+    val coverAutoDismiss: Boolean = true,
 )
 
 @Serializable

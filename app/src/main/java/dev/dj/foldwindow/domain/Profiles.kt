@@ -44,6 +44,13 @@ data class ProfileDefaults(
      * 종전 동작(수동 트리거 + LAST_SUCCESS/PROFILE/DEFAULTS/FALLBACK 체인)으로 되돌아간다.
      */
     val flexAutoTopPlacement: Boolean = true,
+    /**
+     * P4-3 롤백 레버. true(기본) 면 폴드를 완전히 닫아 커버 화면으로 전환될 때(FoldingFeature
+     * 소멸 → FoldPosture.UNKNOWN) 우리 앱이 만든 분할을 자동으로 해제하는 트리거가 켜진다.
+     * false 면 이 자동 해제 트리거 자체가 발화하지 않고(게이트 최우선 검사) 종전 동작(닫아도
+     * 분할이 그대로 유지되며 수동 해제만 가능)으로 되돌아간다.
+     */
+    val coverAutoDismiss: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */

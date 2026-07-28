@@ -16,7 +16,10 @@ import androidx.datastore.preferences.preferencesDataStore
 import dev.dj.foldwindow.domain.Placement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 private const val TAG = "FWProfileStore"
@@ -191,9 +194,56 @@ class ProfileStore(context: Context) {
         }
     }
 
+    /**
+     * [P4-2] 파트너 창 위젯 모드 — 검증 통과값만 방출한다(오염/미설정 시 null). 이 클래스 상단 KDoc의
+     * "API 는 전부 suspend 스냅샷 함수(Flow 미노출)" 원칙과 의도적으로 다른 예외다: PanelScreen 의
+     * 모드 전환 버튼은 탭 즉시 화면에 반영돼야 하므로 `collectAsState` 로 지속 구독하는 반응형 노출이
+     * 필요하다(P4-2 브리프에서 확정된 설계). null 을 CLOCK 등 구체 모드로 바꾸는 책임은
+     * `ui.PanelWidgetMode.fromStorage` 에 남겨둔다 — data/ 는 domain/ 만 참조할 수 있고 ui/ 열거형을
+     * 여기서 반환하면 계층 역전이 되기 때문이다.
+     */
+    val panelWidgetMode: Flow<String?> = appContext.fwaDataStore.data
+        .map { prefs -> ProfileStoreMapping.panelWidgetModeFromStorage(prefs[KEY_PANEL_WIDGET_MODE]) }
+        .catch { e ->
+            // kotlinx.coroutines 의 Flow.catch 연산자는 CancellationException 을 절대 잡지 않고
+            // 항상 재던진다(catchImpl 구현이 CancellationException 만 골라 rethrow) — safeRead 가
+            // CancellationException 을 별도로 재던지는 것과 동일한 보장을 연산자 차원에서 이미 받는다.
+            Log.w(TAG, "DataStore 읽기 실패(panelWidgetMode) — null 로 폴백", e)
+            emit(null)
+        }
+
+    /**
+     * [saveMeasuredAspect] 와 동일한 방어 패턴: 호출부(PanelActivity)가 항상 PanelWidgetMode.name
+     * 만 넘기므로 정상 경로에서는 도달하지 않지만, 허용집합 밖 값은 여기서 한 번 더 걸러 저장 자체를
+     * 거부한다(조용한 실패 금지 — 저장을 막고 로그로 드러낸다).
+     */
+    suspend fun savePanelWidgetMode(mode: String) {
+        if (ProfileStoreMapping.panelWidgetModeFromStorage(mode) == null) {
+            Log.w(TAG, "savePanelWidgetMode: 알 수 없는 값 '$mode' — 저장 거부")
+            return
+        }
+        safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_PANEL_WIDGET_MODE] = mode } }
+    }
+
+    /** [P4-2] 파트너 창 메모. 미설정 시 기본값 "". [panelWidgetMode] 와 동일한 이유로 Flow 노출 */
+    val panelMemo: Flow<String> = appContext.fwaDataStore.data
+        .map { prefs -> prefs[KEY_PANEL_MEMO] ?: "" }
+        .catch { e ->
+            Log.w(TAG, "DataStore 읽기 실패(panelMemo) — 빈 문자열로 폴백", e)
+            emit("")
+        }
+
+    /** [ProfileStoreMapping.sanitizePanelMemo] 로 상한을 적용한 뒤 저장한다(호출부가 원본을 그대로 넘겨도 안전) */
+    suspend fun savePanelMemo(text: String) {
+        val sanitized = ProfileStoreMapping.sanitizePanelMemo(text)
+        safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_PANEL_MEMO] = sanitized } }
+    }
+
     private companion object {
         val KEY_BUBBLE_ENABLED = booleanPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_ENABLED)
         val KEY_BUBBLE_X = intPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_X)
         val KEY_BUBBLE_Y = intPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_Y)
+        val KEY_PANEL_WIDGET_MODE = stringPreferencesKey(ProfileStoreMapping.KEY_PANEL_WIDGET_MODE)
+        val KEY_PANEL_MEMO = stringPreferencesKey(ProfileStoreMapping.KEY_PANEL_MEMO)
     }
 }

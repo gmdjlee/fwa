@@ -141,6 +141,18 @@
             </intent-filter>
         </activity>
 
+        <!-- P4-4: 홈 화면 고정 바로가기(pinned shortcut) 트램펄린. 런처가 쏘는 바로가기 인텐트
+             수신용으로 exported="true" 가 필요하다(probe.ProbeTriggerReceiver 등 기존 exported
+             항목과 동일 근거). noHistory/excludeFromRecents 로 백스택·최근 앱 목록에 흔적을 남기지
+             않는다 — 대상 앱을 실행하고 배치를 트리거한 뒤 즉시 finish 되는 순수 트램펄린이다. -->
+        <activity
+            android:name=".ui.PairShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="dev.dj.foldwindow.pairshortcut"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

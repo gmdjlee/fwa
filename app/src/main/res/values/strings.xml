@@ -26,6 +26,14 @@
     <string name="bubble_menu_dismiss_split">분할 해제</string>
     <string name="bubble_menu_settings">설정</string>
 
+    <!-- P4-4: 홈 화면 고정 바로가기(FloatingLauncherService.exportAppPair / PairShortcutActivity) -->
+    <string name="bubble_menu_export_pair">앱 페어 바로가기 만들기</string>
+    <string name="toast_export_accessibility_off">접근성 서비스를 먼저 켜 주세요</string>
+    <string name="toast_export_target_not_found">대상 앱을 식별하지 못했습니다</string>
+    <string name="toast_pin_shortcut_unsupported">이 런처는 바로가기 고정을 지원하지 않습니다</string>
+    <string name="toast_pair_accessibility_off">접근성 서비스가 꺼져 있습니다 — 설정에서 켜 주세요</string>
+    <string name="toast_pair_app_not_found">앱을 찾을 수 없습니다 (제거됨?)</string>
+
     <!-- P3-4: OnboardingActivity -->
     <string name="onboarding_title">FoldWindow 시작하기</string>
     <string name="onboarding_permission_overlay_title">다른 앱 위에 표시</string>

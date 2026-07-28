@@ -8,34 +8,49 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import dev.dj.foldwindow.data.ProfileStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * P2-5 / ADR-3: 파트너(비영상) 창. v1 = PartnerMode.BLACK — 검정 배경 + 시계뿐인 최소 구현.
- * Phase 3에서 PartnerMode 확장(메모/임의 앱 지정)에 맞춰 교체될 자리다.
+ * P2-5 / ADR-3: 파트너(비영상) 창. 도메인 `PartnerMode`(Profiles.kt, JSON 스키마 소속)는 BLACK 으로
+ * 고정이며, 그 위에 P4-2 부터 사용자가 직접 고르는 UI 표시 위젯 3종([PanelWidgetMode]: 시계/메모/
+ * 검정)을 얹는다 — 위젯 전환은 순수 표시 선호일 뿐 도메인 스키마와 무관하다.
  *
  * ⚠ @string/panel_title 값은 반드시 "FW Panel" 이어야 한다. platform/SplitEntry.kt 의 step4
  * 폴백(findPanelPickerNode)이 Recents 파트너 피커에서 이 라벨 문자열로 우리 앱을 찾는다.
@@ -47,6 +62,10 @@ class PanelActivity : ComponentActivity() {
 
     private var fullscreenGuardJob: Job? = null
 
+    // [P4-2] 기존 파일 전반에 Hilt 등 DI 없음 — OnboardingActivity/FloatingLauncherService 와
+    // 동일하게 액티비티가 직접 생성하는 패턴을 그대로 따른다.
+    private val store by lazy { ProfileStore(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
@@ -57,7 +76,7 @@ class PanelActivity : ComponentActivity() {
             finishAndRemoveTask()
             return
         }
-        setContent { MaterialTheme { Surface { PanelScreen() } } }
+        setContent { MaterialTheme { Surface { PanelScreen(store = store) } } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -139,8 +158,85 @@ class PanelActivity : ComponentActivity() {
     }
 }
 
+/**
+ * [P4-2] 파트너 창 위젯 화면. CLOCK(기존 v1 시계) / MEMO / BLACK 3종을 전환한다.
+ * 모드 전환 버튼(하단 중앙)은 세 모드 어디서든 항상 보인다 — BLACK 에서 숨기면 복귀할 방법이
+ * 없어지기 때문이다. `store` 하나만 인자로 받는다(기존 파일에 DI 없음 — 이 안에서 필요한 모든
+ * Flow 구독/디바운스/생명주기 관찰을 자체 완결적으로 처리한다).
+ */
 @Composable
-private fun PanelScreen() {
+private fun PanelScreen(store: ProfileStore) {
+    val scope = rememberCoroutineScope()
+
+    // 위젯 모드는 DataStore 값을 지속 구독한다 — 모드 전환 버튼을 탭해 저장하면 이 Flow 가
+    // 재방출되어 화면이 즉시 갱신된다. remember(store) 로 감싸 동일 Flow 인스턴스를 유지한다
+    // (매 리컴포지션마다 새 Flow 를 만들면 collectAsState 가 매번 재구독하게 된다).
+    val mode by remember(store) { store.panelWidgetMode.map(PanelWidgetMode::fromStorage) }
+        .collectAsState(initial = PanelWidgetMode.CLOCK)
+
+    var memoText by remember { mutableStateOf("") }
+    var memoSaveJob by remember { mutableStateOf<Job?>(null) }
+
+    // 저장된 메모를 최초 1회만 읽어 로컬 편집 상태의 시작값으로 삼는다. 이후에는 로컬 상태가
+    // 진실 소스다 — store.panelMemo 를 계속 구독하면 (다른 키 변경으로 인한) Flow 재방출이
+    // 디바운스 저장 대기 중인 타이핑 값을 되돌릴 위험이 있다(레이스).
+    LaunchedEffect(store) {
+        memoText = store.panelMemo.first()
+    }
+
+    fun flushMemoNow(text: String) {
+        memoSaveJob?.cancel()
+        memoSaveJob = null
+        scope.launch { store.savePanelMemo(text) }
+    }
+
+    fun onMemoTextChange(text: String) {
+        memoText = text
+        // 500ms 디바운스: ADR-2 가 금지하는 "오케스트레이션 상태 전이를 맞추기 위한 고정 지연"이
+        // 아니라 매 키 입력마다 디스크에 쓰지 않기 위한 입력 IO 절약용 디바운스다 — 아래 ClockWidget
+        // 의 1초 틱(delay(1_000))과 같은 종류로, 상태 전이 대기가 아니라 주기적 절약/갱신 목적이다.
+        memoSaveJob?.cancel()
+        memoSaveJob = scope.launch {
+            delay(500)
+            store.savePanelMemo(text)
+        }
+    }
+
+    // onPause 시 즉시 저장: 디바운스 창(500ms)이 끝나기 전에 백그라운드로 전환되면(홈 버튼 등)
+    // 대기 중이던 변경이 유실될 수 있다. PanelActivity.onPause() 는 전체화면 자가 가드 전용으로
+    // 무변경 유지해야 하므로(브리프 계약), 여기서는 호스트 액티비티의 Lifecycle 을 별도로 구독해
+    // ON_PAUSE 시 부수적으로 즉시 저장한다. LocalContext.current 를 ComponentActivity 로 그대로
+    // 캐스팅한다 — 이 컴포저블은 PanelActivity.setContent 안에서만 호출되므로 항상 안전하다.
+    val activity = LocalContext.current as ComponentActivity
+    DisposableEffect(activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                flushMemoNow(memoText)
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        when (mode) {
+            PanelWidgetMode.CLOCK -> ClockWidget()
+            PanelWidgetMode.BLACK -> BlackWidget()
+            PanelWidgetMode.MEMO -> MemoWidget(text = memoText, onTextChange = ::onMemoTextChange)
+        }
+
+        ModeSwitcherRow(
+            onSelect = { newMode -> scope.launch { store.savePanelWidgetMode(newMode.name) } },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 24.dp),
+        )
+    }
+}
+
+/** CLOCK 모드 — 기존 v1 구현 그대로(1초 틱으로 HH:mm 갱신) */
+@Composable
+private fun ClockWidget(modifier: Modifier = Modifier) {
     var timeText by remember { mutableStateOf(currentTimeText()) }
 
     // UI 시계 갱신용 1초 틱. ADR-2가 금지하는 "타이밍을 맞추기 위한 고정 지연"이 아니라
@@ -153,9 +249,8 @@ private fun PanelScreen() {
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -170,6 +265,68 @@ private fun PanelScreen() {
             color = Color.Gray.copy(alpha = 0.4f),
             fontSize = 14.sp,
         )
+    }
+}
+
+/** BLACK 모드 — 순검정 배경(부모 Box 가 이미 깔아 둠) 위에 워터마크만 남긴다 */
+@Composable
+private fun BlackWidget(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "FoldWindow",
+            color = Color.Gray.copy(alpha = 0.4f),
+            fontSize = 14.sp,
+        )
+    }
+}
+
+/**
+ * MEMO 모드 — 검정 배경 위 자유 입력 텍스트. 컨테이너/밑줄 색을 전부 투명으로 지워 필드 티가
+ * 나지 않게 하고(요구사항 "배경 투명"), fillMaxSize 로 화면 전체를 차지하는 다중행 필드라 내용이
+ * 넘치면 Compose TextField 가 기본 제공하는 내부 스크롤로 자연히 스크롤 가능해진다.
+ */
+@Composable
+private fun MemoWidget(
+    text: String,
+    onTextChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    TextField(
+        value = text,
+        onValueChange = onTextChange,
+        modifier = modifier.fillMaxSize(),
+        placeholder = { Text("메모", color = Color.Gray.copy(alpha = 0.4f)) },
+        colors = TextFieldDefaults.colors(
+            focusedTextColor = Color.Gray.copy(alpha = 0.6f),
+            unfocusedTextColor = Color.Gray.copy(alpha = 0.6f),
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+            cursorColor = Color.Gray,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            focusedPlaceholderColor = Color.Gray.copy(alpha = 0.4f),
+            unfocusedPlaceholderColor = Color.Gray.copy(alpha = 0.4f),
+        ),
+    )
+}
+
+/** 하단 중앙 모드 전환 버튼 3개. BLACK 을 포함해 모든 모드에서 항상 표시한다(숨기면 복귀 불가) */
+@Composable
+private fun ModeSwitcherRow(onSelect: (PanelWidgetMode) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        TextButton(onClick = { onSelect(PanelWidgetMode.CLOCK) }) {
+            Text("시계", color = Color.Gray.copy(alpha = 0.4f))
+        }
+        TextButton(onClick = { onSelect(PanelWidgetMode.MEMO) }) {
+            Text("메모", color = Color.Gray.copy(alpha = 0.4f))
+        }
+        TextButton(onClick = { onSelect(PanelWidgetMode.BLACK) }) {
+            Text("검정", color = Color.Gray.copy(alpha = 0.4f))
+        }
     }
 }
 
