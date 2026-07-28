@@ -2,11 +2,12 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-28 **P4-1 프로브+구현 세션** — ① 프로브 F1~F6 adb 단독 **게이트 통과**(F5 DRM 재생만 수동 잔류): One UI 팝업 = freeform(5) 확정, `am start --windowingMode 5` + `am task resize` 픽셀 정확, UNRESIZEABLE 도 설정 비의존 진입, a11y = `APPLICATION` bounds 1:1. **후보 A(Shizuku 셸) 채택** — 커밋 `7e1d912`. ② **P4-1 구현 완료**: Shizuku 13.1.5 UserService(AIDL — `newProcess` 비공개 API 무접촉) + `PopupPlanner`·`StackListParser`(domain 순수) + `startPopup()` 5단 조건 폴링(머신 무변경) + 버블 메뉴 「팝업으로 열기」 조건부 노출 + 온보딩 Shizuku 카드(선택). qa **CONDITIONAL 2건 → 당일 실기기 실측로 해소**(D1: 팝업 초기 top=150 실측 기록 · D2: `am stack list` 원문 46행 대조 — 파서 10/10 정확, 원문이 테스트 픽스처로 편입). **테스트 271 · 빌드 PASS**. 최종 빌드 기기 설치 + a11y 재기동 확인 완료 — 17차 즉시 가능. 잔여 = P4-1 실기기 E2E 7항목(**Shizuku 앱 설치 선행**, 기기 미설치 확인됨) — DEVICE_FACTS 「P4-1 구현분」 절
-**직전(Phase 4 구현):** 커밋 `9c36905` — P4-2(파트너 위젯: 시계/메모/검정 + DataStore 영속) · P4-3(커버 전환 자동 해제: `CoverDismissPolicy` 디바운스 600ms→재검증→게이트 4종→패널 직접 finish) · P4-4(앱 페어 pinned shortcut: 트램펄린 + 전면 대기 150ms/5s 사전 폴링) 구현 완료. Worker 3기 위임, 결함 0, qa CONDITIONAL(정적 전 항목 PASS — 257 테스트 · 유일 차단 = 실기기 미검증). DEVICE_FACTS 「Phase 4 구현분」 절 = 17차 체크리스트. 그 전 16차(버블 타이머 90s·중지 레이스)·15차(P3-5 FoldingFeature 5항목) = DEVICE_FACTS 각 절 + git 이력 참조
-**현재 Phase:** Phase 4 — **P4-1·P4-2·P4-3·P4-4 전부 구현 완료(실기기 미검증)**. Phase 3 는 완료 확정
+**최종 갱신:** 2026-07-28 밤 **17차 실기기 캠페인** — Phase 4 구현분 4종 검증 **실질 완료** (adb 주도, DEVICE_FACTS 17차 절): **P4-2 5/5** · **P4-4 4.5/5** · **P4-3 6/7** (신규 수단 `cmd device_state state 0/reset` 에뮬레이션으로 커버 게이트 전 경로 발화 — 핵심 미지수였던 "닫힘 중 패널 finish 의 분할 해소" 에뮬 기준 해소) · **P4-1 7/7** (Shizuku v13.6.0 adb 설치·스타터 활성 — 온보딩 3분기·메뉴 출현·재바인드·유튜브/넷플릭스 팝업 E2E bounds 정확·DRM 재생 Secure layer 팝업 내 구동). 부수: 12차 캐시 폴백 실전 2회 발동 실증. **⚠ 신규 중대 결함 발견**: step3 패널 소환 경로 부재 — 피커 「FW Panel」 노드 = recents 태스크 카드인데 `finishAndRemoveTask`(커버 해제·dismissSplit·purge·자가 가드)가 카드를 제거하면 배치 전체 불능 (node-not-found 3전멸, 재현 4회 + 원인 결정 실험 완료). purge 는 세션 시작마다 자충. 과거 캠페인은 카드 상시 잔존 우연에 의존했음. **P4-3 실배포 전 수정 필수** — DEVICE_FACTS 17차 「신규 결함」 절에 수정 방향 3후보
+**직전(P4-1 프로브+구현):** 프로브 F1~F6 게이트 통과·후보 A(Shizuku 셸) 채택(`7e1d912`) → 구현 완료(UserService AIDL + PopupPlanner·StackListParser + startPopup 5단 폴링 + 메뉴 조건부 노출 + 온보딩 카드). 테스트 271·빌드 PASS. 그 전 Phase 4 구현(`9c36905`)·16차·15차 = DEVICE_FACTS 각 절 참조
+**현재 Phase:** Phase 4 — **전 항목 구현 + 17차 검증 완료**. 잔여 = Phase B 물리 3건(아래 1번) + step3 소환 결함 수정. Phase 3 완료 확정
 **다음 행동 (착수 목록):**
-1. **17차 실기기 캠페인** — Phase 4 구현분 검증: DEVICE_FACTS 체크리스트(P4-3 7항목 · P4-2 5항목 · P4-4 5항목 · **P4-1 7항목**). 최우선 미지수 = P4-3 항목 2(닫힘 상태에서 패널 finish 의 분할 해소 실효성). P4-1 항목은 **사용자가 Shizuku 앱 설치·활성화 후** 진행(기기 미설치 확인됨). 최종 빌드 이미 설치·a11y 재기동 확인 완료 — 물리 조작 항목부터 바로 시작 가능
+1. **step3 패널 소환 결함 수정** (최우선 — P4-3 활성 상태의 일상 재생산 결함): 후보 ① step3 전 패널 프리론치(런처 MRU 갱신, split-select 진입 전) ② purge 를 Done 후로 이동 ③ 피커 앱그리드 폴백. DEVICE_FACTS 17차 「신규 결함」 절 = 브리프 원천
+2. **Phase B 물리 확인 3건** (사용자 조작): P4-3 항목1·2 물리 접기(화면 꺼짐 실상태) · P4-1 DRM 육안(팝업 재생 실화면) · (참고) 600ms 재펴기는 미검증 수용
 2. P3-5 발 v1.5 후보: 포그라운드 안정성 윈도(폴드 전환 중 월렛 quick 카드가 event-tracked 오염 → 게이트5 통과 실측) · 재열기 멈칫 Done-후 분할 잔존(수동 해제로 복구, 키가드 게이트는 정당 사용례 훼손으로 기각) · 각도 대역 경계값 실측
 3. #12 v1.5 후보 축적분: BOTH_AXES_BARS 시 보정 생략(G1 드리프트 실측) · 적응형 residual(글로우 필러박스 블라인드 G5 실측) · 비-16:9 콘텐츠 합치·캐시 실측 · flex 게이트2↔startArrange TOCTOU(이론상, DEVICE_FACTS 기록)
 4. P3-2 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로). 회전×2 폴백 검증 기회 확보
@@ -37,7 +38,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.servic
 | Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
 | Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
 | Phase 3 UI | ✅ 완료 | DoD 3항목(콜드부팅 버블 복귀 · 프로파일 유지 · 권한 미부여 무크래시 안내) 실기기 검증 완료. P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). P3-3 DataStore ✅ **실기기 검증 완료** (141 테스트 + 7차 실기기 #26 5항목 전부 — 이관·goAsync 부팅·placement 복원 E2E·corruption 복구·중지 레이스). P3-5 FoldingFeature ✅ **15차 실기기 검증 5항목 전부 통과** (결함 2건 현장 수정: UiContext 3-인자 채택·닫기 오발화 2층 방어. qa PASS 230/230, DEVICE_FACTS 15차 절) |
-| Phase 4 확장 | 🔄 진행 중 | P4-2·P4-3·P4-4 구현 완료 — 257 테스트·빌드·qa 정적 PASS, **실기기 미검증**(DEVICE_FACTS 「Phase 4 구현분」 절 = 17차 체크리스트). P4-1 은 DESIGN_P41 프로브 F1~F6 선행 대기 |
+| Phase 4 확장 | 🔄 검증 완료·결함 수정 대기 | P4-1·2·3·4 구현 + **17차 실기기 검증 완료** (P4-2 5/5 · P4-3 6/7 에뮬 · P4-4 4.5/5 · P4-1 7/7, DEVICE_FACTS 17차 절). 잔여 = **step3 패널 소환 결함 수정(필수)** + Phase B 물리 3건(물리 접기·DRM 육안) |
 
 ## 작성된 코드
 
@@ -108,6 +109,8 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.servic
 24. ~~P3-2 [미검증] 전체~~ → **2026-07-25 오후 4차 실기기 검증으로 전부 해소**: ① 드래그 해제 가정 **반증** (dispatchGesture 스냅백 2/2 vs 동일 기하 input swipe 성공 3/3) → **패널 finish 방식으로 재구현·E2E 성공** ② 클램프 가로/세로 실기기 정상 ③ DOWN 스냅샷 방어 **실패 실측** (OUTSIDE 선행 디스패치 → 재탭이 배치 오발화) → **풀스크린 스크림으로 구조 해결·E2E 확인** ④ 프리셋 6종 최초 롱프레스에 정상 렌더. 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로), "분할 없음" 시 2s 대기 후 토스트 체감
 25. 스크림 부산물 (해결·기록): 풀스크린 터치 가능 오버레이가 떠 있는 동안 하위 창이 a11y `getWindows()` 에서 가림-제외되고, 제거 직후 재구축이 **비원자적** (앱 창 먼저, 디바이더 나중) — `isSplitActive` false-negative 2/2 실측. dismiss 는 목표 조건 자체 폴링으로 해결. `beginSession` 의 `awaitWindowsSettled`(APPLICATION≥1 약한 게이트)도 같은 원리에 취약할 수 있음 — 배치 경로에서 유사 증상 재현 시 동일 패턴 적용. **10차 부수 관측**: broadcast 트리거 15세션(버블/스크림 창 미개입 경로)에서 창 목록發 증상 0건 — 취약 가설은 스크림·버블 창 존재 시나리오에 한정된 채 유지
 26. ~~P3-3 실기기 [미검증] 목록~~ → **2026-07-25 오후 7차 실기기 검증으로 전부 해소** (DEVICE_FACTS P3-3 절): ① 이관 — 구버전에 x/y 주입 후 업데이트 설치, 3키 무손실 이관+원본 삭제+버블 위치 복원 ② goAsync 실부팅 — 로그·FGS 기동·접근성 유지 (회귀 해소) ③ placement — OVERRIDE bottom 저장 → 무override 3회 전부 LAST_SUCCESS/BOTTOM 결정, 3회차 done residual=0 ④ corruption — 가비지 주입 후 서비스 기동, 손상 감지 로그+emptyPreferences 복구+무크래시, enabled 재기록 ⑤ 중지 레이스 — 탭+즉시 back(finish) 근사, 쓰기·stopService 완주 → **16차 물리 폴드 접기 실기 통과** (잔여 0). 부차 미해결: 손상 1차 감지가 주체 미상 초기 store 접근에서 발생 (결과는 동일한 정상 복구)
+
+27. **[17차 신규 — 미해결·최우선]** step3 패널 소환 경로 부재: 피커 「FW Panel」 노드 = recents 태스크 카드. `finishAndRemoveTask`(커버 자동 해제 P4-3·dismissSplit·purgeStalePanelTasks·패널 자가 가드)가 카드 제거 시 배치 전체 불능 (node-not-found 3전멸 ×4 재현). purge 는 세션 시작마다 자충(살려둔 패널 태스크도 제거). 복구는 런처 경유 실행(수동 피커 탭)만 유효 — `am start` 직접 실행은 자가 가드가 다시 제거. 수정 후보 3종 = DEVICE_FACTS 17차 「신규 결함」 절
 
 ## 결정 로그
 
