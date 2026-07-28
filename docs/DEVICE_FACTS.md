@@ -599,3 +599,23 @@ P4-2(파트너 위젯)·P4-3(커버 자동 해제)·P4-4(앱 페어 바로가기
 | 3 | `exportAppPair` 2s 식별 폴링 성공률 — 스크림 제거 직후 a11y 창 목록 비원자 재구축(#25)과 동일 취약 가설 |
 | 4 | 접근성 꺼짐 상태 탭 → 토스트+온보딩 유도 / 대상 앱 제거 후 탭 → "앱을 찾을 수 없습니다" |
 | 5 | 타임아웃 상수(식별 2s / 전면 대기 5s) 체감 적정성 — 실측치 아닌 브리프 지정값, 조정 시 근거 병기 |
+
+## P4-1 프로브 F1~F6 (2026-07-28 프로브 세션 — adb 단독, 게이트 통과)
+
+측정 환경: SM-F966N · Android 16 · One UI 8.5(`ro.build.version.oneui=80500`) · deviceState=3(펼침) · 일반 adb 셸(root 아님). 물리 조작 없이 전 항목 수행.
+
+| # | 질문 | 결과 |
+|---|---|---|
+| F1 | One UI 팝업 = `WINDOWING_MODE_FREEFORM`(5)인가 | ✅ [측정] mode 5 로 실행한 창이 One UI 팝업 크롬(상단 핸들·라운드 코너)으로 렌더. 태스크 레코드에 One UI 전용 필드 `isAlwaysOnTopFreeform=true`, `mNonOccludedFreeformAreaRatio=100` |
+| F2 | 셸 권한으로 freeform 실행 가능한가 | ✅ [측정] `am start --windowingMode 5 -n <cmp>` → `mode=freeform`. 기존 태스크가 있으면 프런트 이동과 함께 freeform 으로 **전환**됨 (YouTube 재사용 태스크에서 확인) |
+| F3 | 실행 후 bounds 제어 수단 | ✅ [측정] `am task resize <taskId> L T R B` — 요청 bounds (200,300,1200,2100)·(300,200,1300,1700) 픽셀 단위 정확 적용, 오차 0 |
+| F4 | UNRESIZEABLE 앱(넷플릭스) 팝업 진입 | ✅ [측정] 진입·리사이즈 모두 성공. **`enable_non_resizable_multi_window=0` 상태에서도 성공** — 셸 경로는 One UI 설정 비의존 |
+| F5 | DRM 표면이 팝업에서 렌더되는가 | ⏳ [미검증] 팝업 내 넷플릭스 UI(프로필 선택 화면) 렌더 정상. 실제 DRM 재생은 수동 확인 필요 → 17차 캠페인에 편입 |
+| F6 | 팝업 창의 a11y 노출 형태 | ✅ [측정] 프로브 B 재실행(팝업 2개 부유 상태): `APPLICATION` 타입 일반 창으로 노출, **bounds = 태스크 bounds 1:1 일치**, layer = z순서 (넷플릭스 layer 2 / YouTube layer 1). 특수 타입 없음 → 기존 창 추적 코드로 검증 폴링 가능 |
+
+부수 실측:
+- 런처 컴포넌트: YouTube `com.google.android.youtube/.app.honeycomb.Shell$HomeActivity` · 넷플릭스 `com.netflix.mediaclient/.ui.launch.UIWebViewActivity`. `$` 이스케이프는 원격 명령 통째 인용 + 원격측 작은따옴표 필수 (Git Bash → 기기 sh 이중 확장)
+- 태스크 제거: `am stack remove <taskId>` 동작 확인
+- `am start --windowingMode 1` 로 기존 freeform 태스크 전체화면 복귀 시도 → 인텐트만 기존 인스턴스에 전달되고 모드 전환 안 됨 [측정 1회] — 복귀 수단으로 부적합, 홈 이동으로 화면 정리
+
+**판정: F1·F2 통과 → P4-1 진행 확정. 후보 A(Shizuku 셸 명령: `am start --windowingMode 5` + `am task resize`) 채택.** 후보 B(binder/HiddenApiBypass) 불필요. 상세 설계 갱신 = `docs/DESIGN_P41_FREEFORM.md`.

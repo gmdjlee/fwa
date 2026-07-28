@@ -1,7 +1,8 @@
 # DESIGN_P41 — 팝업(freeform) 모드: 설계 스케치 + 선행 프로브 계획
 
-> 상태: **프로브 대기** (구현 착수 금지). #12·#20 선례를 따른다 — 설계 문서 → 실기기 프로브 → 프로브 결과 반영 후 구현.
-> 작성: 2026-07-28 (Phase 4 착수 세션). 기기 미연결 상태라 프로브 항목은 전부 [미검증].
+> 상태: **프로브 통과 — 구현 진행** (2026-07-28 프로브 세션). F1·F2·F3·F4·F6 ✅ / F5(DRM 재생)만 수동 확인 잔류 → 17차 캠페인 편입.
+> **후보 A(Shizuku 셸 명령) 채택 확정** — `am start --windowingMode 5` + `am task resize` 실측 통과. 측정 SSOT = `docs/DEVICE_FACTS.md` 「P4-1 프로브 F1~F6」 절.
+> 작성: 2026-07-28 (Phase 4 착수 세션).
 
 ## 1. 목적
 
@@ -18,7 +19,7 @@
 |---|---|
 | `FEATURE_FREEFORM_WINDOW_MANAGEMENT` | ✅ true |
 | `force_resizable_activities` | ✅ 1 |
-| One UI 팝업 = AOSP freeform 기반 | [추정] — 프로브 F1 로 확정 필요 |
+| One UI 팝업 = AOSP freeform 기반 | ✅ [측정 2026-07-28] mode 5 → One UI 팝업 크롬 렌더 확인 |
 
 부수 실측: 드래그 진입 레시피가 UNRESIZEABLE 앱에서 "팝업(프리폼)으로 라우팅"된 사례 다수 — One UI 가 freeform 계열 윈도잉을 일상적으로 사용한다는 방증.
 
@@ -35,6 +36,8 @@
 
 **F1·F2 중 하나라도 ❌ 면 P4-1 전체를 기각하고 이 문서에 사유를 기록한다.**
 
+> **프로브 결과 (2026-07-28)**: F1 ✅ · F2 ✅ · F3 ✅ (`am task resize` 픽셀 정확) · F4 ✅ (`enable_non_resizable_multi_window=0` 에서도 성공 — 설정 비의존) · F5 ⏳ 수동 잔류 · F6 ✅ (`APPLICATION` 타입, bounds 1:1, layer=z순서). 게이트 통과 — 기각 조건 미충족. 상세 = DEVICE_FACTS 「P4-1 프로브 F1~F6」 절.
+
 ## 4. 아키텍처 스케치 (프로브 통과 가정)
 
 ### 의존성·권한
@@ -43,8 +46,8 @@
 - binder 사망/권한 회수 런타임 처리: 토스트 + 기능 숨김 (조용한 실패 금지)
 
 ### 실행 경로 후보 (프로브 결과로 택1)
-- **후보 A — Shizuku 셸 명령**: `am start --windowingMode 5` (+ 필요 시 `am task resize`). 가장 단순, hidden API 무접촉. F2·F3 통과 시 채택
-- **후보 B — Shizuku binder**: `IActivityTaskManager` + `ActivityOptions.setLaunchBounds()`(+hidden `setLaunchWindowingMode`). HiddenApiBypass 필요 — 유지비용 높아 A 불가 시에만
+- **후보 A — Shizuku 셸 명령**: `am start --windowingMode 5` (+ 필요 시 `am task resize`). 가장 단순, hidden API 무접촉. **← 채택 (F2·F3 통과, 2026-07-28)**
+- **후보 B — Shizuku binder**: `IActivityTaskManager` + `ActivityOptions.setLaunchBounds()`(+hidden `setLaunchWindowingMode`). HiddenApiBypass 필요 — 기각 (A 통과로 불필요)
 
 ### 도메인 (순수 Kotlin, ADR-4)
 - `PopupPlanner`: (aspect, 화면 기하, 여백 정책) → 팝업 bounds. v1 정책 = 상단 중앙, 폭 = min(화면폭 − 마진, ⌊높이×aspect⌋). SplitPlanner 와 동형 테스트 커버리지
