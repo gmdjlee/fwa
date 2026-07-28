@@ -73,7 +73,9 @@ class PanelActivity : ComponentActivity() {
             // 결함 #24① 수정: dismissSplit() 이 이 액티비티를 finish 시키는 것이 분할 해제
             // 트리거다(아래 companion object KDoc의 실측 근거 참고). UI를 전혀 구성하지 않고
             // 즉시 종료해 깜빡임을 없앤다.
-            finishAndRemoveTask()
+            // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 —
+            // finish 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
+            finish()
             return
         }
         setContent { MaterialTheme { Surface { PanelScreen(store = store) } } }
@@ -85,7 +87,9 @@ class PanelActivity : ComponentActivity() {
         // instance 가 이미 null(액티비티 인스턴스는 죽었지만 프로세스는 살아 있는 희귀 경로)일 때
         // FLAG_ACTIVITY_SINGLE_TOP 으로 기존 태스크를 재사용하며 여기로 들어온다.
         if (intent.requestsFinish()) {
-            finishAndRemoveTask()
+            // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 —
+            // finish 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
+            finish()
         }
     }
 
@@ -97,8 +101,10 @@ class PanelActivity : ComponentActivity() {
         // 즉시 종료하면 정상 배치를 죽인다. 이 대기는 라이프사이클 전환 유예이지
         // 상태 전이 대체가 아님 (ADR-2 취지 유지).
         // 한계: 프로세스가 강제 종료(예: 앱 재설치)되면 이 가드 자체가 실행될 기회를 얻지
-        // 못해 태스크 레코드만 잔존할 수 있다 — 그 잔존 청소는
-        // ArrangerAccessibilityService.beginSession 의 purgeStalePanelTasks 가 세션 시작 시 담당한다.
+        // 못해 태스크 레코드만 잔존할 수 있다 — [#27, 18차 G3] 그 잔존 카드는 더 이상 위협이
+        // 아니다(죽은 카드를 탭해도 정상 낙착함이 실증됐다). 다만 패널 태스크가 여러 개로
+        // 쌓이는 것 자체는 무의미하므로, ArrangerAccessibilityService.beginSession 의
+        // pruneExtraPanelTasks 가 세션 시작 시 MRU 1개만 남기고 축소한다.
         scheduleFullscreenCheck(600)
     }
 
@@ -118,7 +124,9 @@ class PanelActivity : ComponentActivity() {
             delay(graceMs)
             if (!isInMultiWindowMode) {
                 Log.i(TAG, "fullscreen 상태 감지 — 파트너 전용 액티비티이므로 종료")
-                finishAndRemoveTask()
+                // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 —
+                // finish 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
+                finish()
             }
         }
     }
@@ -148,7 +156,19 @@ class PanelActivity : ComponentActivity() {
          * 깊이에서 거부되는 것으로 추정된다(원인 불명, 경험 법칙). 반면 이 액티비티를 BACK 으로
          * finish 하면 분할이 즉시 해소되고 상대 앱(유튜브)이 전체화면으로 자동 복귀함이 실측
          * 확인됐다 — [ArrangerAccessibilityService.performDismissSplit] 이 이 인텐트 extra 로
-         * finishAndRemoveTask() 를 원격 트리거한다.
+         * finish() 를 원격 트리거한다. [#27/A1, 18차 G1] 예전에는 finishAndRemoveTask() 를
+         * 트리거했으나, removeTask 부분이 step3 소환원인 카드까지 지우는 초과 동작임이 밝혀져
+         * finish() 로 격하했다 — 분할 해소 자체는 finish 만으로 충분함이 18차 G1 로 실증됐다.
+         *
+         * **계약 [#28, AOSP 확정]**: 이 extra 는 **이미 존재하는 패널 태스크**를 향해서만 실을 수
+         * 있다. 태스크를 새로 만들 수 있는 인텐트(`FLAG_ACTIVITY_NEW_TASK` 등)에 실으면, 그
+         * 인텐트가 실제로 새 태스크를 만들 때 base intent 에 이 extra 가 그대로 보존된다(AOSP
+         * `Task#setIntent` 은 extras 를 유지). 그 결과 이후 그 태스크 카드를 최근 앱/분할 파트너
+         * 피커에서 탭할 때마다(`startActivityFromRecents` → base intent 재실행) `onCreate` 가
+         * 이 extra 를 읽고 즉시 finish() 되어 분할 쌍이 성립하지 않는 영구 실패 루프가 된다
+         * ([ArrangerAccessibilityService.performDismissSplit] 의 `hasPanelTask()` 사전 확인이
+         * 이를 막는다). 향후 추가될 **패널 카드 소환 인텐트(`ensurePanelCard` 등)는 extras
+         * 무탑재가 계약**이다 — 이 extra 를 실어 보내면 안 된다.
          */
         const val EXTRA_FINISH_PANEL = "dev.dj.foldwindow.EXTRA_FINISH_PANEL"
 

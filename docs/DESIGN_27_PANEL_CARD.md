@@ -129,8 +129,8 @@ G1 이 "finish 로도 해소되고 카드는 남는다" 를 직접 실증했다.
 
 | 순위 | 수단 | 근거 / 주의 |
 |---|---|---|
-| **B0** | `ActivityManager.addAppTask()` | Q5 — 액티비티 미시작, 포그라운드 무접촉. `NEW_DOCUMENT + RETAIN_IN_RECENTS` 필수(후자가 Q1-함정·autoRemove 를 상쇄). 반환 -1 시 B1 로 강등 |
-| **B1** | `ActivityOptions.makeTaskLaunchBehind()` | Q3 — `onResume` 미호출이라 자가 가드 구조적 무발화. NEW_DOCUMENT 가 `autoRemoveRecents=true` 를 유발하므로 `RETAIN_IN_RECENTS` 병기 검토 |
+| ~~**B0**~~ | ~~`ActivityManager.addAppTask()`~~ | **[구현 시 배제 확정 — 컴파일 판정]** Q5 의 능력 서술("액티비티 없이 recents 항목 생성")은 맞으나 **시그니처 1번 인자가 `Activity` 인스턴스**다. 호출부는 `AccessibilityService`(Activity 아님)이고, **소환이 필요한 상황은 정의상 `PanelActivity.instance` 가 null** 이라 빌려올 Activity 도 없다 — 구조적 불가. 실제 작성 후 `:app:compileDebugKotlin` 결과: `Argument type mismatch: actual type is ArrangerAccessibilityService, but 'android.app.Activity' was expected`. 리플렉션/hidden API 우회는 유지비용 원칙상 기각. **프로브 G2 대상에서 제외** |
+| **B1** *(채택·구현됨)* | `ActivityOptions.makeTaskLaunchBehind()` | Q3 — `onResume` 미호출이라 자가 가드 구조적 무발화. NEW_DOCUMENT 가 `autoRemoveRecents=true` 를 유발하므로 **`RETAIN_IN_RECENTS` 병기 확정**. 최종 플래그 = `NEW_TASK \| NEW_DOCUMENT \| RETAIN_IN_RECENTS`, extras 무탑재(§4 계약). 출현 폴링 150ms/2s |
 | **B2** | 일반 실행 + `EXTRA_PRELAUNCH_CARD` **1회성 소비 플래그** + 즉시 `moveTaskToBack(true)` | Q4 + 18차 실측(런치 직후 HOME → 가드 미발화·카드 생성 확인). 순간 전체화면 깜빡임 비용 |
 | **B3** | 피커 `all_apps_button` / `search_button` 경유 | §2.1 — 로케일 무관 셀렉터는 확보됐으나 1페이지 부재·scrollable 미노출. **최후 폴백** |
 
@@ -195,7 +195,7 @@ G1·G3 는 18차에 **통과**. 아래만 남는다.
 
 | # | 확인 | 통과 기준 |
 |---|---|---|
-| G2 | B0 `addAppTask()` One UI 8 수용 | 반환값 ≥0 ∧ 포그라운드 유지 ∧ 피커에 「FW Panel」 출현 ∧ 탭 시 분할 페인 낙착. 실패 시 B1→B2 강등 |
+| G2 | ~~B0~~ → **B1 `makeTaskLaunchBehind()`** One UI 8 수용 (B0 는 컴파일 판정으로 배제, §3.2) | `panel-card: summoned(mode=launch-behind)` 로그 ∧ 포그라운드 유지(깜빡임 0) ∧ 피커에 「FW Panel」 출현 ∧ 탭 시 분할 페인 낙착. 실패 시 B2(`moveTaskToBack`)로 강등 — v1 미구현이라 설계 복귀 필요 |
 | G4 | 결함 재현 시나리오 E2E | 커버 자동 해제로 카드 0 → 즉시 배치 → **3연속 done** |
 | G5 | prune × 소환 무자충 | `pruneExtraPanelTasks: 보존 1` 로그 ∧ 카드 생존 ∧ step3 성공 |
 | G6 | 재설치 스테일 회귀 | 패널 태스크 생성 → 재설치 → 배치 1회 성공 (G3 로 premise 는 이미 반증됐으므로 확인 성격) |

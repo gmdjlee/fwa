@@ -2,6 +2,7 @@ package dev.dj.foldwindow.service
 
 import android.accessibilityservice.AccessibilityService
 import android.app.ActivityManager
+import android.app.ActivityOptions
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -34,6 +35,8 @@ import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
 import dev.dj.foldwindow.domain.MeasurementConsensus
 import dev.dj.foldwindow.domain.PaneGeometry
+import dev.dj.foldwindow.domain.PanelTaskPolicy
+import dev.dj.foldwindow.domain.PanelTaskSnapshot
 import dev.dj.foldwindow.domain.Placement
 import dev.dj.foldwindow.domain.PopupPlanner
 import dev.dj.foldwindow.domain.ResidualBars
@@ -164,6 +167,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private var sessionPlacementSource: String = "FALLBACK"
     private var plan: SplitPlan? = null
     private var resolvedAspect: ResolvedAspect? = null
+
+    /**
+     * [#27/B, DESIGN_27 §3.5] [ensurePanelCard] 가 남긴 마지막 소환 결과 로그 문자열
+     * (`panel-card: already-present|summoned(mode=…)|summon-failed(reason=…)|lever-off`).
+     * `reportTerminal` 이 `ENTRY_STEP_FAILED` 토스트에 이 값을 병기해 사용자에게 "패널 카드가
+     * 없어서 실패했을 수 있다"는 사유를 드러낸다. cleanupSession() 이 세션마다 리셋한다.
+     */
+    private var lastPanelCardOutcome: String? = null
 
     // ── DESIGN_12 측정 합치 게이트 세션 필드 (cleanupSession() 이 초기값으로 리셋) ──
     /** confirm 합치 게이트의 비교 대상(진입 전 행축 pre-measure 결과) */
@@ -399,10 +410,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
             val panel = PanelActivity.instance
             if (panel != null) {
-                panel.finishAndRemoveTask()
-            } else {
+                // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 —
+                // finish 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
+                panel.finish()
+            } else if (hasPanelTask()) {
                 // 프로세스는 살아 있는데 액티비티 인스턴스만 없는 희귀 경로 폴백 — 태스크를 다시
-                // 전면으로 가져와 onCreate/onNewIntent 에서 즉시 finish 시킨다.
+                // 전면으로 가져와 onCreate/onNewIntent 에서 즉시 finish 시킨다. [#28] 이 인텐트는
+                // FLAG_ACTIVITY_NEW_TASK 를 포함하므로, 우리 패널 태스크가 실제로 존재할 때만
+                // 태워야 한다 — 태스크가 없으면 이 인텐트가 새 태스크를 만들고 그 base intent 에
+                // EXTRA_FINISH_PANEL 이 영구히 박혀 이후 step3 소환 시마다 즉시 finish 되는 결함이
+                // 된다(PanelActivity.EXTRA_FINISH_PANEL KDoc 계약 참고).
                 Log.w(TAG, "dismissSplit: PanelActivity.instance null — 인텐트 폴백 경로 사용")
                 startActivity(
                     Intent(this, PanelActivity::class.java).apply {
@@ -414,6 +431,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
                         putExtra(PanelActivity.EXTRA_FINISH_PANEL, true)
                     },
                 )
+            } else {
+                // [#28] 패널 태스크 자체가 없다 = 해제할 우리 분할이 없다는 뜻 — 없는 것을
+                // 해제하려고 새 태스크를 만들면 그 부산물(base intent 오염)이 영구 결함이 된다.
+                // 폴백을 생략하고 실패를 명시적으로 드러낸다(조용한 실패 금지, CLAUDE.md 규칙 5).
+                Log.w(
+                    TAG,
+                    "dismissSplit: PanelActivity.instance null ∧ 패널 태스크 부재 — " +
+                        "인텐트 폴백 생략(#28 base intent 오염 방지)",
+                )
+                toast("해제할 FoldWindow 패널을 찾지 못했습니다")
+                // 해제 액션 자체를 아무것도 태우지 않았으므로 아래 settle 폴링은 반드시 타임아웃
+                // 될 뿐 아니라 위 토스트와 중복·혼란만 준다 — 여기서 실패를 확정하고 return 한다.
+                // try/finally 안이므로 버블 재표시는 finally 에서 정상 실행된다.
+                return
             }
 
             val settled = withTimeoutOrNull(DISMISS_POLL_TIMEOUT_MS) {
@@ -897,8 +928,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
 
         Log.i(TAG, "cover auto-dismiss fired")
-        runCatching { panel.finishAndRemoveTask() }
-            .onFailure { Log.w(TAG, "cover auto-dismiss: finishAndRemoveTask 실패", it) }
+        // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 — finish
+        // 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
+        runCatching { panel.finish() }
+            .onFailure { Log.w(TAG, "cover auto-dismiss: finish 실패", it) }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -926,13 +959,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
             packageManager.getApplicationLabel(appInfo).toString()
         }.getOrNull()
 
-        // [측정 2026-07-25] 잔존 FW Panel 태스크(직전 세션이 프로세스 강제 종료로 자가 가드를
-        // 못 돌린 경우)가 분할 진입 피커의 "최근 앱" 섹션에 노출되면, SplitEntry 셀렉터가 그
-        // 죽은 태스크 카드를 탭 → 재개 즉시 전체화면 자가 가드 종료 → 분할 쌍 미성립 →
-        // 3회 재시도 소진 → Failed(ENTRY_STEP_FAILED) 로 귀결됨을 실기기에서 확인했다.
-        // 진입 단계가 시작되기 전, target 확정 직후 동기적으로 청소해 피커에 죽은 카드가
-        // 뜨지 않게 한다 (조용한 실패 금지: 청소 개수를 로그로 남긴다).
-        purgeStalePanelTasks()
+        // [#27, 18차 G3 로 premise 반증] 예전 주석은 "잔존 카드 탭 = 전체화면 재사용으로 분할
+        // 파괴" 를 전제했으나, 18차 실기기 프로브(G3)가 죽은 카드(Activities=[])를 탭해도
+        // 동일 taskId 로 재사용되며 stage=side/bottom 정상 낙착함을 실증해 그 전제를 반증했다
+        // (2026-07-25 원 실측은 launchMode=singleTask 시절 + 버블 숨김 도입 이전이라 이미 다른
+        // 수정으로 해소된 상태였다). 이 카드는 오히려 SplitEntry step3 의 소환원이라 반드시
+        // 보존해야 한다 — 그럼에도 패널 태스크가 여러 개로 쌓이는 것 자체는 무의미하므로,
+        // target 확정 직후 동기적으로 MRU 1개만 남기고 축소한다 (조용한 실패 금지: 보존/제거
+        // 개수를 로그로 남긴다).
+        pruneExtraPanelTasks()
 
         // [실기기 확인, 2026-07-25] target 확정 직후 리사이즈 모드를 판정해 진입 레시피를 고른다.
         // null(판정 불가 — 리플렉션 실패 등)은 안전하게 DRAG 로 폴백한다 (조용한 실패 금지: 로그로 드러냄).
@@ -1057,32 +1092,166 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 (config?.defaults?.closedLoopCorrection ?: true),
         )
 
+        // [#27/B, DESIGN_27 §3.2] 상태 머신(dispatch Start) 진입 **직전** — beginSession 은
+        // 구조적으로 SplitEntry step1(분할-선택 진입) 보다 앞이므로, 여기서 소환해도 "분할-선택
+        // 진입 후 소환 금지" 제약을 위반할 수 없다(진입 자체가 아직 시작되지 않았다).
+        ensurePanelCard(config)
+
         dispatch(ArrangeEvent.Start(SystemClock.uptimeMillis(), computedPlan.dividerCenterY))
         startTickLoop()
     }
 
     /**
-     * [측정 2026-07-25] 앱 재설치 등으로 프로세스가 강제 종료되면 [PanelActivity]의 자가 가드
-     * (onResume/onMultiWindowModeChanged 의 finishAndRemoveTask)가 실행될 기회를 얻지 못해
-     * 태스크 레코드만 잔존한다. 이 잔존 카드가 분할 진입 피커의 "최근 앱" 섹션에 뜨면
-     * SplitEntry 의 피커 셀렉터가 그 죽은 태스크를 탭해 재개 → 즉시 전체화면 감지로 자가 가드가
-     * 종료 → 분할 쌍이 성립하지 못해 ENTRY_STEP_FAILED 로 귀결됨을 실기기 로그+스크린샷으로
-     * 확인했다. `appTasks` 는 자기 앱(패키지) 소유 태스크만 반환하므로 다른 앱을 건드릴 위험은
-     * 없지만, 그중에서도 [PanelActivity] 컴포넌트만 선별해 제거한다 (서비스 자체 태스크나
-     * 다른 액티비티 태스크를 오제거하지 않도록).
+     * [#27/A2, 18차 G1·G3] 구 `purgeStalePanelTasks` 의 개명·범위 축소. 옛 KDoc 전제("잔존 카드를
+     * 탭하면 전체화면 재사용으로 분할이 파괴된다")는 18차 G3 실기기 프로브로 **반증**됐다 — 죽은
+     * (Activities=[]) 패널 카드를 분할 피커에서 탭해도 동일 taskId 로 재사용되며 stage=side/bottom
+     * 정상 낙착한다(전체화면 강탈 0). 그 원 실측(2026-07-25)은 launchMode=singleTask 시절 +
+     * 버블 숨김(CLAUDE.md 함정 #22) 도입 이전이라 이미 다른 수정으로 해소된 상태였다.
+     *
+     * 그 결과 이 함수의 목적은 "잔존 카드 청소" 가 아니라 **다중 패널 태스크 누적 억제뿐**이다.
+     * MRU(가장 최근 활성) 패널 태스크 1개는 SplitEntry step3(분할 파트너 피커 탭)의 소환원이므로
+     * 반드시 보존한다 — 판정은 순수 도메인 [PanelTaskPolicy.pruneTargets] 에 위임한다(CLAUDE.md
+     * 철칙: domain/ 에 android.* import 금지, 대응 단위 테스트는 domain 쪽에서 별도 작성됨).
+     *
+     * `lastActiveMs` 는 공개 API 로 조회할 수단이 없어 전부 0으로 넘긴다 — `ActivityManager
+     * .appTasks` 가 MRU-first 순서로 태스크를 넘긴다는 계약에 타이브레이크(= 입력 순서상 더 앞)를
+     * 위임한다([PanelTaskPolicy.pruneTargets] KDoc 참고).
      */
-    private fun purgeStalePanelTasks() {
+    private fun pruneExtraPanelTasks() {
         val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-        var purged = 0
-        runCatching {
-            am.appTasks.forEach { task ->
-                val component = runCatching { task.taskInfo.baseIntent.component }.getOrNull()
-                if (component?.className == PanelActivity::class.java.name) {
-                    runCatching { task.finishAndRemoveTask() }.onSuccess { purged++ }
-                }
-            }
+        val tasks = runCatching { am.appTasks }.getOrNull() ?: return
+        val panelClassName = PanelActivity::class.java.name
+        val snapshots = panelTaskSnapshots(tasks)
+        val targets = PanelTaskPolicy.pruneTargets(snapshots, panelClassName).toSet()
+        if (targets.isEmpty()) return
+        var removed = 0
+        tasks.forEach { task ->
+            val id = runCatching { task.taskInfo.taskId }.getOrNull() ?: return@forEach
+            if (id in targets) runCatching { task.finishAndRemoveTask() }.onSuccess { removed++ }
         }
-        if (purged > 0) Log.i(TAG, "purgeStalePanelTasks: 잔존 패널 태스크 $purged 개 제거")
+        if (removed > 0) Log.i(TAG, "pruneExtraPanelTasks: 보존 1 / 제거 $removed")
+    }
+
+    /**
+     * `ActivityManager.appTasks` 를 순수 도메인 스냅샷([PanelTaskSnapshot])으로 변환한다.
+     * [#28] [pruneExtraPanelTasks] 와 [hasPanelTask] 가 공유하는 매핑 헬퍼 — 향후 축 B
+     * 소환(`ensurePanelCard`)도 이 헬퍼를 재사용할 예정이다.
+     *
+     * [rawTasks] 를 주면 그 목록을 그대로 매핑한다([pruneExtraPanelTasks] 가 제거 실행에도 같은
+     * `AppTask` 목록이 필요해 이미 조회해 둔 것을 재사용 — 중복 `appTasks` 바인더 호출 방지).
+     * 생략하면 이 함수가 직접 `am.appTasks` 를 조회한다(원시 `AppTask` 목록이 필요 없는
+     * [hasPanelTask] 등 호출부용). 조회 실패는 빈 목록.
+     */
+    private fun panelTaskSnapshots(
+        rawTasks: List<ActivityManager.AppTask>? = null,
+    ): List<PanelTaskSnapshot> {
+        val tasks = rawTasks ?: run {
+            val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            runCatching { am.appTasks }.getOrNull() ?: return emptyList()
+        }
+        return tasks.map { task ->
+            val info = runCatching { task.taskInfo }.getOrNull()
+            PanelTaskSnapshot(
+                taskId = info?.taskId ?: -1,
+                componentClassName = runCatching { info?.baseIntent?.component?.className }.getOrNull(),
+                // 공개 API 로 lastActiveTime 조회 불가 — appTasks 목록 순서(MRU-first)에
+                // 타이브레이크를 위임한다.
+                lastActiveMs = 0L,
+            )
+        }
+    }
+
+    /**
+     * [#28] 우리 패널 태스크(= SplitEntry step3 의 소환원)가 최소 1개 존재하는지. 이 판정은
+     * [performDismissSplit] 의 인텐트 폴백 진입 여부를 가른다 — 패널 태스크가 없다 = 해제할
+     * 분할이 없다는 뜻이므로, 없는 것을 해제하려고 `FLAG_ACTIVITY_NEW_TASK` 인텐트로 새 태스크를
+     * 만들면 base intent 오염(#28)이 발생한다.
+     */
+    private fun hasPanelTask(): Boolean =
+        !PanelTaskPolicy.needsSummon(panelTaskSnapshots(), PanelActivity::class.java.name)
+
+    /**
+     * [#27/B, DESIGN_27 §3.2] step3(분할 파트너 피커 탭)의 전제 — 「FW Panel」 최근 태스크 카드가
+     * recents 에 존재해야 한다 — 은 축 A(파괴 제거)로도 채워지지 않는 공백이 남는다: 앱 재설치,
+     * 프로세스 강제 종료, 사용자가 recents 에서 손으로 스와이프, 시스템 태스크 트리밍
+     * (`isTrimmable=true` 실측). 이 함수는 그 공백에 대한 **안전망**이다 — 주 수정이 아니다.
+     *
+     * [beginSession] 말미, `dispatch(ArrangeEvent.Start)` **직전**에서만 호출된다(상태 머신
+     * **밖**의 사전 조건 폴링, P4-4 [startArrangeWhenForeground] 와 동일 패턴 — 머신 무변경).
+     * **진입 시점 제약**: 소환은 분할-선택 진입(SplitEntry step1) **전**에만 허용되는데,
+     * [beginSession] 은 정의상 step1 보다 앞이므로 이 제약을 구조적으로 위반할 수 없다.
+     *
+     * **B0 배제 근거(Advisor 컴파일 판정)**: 설계 1순위였던 `ActivityManager.addAppTask()`
+     * (액티비티 미시작, 포그라운드 무접촉)를 이 호출부에서 실제로 작성해 컴파일한 결과
+     * "Argument type mismatch: actual type is ArrangerAccessibilityService, but Activity was
+     * expected" 로 실패했다 — 1번 인자가 `Activity` 인스턴스를 요구하는데 호출부는
+     * `AccessibilityService`(Activity 아님)이고, 소환이 필요한 상황은 정의상 빌려올 수 있는
+     * `PanelActivity.instance` 도 없다(리플렉션/hidden API 로 우회하지 않는다). 따라서 B1
+     * (`ActivityOptions.makeTaskLaunchBehind()`) 을 1순위로 구현한다 — Q3(AOSP 확정):
+     * `onResume` 미호출(`mDoResume=false`) → STOPPED 정착 → 전체화면 자가 가드
+     * ([PanelActivity.scheduleFullscreenCheck]) 구조적 무발화. `FLAG_ACTIVITY_NEW_DOCUMENT` 는
+     * `autoRemoveRecents=true` 를 유발하므로 `FLAG_ACTIVITY_RETAIN_IN_RECENTS` 를 반드시 병기한다.
+     *
+     * **[G7 프로브 대상]** 소환된 패널은 `onCreate` 는 돌고 `onResume` 은 돌지 않으므로
+     * [PanelActivity.instance] 가 non-null 이 된다. 그 결과 커버 자동 해제
+     * ([evaluateCoverAutoDismiss])가 이 백그라운드 패널에 `finish()` 를 걸 수 있고, AOSP
+     * `shouldAutoRemoveFromRecents()`(`!hasChild() && !getHasBeenVisible()` 이면 강제 제거)
+     * 때문에 한 번도 보인 적 없는 소환 카드는 finish 시 카드가 사라질 수 있다. v1 은 이 경로에
+     * 별도 가드를 넣지 않는다 — 다음 세션이 다시 소환하므로 자기 치유된다.
+     *
+     * 예외는 전부 `runCatching` 으로 흡수한다: 소환 실패가 배치 세션 자체를 죽이면 안 된다
+     * (조용한 실패 금지 — 대신 [lastPanelCardOutcome]/로그로 드러내고 세션은 계속 진행한다).
+     */
+    private suspend fun ensurePanelCard(config: WindowProfilesConfig?) {
+        val leverOn = config?.defaults?.panelCardPreflight ?: true
+        if (!leverOn) {
+            setPanelCardOutcome("panel-card: lever-off")
+            return
+        }
+        if (hasPanelTask()) {
+            setPanelCardOutcome("panel-card: already-present")
+            return
+        }
+
+        val started = runCatching {
+            val intent = Intent(this, PanelActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NEW_DOCUMENT or
+                        Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS,
+                )
+                // [#28 계약, PanelActivity.EXTRA_FINISH_PANEL KDoc] 소환 인텐트는 extras
+                // 무탑재가 계약이다 — 여기 실으면 base intent 오염으로 영구 실패 루프가 된다.
+            }
+            startActivity(intent, ActivityOptions.makeTaskLaunchBehind().toBundle())
+        }
+        started.onFailure { Log.w(TAG, "ensurePanelCard: startActivity 예외", it) }
+        if (started.isFailure) {
+            setPanelCardOutcome("panel-card: summon-failed(reason=start-exception)")
+            return
+        }
+
+        // ADR-2 준수: 고정 지연이 아니라 태스크 카드 출현 자체를 조건으로 폴링한다.
+        val appeared = withTimeoutOrNull(PANEL_CARD_SUMMON_TIMEOUT_MS) {
+            while (!hasPanelTask()) {
+                delay(PANEL_CARD_POLL_INTERVAL_MS)
+            }
+            true
+        } ?: false
+
+        setPanelCardOutcome(
+            if (appeared) {
+                "panel-card: summoned(mode=launch-behind)"
+            } else {
+                "panel-card: summon-failed(reason=timeout)"
+            },
+        )
+    }
+
+    /** [ensurePanelCard] 결과를 세션 필드에 남기고 동시에 로그로 드러낸다(조용한 실패 금지). */
+    private fun setPanelCardOutcome(outcome: String) {
+        lastPanelCardOutcome = outcome
+        Log.i(TAG, outcome)
     }
 
     private suspend fun loadProfilesConfig(): WindowProfilesConfig? {
@@ -1233,6 +1402,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
         sessionCachedAspect = null
         consensusAdoptedAspect = null
         cacheAspectEnabled = true
+        // [#27/B] reportTerminal 이 이번 세션 값을 이미 읽었으므로 다음 세션을 위해 리셋한다.
+        lastPanelCardOutcome = null
         // 세션 시작 시 숨긴 버블을 복원한다 (beginSession 의 setBubbleHiddenForArrange(true) 짝).
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
     }
@@ -1701,7 +1872,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
             is ArrangeState.Failed -> {
                 Log.i(TAG, "arrange failed: reason=${state.reason}")
-                toast("배치 실패: ${failureReasonKo(state.reason)}")
+                // [#27/B, DESIGN_27 §3.5] step3(분할 파트너 피커 탭) 실패는 카드 부재가 원인일 수
+                // 있다 — ensurePanelCard 가 소환에 실패했었다면 그 사유를 토스트에 병기해 사용자가
+                // "패널 카드가 없어서" 실패했을 가능성을 알 수 있게 한다. FailureReason enum 은
+                // 확장하지 않는다(머신 무변경) — 병기는 이 토스트 문구 레벨에서만 이뤄진다.
+                val panelCardNote = lastPanelCardOutcome
+                    ?.takeIf { state.reason == FailureReason.ENTRY_STEP_FAILED && it.startsWith("panel-card: summon-failed") }
+                    ?.let { " · 패널 카드 소환 실패" }
+                    ?: ""
+                toast("배치 실패: ${failureReasonKo(state.reason)}$panelCardNote")
             }
 
             else -> Unit
@@ -1937,6 +2116,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         /** [P4-1] 팝업 창 bounds 검증 허용 오차(px). F3(DEVICE_FACTS)에서 resize 는 오차 0으로 실측됐으나, a11y bounds 보고 지연을 감안한 여유값. */
         private const val POPUP_BOUNDS_TOLERANCE_PX = 8
+
+        /** [#27/B] [ensurePanelCard] 태스크 출현 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
+        private const val PANEL_CARD_POLL_INTERVAL_MS = 150L
+
+        /**
+         * [#27/B] [ensurePanelCard] 최대 대기. `makeTaskLaunchBehind()` 완료(내부
+         * `handleLaunchTaskBehindCompleteLocked`)까지의 여유값 — 액티비티를 실제로 기동하지만
+         * onResume 은 없는 가벼운 경로라 [DISMISS_POLL_TIMEOUT_MS](3s)보다 타이트하게 잡는다.
+         */
+        private const val PANEL_CARD_SUMMON_TIMEOUT_MS = 2_000L
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.sec.android.app.launcher",
