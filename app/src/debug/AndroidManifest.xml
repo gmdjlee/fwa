@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+
+        <activity
+            android:name=".probe.ProbeActivity"
+            android:exported="true"
+            android:label="@string/probe_title"
+            android:resizeableActivity="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".probe.ProbeAccessibilityService"
+            android:exported="true"
+            android:label="@string/probe_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/probe_accessibility_config" />
+        </service>
+
+        <!-- Phase 0 진단 전용: adb 브로드캐스트로 프로브 트리거.
+             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다.
+             디버그 진단 도구이므로 허용한다. Phase 0 이후 제거 예정.
+             [S1] 이 선언은 debug 소스셋 전용이다 — exported 는 adb `am broadcast` 트리거의
+             요건이며, 릴리스 APK 에는 이 선언 자체가 존재하지 않는다(main 매니페스트에서
+             완전히 빠짐). tools:ignore 는 그 사실을 lint 에 알리는 것일 뿐 위험을 숨기는
+             회피가 아니다 — 이것이 S1 해결책의 본질이다. -->
+        <receiver
+            android:name=".probe.ProbeTriggerReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="dev.dj.foldwindow.probe.RUN_PROBE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Phase 2 디버그 트리거. Phase 3에서 플로팅 버블(FloatingLauncherService)이 대체한다.
+             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다
+             (probe.ProbeTriggerReceiver 와 동일 근거).
+             [S1] 이 선언은 debug 소스셋 전용이다 — exported 는 adb `am broadcast` 트리거의
+             요건이며, 릴리스 APK 에는 이 선언 자체가 존재하지 않는다(main 매니페스트에서
+             완전히 빠짐). tools:ignore 는 그 사실을 lint 에 알리는 것일 뿐 위험을 숨기는
+             회피가 아니다 — 이것이 S1 해결책의 본질이다. -->
+        <receiver
+            android:name=".service.ArrangeTriggerReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="dev.dj.foldwindow.ARRANGE" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>

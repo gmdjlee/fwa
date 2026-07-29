@@ -901,3 +901,33 @@ purge 가 세션 내에서 카드를 지운 타이밍, 스크롤/레이아웃 �
 레버 실험용 JSON 은 원복 완료(`config/window_profiles.json` 무변경). 기기에는 **레버 off 빌드가
 설치된 상태**이며 DataStore 는 `pm clear` 로 초기화됐다(버블 설정·placement 기록 소실). 회전 free.
 분할 미활성. 패널 카드 1개(정상 형태).
+
+---
+
+## 개선 웨이브 W1 (보안 차단) — 실기기 재검증 대기 [미검증]
+
+**2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W1.
+정적 DoD 는 전부 통과했다(테스트 286 · assembleDebug · lintDebug 신규 0 · assembleRelease ·
+릴리스 병합 매니페스트에서 4컴포넌트 + FileProvider **0건**).
+
+| # | 항목 | 확인해야 할 것 | 상태 |
+|---|---|---|---|
+| W1-1 | **S1 debug 소스셋 분리** | 디버그 빌드에서 `adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.service.ArrangeTriggerReceiver --es placement top` 이 **종전과 동일하게** 배치를 트리거하는가 (선언이 debug 매니페스트로 이동했으므로 병합 결과 확인이 목적) | [미검증] |
+| W1-2 | **S1 프로브 생존** | 디버그 빌드에서 접근성 설정에 프로브 서비스가 그대로 보이고 `ProbeActivity` 런처 아이콘이 있는가 (F2 2단계 측정에 계속 필요) | [미검증] |
+| W1-3 | **S4 토큰 정상 경로** | 버블 롱프레스 메뉴 → 「분할 해제」 1회. 1차 경로는 `PanelActivity.instance.finish()` 라 **토큰을 쓰지 않는다** — 회귀 없음이 기대값 | [미검증] |
+| W1-4 | **S4 토큰 폴백 경로** | `instance==null ∧ hasPanelTask()` 인 희귀 경로에서 토큰이 실제로 소비되어 finish 되는가. **PROGRESS.md 「남은 작업」 B-1/B-2 와 동일 조건**이므로 같은 세션에서 함께 유도한다 | [미검증] |
+
+**정적으로 확정된 사실 (실기기 없이 검증 완료):**
+- 릴리스 병합 매니페스트(`packaged_manifests/release/`)에 `ArrangeTriggerReceiver` ·
+  `ProbeTriggerReceiver` · `ProbeActivity` · `ProbeAccessibilityService` · `FileProvider` **0건**.
+  디버그 병합 매니페스트에는 5종 전부 존재
+- **AGP 매니페스트 머저는 XML 주석을 병합 결과에 그대로 보존한다** — main 매니페스트 주석에
+  남아 있던 `probe.ProbeActivity` / `probe.ProbeTriggerReceiver` 리터럴이 릴리스 매니페스트까지
+  따라 들어갔다. 그래서 해당 주석 2곳의 클래스명 리터럴을 debug 매니페스트 경로 표기로 바꿨다
+  (정보 손실 없음 — 오히려 "S1 이후 debug 전용" 이라는 갱신된 사실을 반영)
+- **lint `ForegroundServiceType` 오탐** — debug 변형(매니페스트 2개 병합)에서만 발생하고
+  `lintRelease`(매니페스트 1개)는 동일 코드로 통과한다는 **대조 실험으로 오탐 확정**.
+  병합 debug 매니페스트에 `FloatingLauncherService android:foregroundServiceType="specialUse"` 가
+  정상 존재함을 육안 확인. `FloatingLauncherService.startForegroundCompat()` 에 `@SuppressLint` +
+  근거 주석으로 억제 (baseline 미사용 — 억제 근거를 코드 옆에 남기는 쪽을 택함)
+

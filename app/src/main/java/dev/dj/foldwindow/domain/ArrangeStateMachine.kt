@@ -160,7 +160,17 @@ object ArrangeStateMachine {
         config: ArrangeConfig = ArrangeConfig(),
     ): Transition {
         // 취소는 모든 비터미널 상태에서 최우선으로 처리한다.
-        if (event is ArrangeEvent.Cancel && state !is ArrangeState.Done && state !is ArrangeState.Failed) {
+        // [F8] Idle 은 예외 — "Start 외 모든 이벤트 무시"가 Idle 의 계약이다. 시작하지도 않은
+        // 세션이 Cancel 한 번에 Failed(CANCELLED) 로 떨어지면, dispatch 가 이를 터미널 상태로
+        // 보고 reportTerminal 을 호출해 "배치 실패: 사용자 취소" 토스트가 뜬다. 서비스의
+        // cancelArrange() 가 Idle 상태를 먼저 걸러내긴 하지만, 그 가드는 호출부의 재량이고
+        // 순수 리듀서 자체가 이 불변식을 지켜야 한다(조용한 실패 금지와 대칭 — 여기서는
+        // "일어나지 않은 실패를 만들어내지 않기"가 목표).
+        if (event is ArrangeEvent.Cancel &&
+            state !is ArrangeState.Done &&
+            state !is ArrangeState.Failed &&
+            state !is ArrangeState.Idle
+        ) {
             return Transition(ArrangeState.Failed(FailureReason.CANCELLED), emptyList())
         }
 

@@ -27,42 +27,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FoldWindow">
 
-        <activity
-            android:name=".probe.ProbeActivity"
-            android:exported="true"
-            android:label="@string/probe_title"
-            android:resizeableActivity="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|keyboardHidden|uiMode">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name=".probe.ProbeAccessibilityService"
-            android:exported="true"
-            android:label="@string/probe_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/probe_accessibility_config" />
-        </service>
-
-        <!-- Phase 0 진단 전용: adb 브로드캐스트로 프로브 트리거.
-             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다.
-             디버그 진단 도구이므로 허용한다. Phase 0 이후 제거 예정. -->
-        <receiver
-            android:name=".probe.ProbeTriggerReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="dev.dj.foldwindow.probe.RUN_PROBE" />
-            </intent-filter>
-        </receiver>
-
         <!-- P2-5 / ADR-3: 파트너(비영상) 창. MAIN/LAUNCHER 필터가 필요한 이유: One UI 분할 화면
              파트너 피커(SplitEntry step4 폴백, "FromRecentActivity")가 런처에 노출된 앱만 후보로
              나열한다. 앱 서랍에 아이콘이 노출되는 부작용은 Phase 2에서는 수용하고, Phase 3에서
@@ -96,17 +60,6 @@
                 android:resource="@xml/arranger_accessibility_config" />
         </service>
 
-        <!-- Phase 2 디버그 트리거. Phase 3에서 플로팅 버블(FloatingLauncherService)이 대체한다.
-             android:exported="true" 는 adb `am broadcast` 로 외부 트리거하기 위함이다
-             (probe.ProbeTriggerReceiver 와 동일 근거). -->
-        <receiver
-            android:name=".service.ArrangeTriggerReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="dev.dj.foldwindow.ARRANGE" />
-            </intent-filter>
-        </receiver>
-
         <!-- P3-1: 사용자용 플로팅 버블 런처. 원터치로 ArrangerAccessibilityService.startArrange 를 호출한다.
              foregroundServiceType="specialUse" — Android 14+ (API 34) 타겟 요건. PROPERTY_SPECIAL_USE_FGS_SUBTYPE
              로 용도를 명시한다 (오버레이 버블 원터치 배치 트리거). -->
@@ -131,7 +84,8 @@
         </receiver>
 
         <!-- P3-4: 앱의 실제 진입점(온보딩). 권한 유도 + 버블 시작/중지 + 사용 안내.
-             probe.ProbeActivity 의 LAUNCHER 필터는 Phase 0 도구로 그대로 유지한다(추후 제거 예정). -->
+             Phase 0 진단용 프로브 액티비티(app/src/debug/AndroidManifest.xml, [S1] 이후 debug
+             소스셋 전용)의 LAUNCHER 필터는 디버그 빌드에서만 그대로 유지한다(추후 제거 예정). -->
         <activity
             android:name=".ui.OnboardingActivity"
             android:exported="true"
@@ -144,9 +98,10 @@
         </activity>
 
         <!-- P4-4: 홈 화면 고정 바로가기(pinned shortcut) 트램펄린. 런처가 쏘는 바로가기 인텐트
-             수신용으로 exported="true" 가 필요하다(probe.ProbeTriggerReceiver 등 기존 exported
-             항목과 동일 근거). noHistory/excludeFromRecents 로 백스택·최근 앱 목록에 흔적을 남기지
-             않는다 — 대상 앱을 실행하고 배치를 트리거한 뒤 즉시 finish 되는 순수 트램펄린이다. -->
+             수신용으로 exported="true" 가 필요하다(디버그 전용 프로브 트리거 리시버, app/src/debug/
+             AndroidManifest.xml 등 기존 exported 항목과 동일 근거). noHistory/excludeFromRecents 로
+             백스택·최근 앱 목록에 흔적을 남기지 않는다 — 대상 앱을 실행하고 배치를 트리거한 뒤 즉시
+             finish 되는 순수 트램펄린이다. -->
         <activity
             android:name=".ui.PairShortcutActivity"
             android:exported="true"
@@ -154,16 +109,6 @@
             android:noHistory="true"
             android:taskAffinity="dev.dj.foldwindow.pairshortcut"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
 
         <!-- P4-1: Shizuku 클라이언트 등록. Shizuku 앱/서비스가 이 provider 존재로 우리 앱을
              인식하고 권한 요청·UserService 바인드를 중개한다. -->

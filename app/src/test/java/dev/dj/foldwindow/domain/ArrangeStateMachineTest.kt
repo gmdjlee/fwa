@@ -305,6 +305,16 @@ class ArrangeStateMachineTest {
         assertEquals(ArrangeState.Failed(FailureReason.CANCELLED), t2.state)
     }
 
+    @Test
+    fun `cancel on idle state is ignored`() {
+        // [F8] Idle 은 "Start 외 모든 이벤트 무시"가 계약이다. 시작하지도 않은 세션이 Cancel
+        // 한 번에 Failed(CANCELLED) 로 떨어지면 dispatch 가 이를 터미널로 오인해 "배치 실패:
+        // 사용자 취소" 토스트를 띄우는 결함이 된다 — Idle 은 그대로 유지되고 effect 도 없어야 한다.
+        val t = reduce(ArrangeState.Idle, ArrangeEvent.Cancel(nowMs = 50))
+        assertEquals(ArrangeState.Idle, t.state)
+        assertTrue(t.effects.isEmpty())
+    }
+
     // ── 5단계 진입 레시피 (MENU, UNRESIZEABLE 전용) ─────────────
 
     @Test

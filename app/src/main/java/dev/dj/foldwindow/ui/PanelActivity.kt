@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 /**
  * P2-5 / ADR-3: 파트너(비영상) 창. 도메인 `PartnerMode`(Profiles.kt, JSON 스키마 소속)는 BLACK 으로
@@ -69,7 +70,7 @@ class PanelActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
-        if (intent.requestsFinish()) {
+        if (intent.consumesFinishRequest()) {
             // 결함 #24① 수정: dismissSplit() 이 이 액티비티를 finish 시키는 것이 분할 해제
             // 트리거다(아래 companion object KDoc의 실측 근거 참고). UI를 전혀 구성하지 않고
             // 즉시 종료해 깜빡임을 없앤다.
@@ -86,7 +87,7 @@ class PanelActivity : ComponentActivity() {
         // dismissSplit() 폴백 경로([ArrangerAccessibilityService.performDismissSplit] 참고):
         // instance 가 이미 null(액티비티 인스턴스는 죽었지만 프로세스는 살아 있는 희귀 경로)일 때
         // FLAG_ACTIVITY_SINGLE_TOP 으로 기존 태스크를 재사용하며 여기로 들어온다.
-        if (intent.requestsFinish()) {
+        if (intent.consumesFinishRequest()) {
             // [#27/A1, 18차 G1] removeTask 는 step3 소환원인 카드까지 지우는 초과 동작 —
             // finish 만으로 분할이 해소됨이 18차 G1 로 실증됐다.
             finish()
@@ -143,8 +144,9 @@ class PanelActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun Intent?.requestsFinish(): Boolean =
-        this?.getBooleanExtra(EXTRA_FINISH_PANEL, false) == true
+    /** ⚠ 부작용 있음 — 토큰을 **소비**한다(1회용). 같은 인텐트로 두 번 호출하면 두 번째는 항상 false. */
+    private fun Intent?.consumesFinishRequest(): Boolean =
+        consumeFinishToken(this?.getStringExtra(EXTRA_FINISH_TOKEN))
 
     companion object {
         private const val TAG = "FWPanelActivity"
@@ -160,17 +162,47 @@ class PanelActivity : ComponentActivity() {
          * 트리거했으나, removeTask 부분이 step3 소환원인 카드까지 지우는 초과 동작임이 밝혀져
          * finish() 로 격하했다 — 분할 해소 자체는 finish 만으로 충분함이 18차 G1 로 실증됐다.
          *
-         * **계약 [#28, AOSP 확정]**: 이 extra 는 **이미 존재하는 패널 태스크**를 향해서만 실을 수
-         * 있다. 태스크를 새로 만들 수 있는 인텐트(`FLAG_ACTIVITY_NEW_TASK` 등)에 실으면, 그
-         * 인텐트가 실제로 새 태스크를 만들 때 base intent 에 이 extra 가 그대로 보존된다(AOSP
-         * `Task#setIntent` 은 extras 를 유지). 그 결과 이후 그 태스크 카드를 최근 앱/분할 파트너
-         * 피커에서 탭할 때마다(`startActivityFromRecents` → base intent 재실행) `onCreate` 가
-         * 이 extra 를 읽고 즉시 finish() 되어 분할 쌍이 성립하지 않는 영구 실패 루프가 된다
-         * ([ArrangerAccessibilityService.performDismissSplit] 의 `hasPanelTask()` 사전 확인이
-         * 이를 막는다). **태스크를 새로 만들 수 있는 인텐트에는 이 extra 를 절대 실으면 안
-         * 된다** — 위 오염 경로가 그대로 재현된다.
+         * **[S4] boolean extra 를 1회용 토큰으로 교체한 이유**: 이 액티비티는 파트너 피커 노출을
+         * 위해 `exported="true"` + MAIN/LAUNCHER 여야 한다. 예전 `EXTRA_FINISH_PANEL: Boolean`
+         * 은 발신자 확인 없이 그대로 신뢰됐다 — 임의 앱이 이 extra 를 실어 우리 액티비티를 즉시
+         * finish 시키는 자체 DoS 를 유발할 수 있었다. `callingActivity` 는 `startActivityForResult`
+         * 전용이라 여기선 null 이고 `referrer` 도 Service 발 `startActivity` 에서는 신뢰할 수
+         * 없으므로(발신자 신원 검증 불가), 대신 **비밀값**으로 검증한다: 서비스가
+         * [issueFinishToken] 으로 1회용 토큰을 발급해 인텐트에 싣고, `onCreate`/`onNewIntent`
+         * 가 [consumeFinishToken] 으로 소비한다 — 불일치·부재는 전부 무시(finish 하지 않음).
+         * `PanelActivity` 와 `ArrangerAccessibilityService` 는 동일 프로세스이므로 static 필드로
+         * 충분하다: `dismissSplit()` 은 항상 서비스 인스턴스 위에서 호출되므로 프로세스 생존이
+         * 전제이고, 따라서 토큰 발급과 소비가 항상 같은 프로세스에서 일어난다(정상 경로 회귀 없음).
+         *
+         * **계약 [#28, AOSP 확정] — 토큰 도입으로 구조적으로 소멸한 결함 클래스**: 과거
+         * `EXTRA_FINISH_PANEL` 은 **이미 존재하는 패널 태스크**를 향해서만 실을 수 있었다.
+         * 태스크를 새로 만들 수 있는 인텐트(`FLAG_ACTIVITY_NEW_TASK` 등)에 실으면, 그 인텐트가
+         * 실제로 새 태스크를 만들 때 base intent 에 이 extra 가 그대로 보존되어(AOSP
+         * `Task#setIntent` 은 extras 를 유지) 이후 그 태스크 카드를 최근 앱/분할 파트너 피커에서
+         * 탭할 때마다(`startActivityFromRecents` → base intent 재실행) `onCreate` 가 즉시
+         * finish() 되어 분할 쌍이 성립하지 않는 영구 실패 루프가 됐다. 토큰 체계에서는 base
+         * intent 에 토큰 문자열이 박혀 있어도, 그 시점의 [finishToken] 이 이미 다른 값이거나
+         * null 이면 **불일치로 무시된다** — "영구 실패 루프" 라는 결함 클래스 자체가 구조적으로
+         * 소멸한다. **다만 이는 부수 효과일 뿐, [ArrangerAccessibilityService.performDismissSplit]
+         * 의 `hasPanelTask()` 사전 확인은 계속 유지한다** — 그쪽은 불필요한 태스크 생성을 막는
+         * 별개 목적이다(#28).
          */
-        const val EXTRA_FINISH_PANEL = "dev.dj.foldwindow.EXTRA_FINISH_PANEL"
+        const val EXTRA_FINISH_TOKEN = "dev.dj.foldwindow.EXTRA_FINISH_TOKEN"
+
+        @Volatile
+        private var finishToken: String? = null
+
+        /** 서비스가 finish 인텐트를 만들기 직전 1회 호출한다. 새로 발급하면 이전에 발급되고도
+         *  아직 소비되지 않은 토큰은 자동으로 무효화된다(항상 최신 토큰 1개만 유효). */
+        fun issueFinishToken(): String = UUID.randomUUID().toString().also { finishToken = it }
+
+        /** 일치 시 소비(1회용). 불일치·부재는 전부 false — 호출부는 이 경우 finish 하지 않는다. */
+        private fun consumeFinishToken(raw: String?): Boolean {
+            val cur = finishToken ?: return false
+            if (raw == null || raw != cur) return false
+            finishToken = null
+            return true
+        }
 
         /** ArrangerAccessibilityService.instance 와 동일한 패턴 — dismissSplit() 이 이 인스턴스를 직접 finish 시킨다. */
         var instance: PanelActivity? = null

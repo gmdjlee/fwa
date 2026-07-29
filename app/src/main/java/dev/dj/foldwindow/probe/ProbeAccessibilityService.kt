@@ -234,7 +234,10 @@ class ProbeAccessibilityService : AccessibilityService() {
                         } finally {
                             buffer.close()
                         }
-                        if (cont.isActive) cont.resume(bmp)
+                        // [F7] 콜백은 코루틴 취소와 경합할 수 있다 — cont 가 이미 취소됐는데 bmp 를
+                        // 그냥 버리면 전면 스크린샷(≈17MB) 1장이 GC 전까지 붙잡힌다. resume 이
+                        // 불가능하면 즉시 recycle 한다.
+                        if (cont.isActive) cont.resume(bmp) else bmp?.recycle()
                     }
 
                     override fun onFailure(errorCode: Int) {

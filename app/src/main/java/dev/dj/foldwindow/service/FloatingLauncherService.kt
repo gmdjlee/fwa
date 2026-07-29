@@ -3,6 +3,7 @@ package dev.dj.foldwindow.service
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -258,6 +259,15 @@ class FloatingLauncherService : Service() {
         manager.createNotificationChannel(channel)
     }
 
+    // [S1 부작용, 검증된 lint 오탐] `ForegroundServiceType` 검사기가 debug 변형(main+debug 매니페스트
+    // 병합)에서 이 서비스가 아닌 다른 매니페스트 파일의 <service> 선언(예: probe.ProbeAccessibilityService
+    // — foregroundServiceType 이 없는 게 정상인 AccessibilityService)을 이 startForeground() 호출과
+    // 잘못 연결해 "manifest 에 foregroundServiceType 없음" 오류를 낸다. 실제로는 main/AndroidManifest.xml
+    // 의 FloatingLauncherService 선언에 foregroundServiceType="specialUse" 가 있고, 병합된 매니페스트
+    // (app/build/intermediates/merged_manifests/debug/.../AndroidManifest.xml) 에서도 확인됨 — lintRelease
+    // (매니페스트 1개, debug 소스셋 없음)는 이 오류 없이 통과한다. ProbeAccessibilityService 를 다시
+    // main 으로 되돌리면 S1 자체가 무효화되므로(릴리스에서 소멸해야 함), 여기서 억제한다.
+    @SuppressLint("ForegroundServiceType")
     private fun startForegroundCompat() {
         val onboardingIntent = Intent(this, OnboardingActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

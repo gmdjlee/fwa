@@ -407,9 +407,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // 프로세스는 살아 있는데 액티비티 인스턴스만 없는 희귀 경로 폴백 — 태스크를 다시
                 // 전면으로 가져와 onCreate/onNewIntent 에서 즉시 finish 시킨다. [#28] 이 인텐트는
                 // FLAG_ACTIVITY_NEW_TASK 를 포함하므로, 우리 패널 태스크가 실제로 존재할 때만
-                // 태워야 한다 — 태스크가 없으면 이 인텐트가 새 태스크를 만들고 그 base intent 에
-                // EXTRA_FINISH_PANEL 이 영구히 박혀 이후 step3 소환 시마다 즉시 finish 되는 결함이
-                // 된다(PanelActivity.EXTRA_FINISH_PANEL KDoc 계약 참고).
+                // 태워야 한다. [S4] 과거에는 태스크가 없을 때 이 인텐트를 태우면 새 태스크의
+                // base intent 에 EXTRA_FINISH_PANEL 이 영구히 박혀 이후 step3 소환 시마다 즉시
+                // finish 되는 결함이 됐으나, boolean extra 를 1회용 토큰으로 교체하면서 그 결함
+                // 클래스는 구조적으로 소멸했다 — base intent 에 토큰 문자열이 남아 있어도 소비
+                // 시점의 PanelActivity.finishToken 과 일치하지 않으면 무시된다(PanelActivity.
+                // EXTRA_FINISH_TOKEN KDoc 계약 참고). 이 hasPanelTask() 사전 확인은 그와
+                // 무관하게 계속 유지한다 — 해제할 패널이 없는데 새 태스크를 만드는 낭비를 막는
+                // 별개 목적이다(#28).
                 Log.w(TAG, "dismissSplit: PanelActivity.instance null — 인텐트 폴백 경로 사용")
                 startActivity(
                     Intent(this, PanelActivity::class.java).apply {
@@ -418,7 +423,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
                                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                                 Intent.FLAG_ACTIVITY_SINGLE_TOP,
                         )
-                        putExtra(PanelActivity.EXTRA_FINISH_PANEL, true)
+                        putExtra(PanelActivity.EXTRA_FINISH_TOKEN, PanelActivity.issueFinishToken())
                     },
                 )
             } else {
@@ -1872,7 +1877,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
                         } finally {
                             buffer.close() // 함정 #4: HardwareBuffer 누수 방지
                         }
-                        if (cont.isActive) cont.resume(bmp)
+                        // [F7] 콜백은 코루틴 취소와 경합할 수 있다 — cont 가 이미 취소됐는데 bmp 를
+                        // 그냥 버리면 전면 스크린샷(≈17MB) 1장이 GC 전까지 붙잡힌다. resume 이
+                        // 불가능하면 즉시 recycle 한다.
+                        if (cont.isActive) cont.resume(bmp) else bmp?.recycle()
                     }
 
                     override fun onFailure(errorCode: Int) {

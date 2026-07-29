@@ -542,11 +542,22 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 2. **`ExportedReceiver`×2 는 "S1 로 자동 해소" 가 아니었다** — S1 은 W1 항목이라 W0 시점에 `app/src/debug/` 가 없다. baseline 임시 편입했으므로 **W1 종료 시 baseline 에서 이 2건을 제거**해야 게이트가 정직해진다.
 3. **`res/xml/backup_rules.xml` + `android:fullBackupContent` 추가** — minSdk 30(<31)이라 `dataExtractionRules` 단독으로는 lint 갭이 안 닫힌다. 계획에 없던 파일이지만 `allowBackup="false"` 와 정합(전부 제외), 런타임 영향 0.
 
-### W1 — 보안 차단
+### W1 — 보안 차단 · **[완료 2026-07-29]**
 **항목:** S1(debug 소스셋 분리, probe 포함) · S4(finish 토큰) · F7(bitmap recycle) · F8(Idle+Cancel)
-**실기기:** 디버그 빌드 adb 트리거 1회 · 메뉴 경유 분할 해제 1회
+**실기기:** 디버그 빌드 adb 트리거 1회 · 메뉴 경유 분할 해제 1회 → **미실시 [미검증]**, `DEVICE_FACTS.md` W1 절에 4항목 등재
 **DoD:** 위 + 릴리스 APK 에 `ArrangeTriggerReceiver`/probe 부재를 `aapt dump badging` 으로 확인
 **규모:** Worker 1세션
+
+**결과:** DoD 전부 PASS — 테스트 **286**(285 + F8 1) · `assembleDebug` · `lintDebug`("no new issues, 15 warnings filtered by baseline") · `assembleRelease`.
+릴리스 부재 확인은 `aapt` 대신 **병합 릴리스 매니페스트 직접 검색**으로 대체(더 확정적) — `ArrangeTriggerReceiver`·`ProbeTriggerReceiver`·`ProbeActivity`·`ProbeAccessibilityService`·`FileProvider` **0건**, 디버그 병합 매니페스트에는 5종 전부 존재.
+독립 검증(qa-verifier) **PASS** — 억제 정당성을 대조 실험(`lintRelease` 통과 vs `lintDebug` 실패)으로 실증.
+
+**계획 대비 편차 3건:**
+1. **`ExportedReceiver` 2건은 "S1 로 자동 해소" 가 아니었다** (W0 편차 2번의 연장). `lintDebug` 는 debug 병합 매니페스트를 보므로 리시버는 여전히 존재하고 **위치만 `src/debug/` 로 바뀌어 신규 경고가 된다.** → debug 매니페스트의 두 `<receiver>` 에 `tools:ignore="ExportedReceiver"` + 근거 주석. baseline 에서는 계획대로 2건 삭제(17 → 15).
+2. **lint `ForegroundServiceType` 오탐이 새로 발생** — debug 소스셋에 `foregroundServiceType` 없는 `<service>`(=`ProbeAccessibilityService`, AccessibilityService 라 없는 게 정상)가 **별도 매니페스트 파일**로 생기자 검사기가 `FloatingLauncherService.startForeground()` 호출을 잘못 연결. 동일 코드로 `lintRelease`(매니페스트 1개)는 통과 → 오탐 확정. `startForegroundCompat()` 에 `@SuppressLint` + 진단 근거 주석(baseline 미사용).
+3. **main 매니페스트 주석 2곳의 클래스명 리터럴 제거** — AGP 머저가 XML 주석을 병합 결과에 보존하는 것이 확인돼, 주석 속 `probe.ProbeActivity`/`probe.ProbeTriggerReceiver` 리터럴이 **릴리스 매니페스트까지 따라 들어갔다.** debug 매니페스트 경로 표기로 대체(내용 정확도는 오히려 개선 — "S1 이후 debug 전용" 반영).
+
+**부수:** `Intent?.requestsFinish()` → `consumesFinishRequest()` 개명 + 부작용 KDoc. 토큰 소비라는 부작용을 가지는데 순수 질의처럼 읽혀 이중 호출 함정이 있었다.
 
 ### W2 — Shizuku 셸 하드닝
 **항목:** F3 · F4 · F5 · S2 · S3 일괄
