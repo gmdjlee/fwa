@@ -105,6 +105,19 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private var arrangeConfig: ArrangeConfig = ArrangeConfig()
     private var tickJob: Job? = null
 
+    /**
+     * [F6] dispatch() 재진입 가드. [scope] 가 Dispatchers.Main.immediate 라
+     * [executeEffect] 안의 `scope.launch { }` 가 중단점 없이(예: [handleQuerySplitState] 의
+     * safeWindows()/isSplitActive() 는 suspend 가 아니다) 곧바로 [dispatch] 를 다시 부를 수 있다.
+     * 큐가 없으면 바깥 dispatch 의 `val terminal = machineState` 가 "자기가 만든 상태"가 아니라
+     * 안쪽 dispatch 가 이미 바꿔놓은 값을 읽어 터미널 판정(Done/Failed)이 틀어진다 — 지금은
+     * 모든 Transition 이 effect 를 0~1개만 내서 우연히 무해하지만, effect 2개짜리 전이가
+     * 추가되는 순간 이중 reportTerminal 등으로 발현한다. 재진입 호출은 즉시 처리하지 않고
+     * 여기 적재만 해, 최상위 dispatch 호출 하나가 while 루프로 순서대로 드레인한다.
+     */
+    private var dispatching = false
+    private val pendingEvents = ArrayDeque<ArrangeEvent>()
+
     /** startArrange 호출과 첫 dispatch(Start) 사이의 짧은 창에서 중복 세션 시작을 막는다 */
     @Volatile
     private var sessionInFlight = false
@@ -1282,18 +1295,47 @@ class ArrangerAccessibilityService : AccessibilityService() {
     // dispatch: 리듀서 호출 + 효과 실행 + 터미널 처리 (메인 스레드 전용)
     // ══════════════════════════════════════════════════════════
 
+    /**
+     * [F6] 리듀서 호출 + 효과 실행 + 터미널 처리를 담당하는 단일 진입점.
+     *
+     * 재진입 방지: [dispatching] 이 true 인 동안 들어오는 호출(= executeEffect 가 중단점 없이
+     * 동기적으로 다시 부르는 경우)은 리듀스하지 않고 [pendingEvents] 에 적재만 한다. 항상
+     * 최상위(가장 바깥) 호출 하나만 아래 while 루프로 실제 reduce 를 수행한다.
+     *
+     * 동작 등가 근거(구 재귀 재진입 버전 대비):
+     * - 리듀서에 이벤트를 먹이는 순서가 동일하다 — 재진입으로 발생한 이벤트도 발생한 순서
+     *   그대로 큐에 쌓여 차례로 처리되므로 최종 [machineState] 는 동일하다.
+     * - 이벤트 하나당 터미널 검사([ArrangeState.Done]/[ArrangeState.Failed] 여부)가 **정확히
+     *   1회씩**, 그 이벤트가 실제로 만들어낸 machineState 기준으로 수행된다 — 구 버전처럼
+     *   안쪽 dispatch 가 먼저 끝나 바깥이 자기 것이 아닌 상태를 검사하는 일이 없다.
+     * - 디스패처 홉을 추가하지 않는다(여전히 동일 스레드 동기 실행) — 타이밍 영향 0.
+     */
     private fun dispatch(event: ArrangeEvent) {
-        val transition = ArrangeStateMachine.reduce(machineState, event, arrangeConfig)
-        if (transition.state != machineState) {
-            Log.i(TAG, "transition: $machineState -> ${transition.state} (event=$event)")
+        if (dispatching) {
+            pendingEvents.addLast(event)
+            return
         }
-        machineState = transition.state
-        transition.effects.forEach { executeEffect(it) }
+        dispatching = true
+        try {
+            var e: ArrangeEvent? = event
+            while (e != null) {
+                val transition = ArrangeStateMachine.reduce(machineState, e, arrangeConfig)
+                if (transition.state != machineState) {
+                    Log.i(TAG, "transition: $machineState -> ${transition.state} (event=$e)")
+                }
+                machineState = transition.state
+                transition.effects.forEach { executeEffect(it) }
 
-        val terminal = machineState
-        if (terminal is ArrangeState.Done || terminal is ArrangeState.Failed) {
-            reportTerminal(terminal)
-            cleanupSession()
+                val terminal = machineState
+                if (terminal is ArrangeState.Done || terminal is ArrangeState.Failed) {
+                    reportTerminal(terminal)
+                    cleanupSession()
+                }
+                e = pendingEvents.removeFirstOrNull()
+            }
+        } finally {
+            dispatching = false
+            pendingEvents.clear()   // 예외 이탈 시 잔여 이벤트는 폐기(상태 불명)
         }
     }
 
@@ -1748,9 +1790,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private fun reportTerminal(state: ArrangeState) {
         when (state) {
             is ArrangeState.Done -> {
+                // [F9 v1 대응, 계획서 §F9] verified=true 는 "잔여가 허용치 이내" 를 보장하지
+                // 않는다 — 보정 비활성(closedLoopCorrection=false) 또는 이미 1회 보정한 뒤에도
+                // 잔여값을 그대로 보고하는 경로가 있다(ArrangeStateMachine.reduceVerifying).
+                // 필드 개명(verified 의미 재정의)은 리듀서·기존 테스트 전반에 영향을 주므로
+                // v1.5 로 미루고, v1 은 사용자에게 보이는 메시지에서만 허용치 초과 여부를 구분한다.
+                val residual = state.finalResidualPx ?: 0
                 val message = if (state.verified) {
                     buildString {
-                        append("배치 완료 · 잔여 ${state.finalResidualPx ?: 0}px")
+                        append("배치 완료 · 잔여 ${residual}px")
+                        if (residual > arrangeConfig.residualTolerancePx) append(" (허용치 초과)")
                         if (state.adjusted) append(" · 보정 1회")
                         if (effectivePlacement != desiredPlacement) {
                             append(" · 위치 전환 실패로 ${effectivePlacement.toKoreanLabel()} 유지")
@@ -1762,7 +1811,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 Log.i(
                     TAG,
                     "arrange done: verified=${state.verified} residual=${state.finalResidualPx} " +
-                        "adjusted=${state.adjusted} desired=$desiredPlacement effective=$effectivePlacement",
+                        "adjusted=${state.adjusted} desired=$desiredPlacement effective=$effectivePlacement " +
+                        "tolerance=${arrangeConfig.residualTolerancePx}",
                 )
                 toast(message)
 

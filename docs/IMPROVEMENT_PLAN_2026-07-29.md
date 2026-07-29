@@ -594,11 +594,24 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 
 **부수 발견 [미수정, v1.5]:** `toLetterboxScan:25` / `toPillarboxScan:113,115` 의 `coerceIn(0, w/2 - 1)` 은 `w==1` 이면 빈 범위로 `IllegalArgumentException`. 실입력에서 도달 불가라 W4 범위 밖으로 두고 `PROGRESS.md` C 항목에 등재 — **P4 가 이 함수를 손댈 때 함께 정리**한다.
 
-### W5 — 구동부 안정화
+### W5 — 구동부 안정화 · **[완료 2026-07-29]**
 **항목:** F6(이벤트 큐) · F9 v1 대응(터미널 메시지 구분)
-**실기기:** DRAG 세션 1 + MENU 세션 1 무회귀
-**DoD:** 위 + 전이 로그가 기존과 동일 순서인지 logcat 대조
+**실기기:** DRAG 세션 1 + MENU 세션 1 무회귀 → **[미검증]**, `docs/DEVICE_FACTS.md` W5 절 4항목으로 등재
+**DoD:** 위 + 전이 로그가 기존과 동일 순서인지 logcat 대조 → 로그 포맷 문자 단위 무변경 확인(보간 변수명만 `event`→`e`)
 **규모:** Worker 1세션 + 실기기 세션 1회
+**결과:** 테스트 312(311+1) · assembleDebug · lintDebug(신규 0, baseline 15 무변경). 독립 검증 CONDITIONAL PASS(조건 = 실기기 세션, 코드 결함 0).
+
+**계획 대비 편차 0건 — 다만 계획서에 없던 도메인 테스트 1개를 추가했다.**
+F6 의 동작 등가는 **「터미널 상태로 가는 Transition 은 effects 가 비어 있다」** 는 불변식에 의존한다
+(깨지면 신규 코드는 `cleanupSession()` 으로 `machineState` 가 `Idle` 이 된 **뒤에** 큐를 드레인해 구 코드와 순서가 갈린다).
+qa 가 소스 전수로 **12곳 전부 `emptyList()`** 임을 확정했고(174/218/251/256/298/328/332/348/353/377/383/391),
+그 위에 대표 상태 10 × 이벤트 15 × config 2 = **300 조합**(터미널 103건 방문) 전수 테스트를 `ArrangeStateMachineTest` 에 추가해
+불변식을 기계 강제했다. **W6·W7 이 이 불변식에 기댄다** — 터미널 전이에 effect 를 넣으면 그 테스트가 먼저 실패한다.
+
+**[확정] F9 는 JVM 테스트 사각지대다.** qa 가 부등호를 `>` → `>=` 로 변조했을 때 **테스트 29개 전부 통과**했다 —
+`ArrangerAccessibilityService` 를 인스턴스화하는 JVM 테스트가 0개이기 때문이다. 실기기 육안이 유일한 검증 수단이며
+`DEVICE_FACTS.md` W5-4 에 유도 방법(`defaults.residualTolerancePx` 임시 0)과 함께 등재했다.
+W4 에서 Robolectric 배선이 생겼으므로 서비스 레이어 테스트 확장은 v1.5 후보.
 
 ### W6 — 세션 상태 캡슐화 ⚠ 최대 위험 · 단독 커밋
 **항목:** M1 1단계(`Session` 클래스)

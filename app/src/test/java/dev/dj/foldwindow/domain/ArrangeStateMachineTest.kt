@@ -384,4 +384,87 @@ class ArrangeStateMachineTest {
         assertEquals(failed, failedT.state)
         assertFalse(failedT.state == ArrangeState.Failed(FailureReason.CANCELLED))
     }
+
+    // ── F6 회귀 방어선: 터미널 전이는 effects 를 갖지 않는다 ─────────
+    //
+    // ArrangerAccessibilityService.dispatch() 의 이벤트 큐 + 단일 드레인 루프 구현(F6)은
+    // "터미널 상태(Done/Failed)로 가는 Transition 은 effects 가 비어 있다"는 불변식에 기대어 구
+    // 재귀 재진입 버전과의 동작 등가를 논증한다. 이 불변식이 깨지면(어떤 전이가 Done/Failed
+    // 이면서 effect 도 함께 낸다면) 새 dispatch 는 cleanupSession() 이 machineState 를 Idle 로
+    // 되돌린 *이후에* 큐에 남은 effect 유발 이벤트를 드레인하게 되어 구 버전과 순서가 달라진다.
+    // 아래는 그 불변식을 대표 (상태 × 이벤트 × config) 전수 조합으로 못 박는 회귀 테스트다.
+
+    private val f6RepresentativeStates: List<ArrangeState> = listOf(
+        ArrangeState.Idle,
+        ArrangeState.CheckingSplit(since = 0, targetY = 1000),
+        ArrangeState.EnteringSplit(step = 1, attempt = 1, stepSince = 0, targetY = 1000),
+        // attempt 가 이미 기본 entryStepMaxAttempts(3)에 도달한 변형 — EntryStepResult(success=false)
+        // 가 재시도가 아니라 곧바로 ENTRY_STEP_FAILED 로 떨어지는 분기까지 노출시킨다.
+        ArrangeState.EnteringSplit(step = 2, attempt = 3, stepSince = 0, targetY = 1000),
+        ArrangeState.WaitingDivider(since = 0, targetY = 1000),
+        ArrangeState.Dragging(since = 0, targetY = 1000, adjustedOnce = false, lastShotAt = null),
+        ArrangeState.Verifying(since = 0, targetY = 1000, adjustedOnce = false, lastShotAt = 0),
+        // adjustedOnce=true 변형 — "이미 1회 보정함, 추가 보정 금지" else 분기까지 노출시킨다.
+        ArrangeState.Verifying(since = 0, targetY = 1000, adjustedOnce = true, lastShotAt = 0),
+        ArrangeState.Done(verified = true, finalResidualPx = 0, adjusted = false),
+        ArrangeState.Failed(FailureReason.DRAG_FAILED),
+    )
+
+    private val f6RepresentativeEvents: List<ArrangeEvent> = listOf(
+        ArrangeEvent.Start(nowMs = 0, targetDividerCenterY = 1000),
+        ArrangeEvent.SplitStateResult(nowMs = 0, active = true),
+        ArrangeEvent.SplitStateResult(nowMs = 0, active = false),
+        ArrangeEvent.EntryStepResult(nowMs = 0, success = true),
+        ArrangeEvent.EntryStepResult(nowMs = 0, success = false),
+        ArrangeEvent.DividerResult(nowMs = 0, centerY = 1000),
+        ArrangeEvent.DividerResult(nowMs = 0, centerY = null),
+        ArrangeEvent.DragResult(nowMs = 0, completed = true),
+        ArrangeEvent.DragResult(nowMs = 0, completed = false),
+        // 허용치(기본 residualTolerancePx=8) 이내
+        ArrangeEvent.MeasureResult(nowMs = 0, residualPx = 3, correctedTargetY = null),
+        // 허용치 초과
+        ArrangeEvent.MeasureResult(nowMs = 0, residualPx = 50, correctedTargetY = 1010),
+        ArrangeEvent.MeasureResult(nowMs = 0, residualPx = null, correctedTargetY = null),
+        // since/stepSince = 0 인 모든 대표 상태의 전 타임아웃(기본값 중 최댓값 verifyTimeoutMs=5000)을
+        // 확실히 초과시키는 시각과, 전혀 초과하지 않는 시각을 둘 다 돈다.
+        ArrangeEvent.Tick(nowMs = 100_000),
+        ArrangeEvent.Tick(nowMs = 1),
+        ArrangeEvent.Cancel(nowMs = 0),
+    )
+
+    private val f6RepresentativeConfigs: List<ArrangeConfig> = listOf(
+        ArrangeConfig(),
+        // Verifying 의 "!state.adjustedOnce" 분기가 ADR-5 보정 대신 곧바로 Done 을 내는 별도
+        // 생성 지점이다(ArrangeStateMachine.reduceVerifying) — 기본 config 만으로는 이 분기가
+        // 전혀 방문되지 않는다.
+        ArrangeConfig(closedLoopCorrection = false),
+    )
+
+    @Test
+    fun `every terminal transition across representative state x event x config combinations has no effects`() {
+        var terminalTransitionsChecked = 0
+        for (config in f6RepresentativeConfigs) {
+            for (state in f6RepresentativeStates) {
+                for (event in f6RepresentativeEvents) {
+                    val transition = reduce(state, event, config)
+                    val resultState = transition.state
+                    if (resultState is ArrangeState.Done || resultState is ArrangeState.Failed) {
+                        terminalTransitionsChecked++
+                        assertTrue(
+                            "터미널 전이가 effects 를 냈다 — state=$state event=$event config=$config " +
+                                "resultState=$resultState effects=${transition.effects}",
+                            transition.effects.isEmpty(),
+                        )
+                    }
+                }
+            }
+        }
+        // 공허하게 통과하는 테스트 방지: 실제로 터미널 분기를 여러 차례 방문했는지의 최소 자체
+        // 점검이다(진짜 비-공허성 증거는 브리프가 요구한 별도 변조 실험 — 리듀서에 임시로 effect
+        // 를 끼워 이 테스트가 FAILED 되는지 확인 — 로 보고에 남긴다).
+        assertTrue(
+            "터미널 전이가 한 번도 방문되지 않음 — 대표 조합 설계를 재검토할 것",
+            terminalTransitionsChecked > 0,
+        )
+    }
 }
