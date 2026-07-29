@@ -53,6 +53,9 @@ android {
     testOptions {
         unitTests {
             isReturnDefaultValues = true
+            // W4/T1: Robolectric 이 android.graphics.Bitmap 의 실제 픽셀 연산(getPixels 등)을
+            // 셰도우로 지원하려면 리소스 병합 산출물이 필요하다.
+            isIncludeAndroidResources = true
         }
     }
 }
@@ -74,4 +77,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // W4/T1: ScreenshotSampler(Bitmap→도메인 모델 변환) 를 실제 픽셀 연산으로 검증하기 위한 안전망.
+    // P4(getPixels stride 최적화, W7) 착수 전에 회귀 방지 테스트를 먼저 깐다 (P-2 원칙).
+    testImplementation(libs.robolectric)
 }

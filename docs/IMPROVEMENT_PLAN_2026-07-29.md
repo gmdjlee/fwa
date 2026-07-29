@@ -571,11 +571,20 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 **DoD:** 위 + `PROGRESS.md` C 항목에 "F2 2단계 = 세로 기하 실측 선행" 등재
 **규모:** Worker 1세션
 
-### W4 — 테스트 안전망 (W5·W7 의 선행 조건)
+### W4 — 테스트 안전망 (W5·W7 의 선행 조건) · **[완료 2026-07-29]**
 **항목:** T1(Robolectric 배선 + `ScreenshotSampler` 5종)
 **실기기:** 불필요
 **DoD:** `testDebugUnitTest` PASS (282 → 약 290)
 **규모:** Worker 1세션
+
+**결과:** DoD PASS — 테스트 **304**(299 + 5) · `assembleDebug` · `lintDebug`("no new issues, 15 warnings filtered") · **프로덕션 diff 0줄**(`ScreenshotSampler.kt`·`LetterboxDetector.kt` 무변경 — 이 웨이브의 요건).
+독립 검증(qa-verifier) **PASS** — 5개 기댓값을 소스에서 전부 수기 재도출(잘못된 기댓값도 통과하는 위험을 겨냥) + 워커가 쓰지 않은 변조(`impliedAspect` 분자·분모 반전)로 비-공허성 재확인(6건 FAILED, 사전 예측과 일치).
+
+**계획 대비 편차 2건:**
+1. **테스트 3 은 계획서 문구대로는 구현 불가 — 요구 자체가 기하학적 모순이었다.** `resolveAspect` 의 raw = (frame 폭)/(content 높이), `resolveAspectPillarbox` 의 raw = (content 폭)/(frame 높이) 이므로 이미지를 리터럴 전치하면 두 항이 자리를 바꿔 **`raw_pillarbox ≡ 1/raw_letterbox`** 가 강제된다(A: 144×270, content 81 → 144/81 vs 81/144 로 실수 확인). → **프레임 치수만 전치**(144×270 → 270×144) + 콘텐츠 밴드는 B 안에서 독립 배치로 같은 16:9 재현, stride 를 명시 교차 배정(entries 축 1 / 교차축 8), **`scanA.width == scanB.width == 144` 직접 단언**으로 원래 겨냥한 회귀군(`scaledWidth=w/rowStride` ↔ `scaledHeight=h/colStride`)을 그대로 포착. 검증자 CONFIRMED.
+2. **lint baseline 수동 편집이 불필요했다.** robolectric 의존성 추가가 신규 경고를 만들 것으로 예상했으나, `NewerVersionAvailable`(4.14.1→4.16.1) 은 **W0 시점부터 이미 baseline 에 있었다**(`lint-baseline.xml:148-150`) — lint 의 카탈로그 신선도 검사는 위치가 `libs.versions.toml` 버전 선언 라인이라 **실제 사용 여부와 무관하게** 카탈로그 항목을 스캔한다. `@Config(sdk = [34])` 도 1차 시도 통과라 4.16.1 상향 불필요.
+
+**부수 발견 [미수정, v1.5]:** `toLetterboxScan:25` / `toPillarboxScan:113,115` 의 `coerceIn(0, w/2 - 1)` 은 `w==1` 이면 빈 범위로 `IllegalArgumentException`. 실입력에서 도달 불가라 W4 범위 밖으로 두고 `PROGRESS.md` C 항목에 등재 — **P4 가 이 함수를 손댈 때 함께 정리**한다.
 
 ### W5 — 구동부 안정화
 **항목:** F6(이벤트 큐) · F9 v1 대응(터미널 메시지 구분)
