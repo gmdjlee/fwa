@@ -41,12 +41,31 @@ data class WindowGeometry(
         require(usableWidth > 0 && usableHeight > 0) { "usable size must be positive" }
         require(dividerThickness >= 0) { "dividerThickness must be >= 0" }
         require(minPaneHeight >= 0) { "minPaneHeight must be >= 0" }
+        // 클램프가 아니라 require 인 이유: 음수 panelH 를 0으로 클램프하면 "말이 안 되는 계획"을
+        // 조용히 만들어내기 때문이다 — 조용한 실패 금지 원칙. 계획 불가는 계획 불가로 드러낸다.
+        require(allocatableHeight >= 2 * minPaneHeight) {
+            "allocatableHeight($allocatableHeight) < 2 * minPaneHeight($minPaneHeight) — 분할 불가 기하"
+        }
     }
 
     /** 두 창에 실제로 배분 가능한 총 높이 (디바이더 제외) */
     val allocatableHeight: Int get() = usableHeight - dividerThickness
 
+    /**
+     * 실제 화면 [screen] 이 이 기하와 일치하는가. 일치하지 않으면 이 기하로 계산한 분할 계획은
+     * 조용히 틀린 곳에 디바이더를 놓게 되므로, 호출부는 계산을 시작하기 전에 이 검사로 걸러야 한다.
+     * (예: 세로 방향 · 커버 디스플레이 · 외부 디스플레이)
+     */
+    fun matchesScreen(screen: IntRect, toleranceFraction: Float = GEOMETRY_TOLERANCE_FRACTION): Boolean {
+        val widthDiff = abs(screen.width - usableWidth)
+        val heightDiff = abs(screen.height - usableHeight)
+        return widthDiff <= usableWidth * toleranceFraction && heightDiff <= usableHeight * toleranceFraction
+    }
+
     companion object {
+        /** 실화면 기하가 이 [WindowGeometry] 와 같다고 볼 수 있는 상대 오차 상한 (±1%) */
+        const val GEOMETRY_TOLERANCE_FRACTION = 0.01f
+
         /**
          * Galaxy Z Fold 7 내부 화면 가로(상하 분할). DEVICE_FACTS.md 2026-07-25 실측.
          * ⚠ 이 수치는 실기기 측정값이다. 바꾸려면 새 측정 근거를 DEVICE_FACTS.md에 기록할 것.

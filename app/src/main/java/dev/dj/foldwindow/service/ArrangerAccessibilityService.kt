@@ -273,6 +273,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
      * @param aspectOverride 사용자가 명시적으로 고른 종횡비(프리셋). null 이면 ADR-1 3단 폴백을 따른다
      */
     fun startArrange(placementOverride: Placement?, aspectOverride: Float?) {
+        // F2 1단계 가드: 계산 기하가 실화면과 다르면 디바이더를 조용히 틀린 곳으로 옮기게 되므로,
+        // 세션 상태(machineState/sessionInFlight)를 건드리기 전에 가장 먼저 명시적 미지원으로 떨어뜨린다.
+        val screen = screenRect()
+        if (!geometry.matchesScreen(screen)) {
+            Log.w(TAG, "startArrange: 화면 기하 불일치 — screen=${screen.width}x${screen.height} " +
+                       "expected=${geometry.usableWidth}x${geometry.usableHeight} (v1 미지원)")
+            toast("이 화면 방향/디스플레이는 아직 지원하지 않습니다")
+            return
+        }
+
         if (machineState != ArrangeState.Idle || sessionInFlight) {
             Log.w(TAG, "startArrange: 이미 배치 진행 중 (state=$machineState)")
             toast("이미 배치 진행 중")
@@ -477,6 +487,11 @@ class ArrangerAccessibilityService : AccessibilityService() {
      * `am start --windowingMode 5` → 대상 창 출현 폴링 → `am stack list` 로 taskId 조회 →
      * `am task resize` → bounds 검증 폴링. 각 단계 실패는 Log.w + 토스트로 드러내고 즉시
      * 중단한다(조용한 실패 금지).
+     *
+     * F2 1단계 가드(`geometry.matchesScreen`, [startArrange]/`evaluateFlexAutoTrigger` 참고)는
+     * 여기 적용하지 않는다 — 위 bounds 산출이 캐시된 [WindowGeometry] 가 아니라 `screenRect()` 로
+     * 실화면을 직접 읽으므로 애초에 그 결함(세로 등에서 계산 기하와 실화면이 어긋나는 문제)에
+     * 노출되지 않는다.
      */
     fun startPopup() {
         if (machineState != ArrangeState.Idle || sessionInFlight) {
@@ -848,7 +863,18 @@ class ArrangerAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (dividerLocator.isSplitActive(safeWindows(), screenRect())) {
+        // F2 1단계 가드: 자동 트리거도 동일 결함(세로 등에서 디바이더가 조용히 틀린 곳으로 이동)에
+        // 노출된다. 토스트는 없다 — 자동 발화는 "조용한 실패 금지" 원칙 비대상(위 KDoc 참고, 기존
+        // 게이트들의 선례 그대로).
+        val screen = screenRect()
+        if (!geometry.matchesScreen(screen)) {
+            flexPolicy.disarm()
+            Log.i(TAG, "flex auto-arrange skipped: reason=geometry-mismatch " +
+                       "screen=${screen.width}x${screen.height}")
+            return
+        }
+
+        if (dividerLocator.isSplitActive(safeWindows(), screen)) {
             // 기존 분할 재배치(예: 위/아래 재조정)는 v1.5 범위 — 여기서는 새 분할 진입만 다룬다.
             flexPolicy.disarm()
             Log.i(TAG, "flex auto-arrange skipped: reason=split-already-active")

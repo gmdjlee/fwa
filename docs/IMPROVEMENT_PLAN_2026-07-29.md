@@ -565,11 +565,19 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 **DoD:** 위 + `DEVICE_FACTS.md` 재검증 결과 기록. 재검증 전까지 `[미검증]` 표기
 **규모:** Worker 1세션 + 실기기 세션 1회
 
-### W3 — 기하 정합성 · 도메인 불변식
+### W3 — 기하 정합성 · 도메인 불변식 · **[완료 2026-07-29]**
 **항목:** F2 1단계(가드) · F1(require + 테스트 3종)
 **실기기:** 가로 배치 1회 정상 · 세로 트리거 시 명시적 실패 토스트 1회
 **DoD:** 위 + `PROGRESS.md` C 항목에 "F2 2단계 = 세로 기하 실측 선행" 등재
 **규모:** Worker 1세션
+
+**결과:** DoD PASS — 테스트 **311**(304 + 7) · `assembleDebug` · `lintDebug`("no new issues, 15 warnings filtered", baseline 무변경) · `SplitPlannerTest` **70 삽입 / 0 삭제**(기존 케이스 편집 0 — 새 불변식을 통과시키려 기댓값을 완화한 곳 없음). 실기기 2항목은 `DEVICE_FACTS.md` W3 절에 `[미검증]`.
+독립 검증(qa-verifier) **CONDITIONAL PASS**(조건 = `PROGRESS.md` §C 등재 자체, 코드 결함 0 — Advisor 가 반영해 해소) — 변조 3종(`matchesScreen` 무조건 true / **`&&`→`||`** / `require` 무력화) 전부 사전 예측과 정확히 일치했고, 특히 `&&`→`||` 가 1건 포착돼 폭·높이 **분리 단언**의 실효를 실증.
+
+**계획 대비 편차 1건:**
+1. **판정 함수를 서비스 private 이 아니라 `domain/` 으로 올렸다.** 위 §F2 는 `private fun geometryMatches()` 를 서비스 안에 두는 형태로 썼으나, 그러면 **톨러런스 경계가 실기기 없이는 검증 불가**하다. `WindowGeometry.matchesScreen(screen, toleranceFraction = GEOMETRY_TOLERANCE_FRACTION)` 멤버로 올려 JVM 단위 테스트 대상화 + `ArchitectureTest` 로 순수성 기계 강제(ADR-4). W2 편차 1번(`ShellCommandPolicy` → `domain/`)과 같은 취지. 검증자 판정 "더 나은 설계".
+
+**부수:** `evaluateFlexAutoTrigger` 의 신규 게이트가 만든 `screen` 지역변수를 바로 아래 `isSplitActive(safeWindows(), screenRect())` 가 재사용하도록 정리(중복 호출 제거, 동작 등가 — 두 지점 사이 suspend 지점 없음 + `Dispatchers.Main.immediate` 단일 스레드). `startPopup` KDoc 에 "이 가드 비대상 — `PopupPlanner` 가 이미 실화면을 직접 읽음" 근거 명시.
 
 ### W4 — 테스트 안전망 (W5·W7 의 선행 조건) · **[완료 2026-07-29 · `0f53af2`]**
 **항목:** T1(Robolectric 배선 + `ScreenshotSampler` 5종)

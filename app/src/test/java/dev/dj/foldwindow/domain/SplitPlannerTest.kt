@@ -250,4 +250,74 @@ class SplitPlannerTest {
         assertEquals(14, geom.dividerThickness)
         assertEquals(181, geom.minPaneHeight)
     }
+
+    // ── 기하 불변식 (F1, W3) ───────────────────────────────────
+
+    @Test
+    fun `allocatableHeight exactly equal to 2 times minPaneHeight constructs fine`() {
+        // usableHeight=1000, divider=0, minPane=500 → allocatable=1000, 2*500=1000 (경계 정확히 통과)
+        val zeroDivider = WindowGeometry(
+            usableLeft = 0, usableTop = 0,
+            usableWidth = 2184, usableHeight = 1000,
+            dividerThickness = 0, minPaneHeight = 500,
+        )
+        assertEquals(1000, zeroDivider.allocatableHeight)
+
+        // usableHeight=1000, divider=14, minPane=493 → allocatable=986, 2*493=986 (디바이더 있는 경계)
+        val withDivider = WindowGeometry(
+            usableLeft = 0, usableTop = 0,
+            usableWidth = 2184, usableHeight = 1000,
+            dividerThickness = 14, minPaneHeight = 493,
+        )
+        assertEquals(986, withDivider.allocatableHeight)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `allocatableHeight one pixel short of 2 times minPaneHeight is rejected`() {
+        // usableHeight=1000, divider=0, minPane=501 → allocatable=1000, 2*501=1002 → 1000 < 1002
+        WindowGeometry(
+            usableLeft = 0, usableTop = 0,
+            usableWidth = 2184, usableHeight = 1000,
+            dividerThickness = 0, minPaneHeight = 501,
+        )
+    }
+
+    @Test
+    fun `foldSevenLandscape satisfies the allocatable height invariant`() {
+        val geom = WindowGeometry.foldSevenLandscape()
+        // allocatable = 1968 - 14 = 1954, 2*minPaneHeight = 2*181 = 362, 1954 >= 362 → 여유롭게 통과
+        assertEquals(1954, geom.allocatableHeight)
+        assertTrue(geom.allocatableHeight >= 2 * geom.minPaneHeight)
+    }
+
+    // ── 화면 기하 정합성 (F2, W3) ─────────────────────────────
+
+    @Test
+    fun `matchesScreen returns true for an exact match`() {
+        val geom = WindowGeometry.foldSevenLandscape()
+        assertTrue(geom.matchesScreen(IntRect(0, 0, 2184, 1968)))
+    }
+
+    @Test
+    fun `matchesScreen returns true within tolerance`() {
+        val geom = WindowGeometry.foldSevenLandscape()
+        // 임계값: width 2184*0.01=21.84, height 1968*0.01=19.68
+        assertTrue(geom.matchesScreen(IntRect(0, 0, 2205, 1987)))  // diff 21 / 19, 둘 다 임계값 이내
+    }
+
+    @Test
+    fun `matchesScreen returns false when either dimension exceeds tolerance`() {
+        val geom = WindowGeometry.foldSevenLandscape()
+        // width diff 22 > 21.84 → false. height diff 는 0 이라 이 케이스가 폭 단독 위반을 잡아낸다
+        assertTrue(!geom.matchesScreen(IntRect(0, 0, 2206, 1968)))
+        // height diff 20 > 19.68 → false. width diff 는 0 이라 이 케이스가 높이 단독 위반을 잡아낸다
+        assertTrue(!geom.matchesScreen(IntRect(0, 0, 2184, 1988)))
+    }
+
+    @Test
+    fun `matchesScreen returns false for a portrait-transposed screen`() {
+        // F2 가 막는 실제 결함: 세로 방향에서 가로 기하를 그대로 쓰면 조용히 틀린 곳에 디바이더가 놓인다
+        val geom = WindowGeometry.foldSevenLandscape()
+        assertTrue(!geom.matchesScreen(IntRect(0, 0, 1968, 2184)))
+    }
 }
