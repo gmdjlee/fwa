@@ -1018,3 +1018,35 @@ F6 의 동작 등가는 이 불변식에 의존한다 — 터미널 + effect 를
 이 불변식은 이제 `ArrangeStateMachineTest` 의 전수 조합 테스트(대표 상태 10 × 이벤트 15 × config 2 =
 300 조합, 그중 터미널 103건)가 기계 강제한다. **W6/W7 이 이 불변식에 기댄다.**
 
+---
+
+## 개선 웨이브 W6 (세션 상태 캡슐화) — 실기기 재검증 대기 [미검증]
+
+**2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W6 · §M1.
+해소 대상 = M1 1단계(세션 가변 필드 17개 → `private class Session` 1개, `cleanupSession()` = `session = null`).
+정적 DoD 통과(테스트 312 무변경 · assembleDebug · lintDebug 신규 0 · 프로덕션 1파일 185+/124−).
+
+**이 웨이브가 실기기 세션을 요구하는 이유:** 계획 전체에서 **회귀 위험 최대**로 지정된 항목이고,
+세션 상태를 읽는 **모든 경로**(진입·드래그·측정·합치·터미널 보고)를 동시에 지나간다.
+정적으로는 읽기 폴백 36곳 전수 대조로 등가가 확인됐지만, 그 등가가 실제 이벤트 순서에서 성립하는지는
+logcat 대조로만 확인된다.
+
+| # | 항목 | 확인 방법 / 유도 | 상태 |
+|---|---|---|---|
+| W6-1 | **DRAG 레시피 무회귀** | 유튜브 등 버블 탭 → 배치 성공. `arrange decision:` / `verify:` / `arrange done:` 3줄이 W5 세션 로그와 **문자 단위 동일 포맷** | [미검증] |
+| W6-2 | **MENU 레시피 무회귀** | UNRESIZEABLE 앱(넷플릭스류) 배치 성공. `resize-mode detection: … recipe=MENU` + 진입 5단계 완주 (= `Session.entryRecipe` / `config.entryStepCount` 배선 실증) | [미검증] |
+| W6-3 | **취소 경로 + 재배치** | 배치 진행 중 취소 → `배치 실패: 사용자 취소` 토스트 + **버블 복원**. 이어서 **재배치 1회가 정상 성공**해야 한다 — `session = null` 이 세션 상태를 완전히 비웠는지의 직접 증거 | [미검증] |
+| W6-4 | **분할 해제** | 배치 완료 후 버블 메뉴 「분할 해제」 정상 동작 (`dismissSplit` 이 `machineState == Idle` 가드를 통과) | [미검증] |
+| W6-5 | **연속 2세션 상태 누수 없음 (M1 의 존재 이유 직격)** | 앱 A 배치 → 완료 → **앱 B 배치**. B 의 `arrange decision:` 에서 `label=` `cachedAspect=` `placementSource=` 가 전부 **B 기준**이고, `consensus:` 게이트가 B 에서 **다시 발동**(`aspectConfirmed` 누수 없음), `aspect cache save:` 의 `pkg=` 가 B 여야 한다 | [미검증] |
+
+**W6-5 는 계획서 원문의 4경로에 없던 항목**이다(qa 검증자 권고로 추가). 이 웨이브의 목적 자체를
+검증하는 유일한 항목이므로 반드시 함께 확인한다.
+
+**JVM 테스트 사각지대 [확정, qa 변조 실험 7종]:** `ArrangerAccessibilityService` 를 인스턴스화하는
+JVM 테스트가 **0개**다(테스트 소스에는 주석 2건만 언급). qa 검증자가 **7종을 동시에 변조**했는데도
+**312개 전부 통과**했다 — 폴백 6종 오염(`Placement.TOP`→`BOTTOM`, `"FALLBACK"`→`"FLEX"`,
+`requireAgreement`/`cacheAspectEnabled` `true`→`false`, `EntryRecipe.DRAG`→`MENU`,
+`DEFAULT_ASPECT`→`1.0f`)에 더해 **`session = Session(...)` 을 `dispatch(Start)` 뒤로 옮기는
+심각한 회귀**까지 포함해서다. 즉 **「테스트 312 통과」는 이 웨이브의 안전 근거가 아니며,
+실기기 스모크가 유일한 실효 검증 수단이다**(W5-4 와 동일 결론).
+

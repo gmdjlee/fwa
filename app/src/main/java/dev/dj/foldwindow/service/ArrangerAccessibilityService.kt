@@ -102,7 +102,6 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     // ── 상태 머신 ────────────────────────────────────────────────
     private var machineState: ArrangeState = ArrangeState.Idle
-    private var arrangeConfig: ArrangeConfig = ArrangeConfig()
     private var tickJob: Job? = null
 
     /**
@@ -146,7 +145,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private var popupInFlight = false
 
     // ── P3-5 FoldingFeature 연동 (서비스 수명 전체 유지 — cleanupSession() 이 건드리지 않는다.
-    // sessionPlacementSource 만 예외로 세션 필드다, 아래 세션 컨텍스트 블록 참고) ──
+    // placement 결정 소스 스냅샷([Session.placementSource]) 만 예외로 세션 상태다, 아래 [Session] 참고) ──
     private val flexPolicy = FlexModePolicy()
     private var foldMonitor: FoldStateMonitor? = null
     private var flexCheckJob: Job? = null
@@ -164,53 +163,83 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private val coverPolicy = CoverDismissPolicy()
     private var coverCheckJob: Job? = null
 
-    // ── 세션 컨텍스트 (터미널 상태에서 cleanupSession() 이 초기화한다) ──
-    private var targetPackage: String? = null
-    private var targetLabel: String? = null
-    private var desiredPlacement: Placement = Placement.TOP
-    private var effectivePlacement: Placement = Placement.TOP
-
     /**
-     * P3-5 저장 억제 판정용. placementSource 체인의 최종 결정값 스냅샷
-     * ("OVERRIDE"/"FLEX"/"LAST_SUCCESS"/"PROFILE"/"DEFAULTS"/"FALLBACK"). FLEX 는 사용자가 고른
-     * 값이 아니라 자세 자동 결정이므로 reportTerminal 의 last-success 저장에서 제외한다.
+     * [M1 1단계] 배치 세션 1회분의 상태 전부. 종전엔 서비스의 개별 필드 17개였고
+     * [cleanupSession] 이 그중 16개를 하나씩 손으로 리셋했다 — 필드를 추가하면서 리셋 한 줄을 잊으면
+     * 이전 세션 값이 다음 세션으로 누수되는데, 컴파일러도 테스트도 이를 잡지 못한다.
+     * 한 객체로 묶어 `session = null` 하나로 정리하면 그 버그 클래스가 구조적으로 사라진다.
+     *
+     * val = 세션 시작([beginSession]) 시점에 확정되는 값, var = 세션 중 변이하는 값.
+     *
+     * **읽기 규약**: 읽기 사이트는 매번 `session?.x ?: <기본값>` 을 **인라인으로** 쓴다.
+     * (a) 기본값은 종전 [cleanupSession] 이 되돌리던 값과 정확히 같다 — 세션 종료 뒤 늦게 도착한
+     * 코루틴이 이 상태를 읽는 경로가 실재하고(취소 직후 도착하는 [handleMeasureLetterbox] 등),
+     * 종전엔 그 경로가 리셋된 기본값을 읽었으므로 이렇게 해야 동작이 문자 그대로 보존된다.
+     * (b) `val s = session` 으로 캡처한 뒤 중단점(suspend 호출)을 건너 그 로컬을 재사용하면 안
+     * 된다 — 종전 코드는 매번 필드를 다시 읽었고, 그 사이 [cleanupSession] 이 값을 되돌렸을 수
+     * 있기 때문이다. 유일한 예외는 [reportTerminal] 로, 본문에 중단점이 없어 상단 캡처가 안전하다.
+     *
+     * 이 클래스를 `domain/` 으로 옮기지 않는 이유: [DividerHandle] 이 `platform/` 타입이라
+     * 순수성(CLAUDE.md 철칙, ArchitectureTest)이 깨지고, 로직이 없어 테스트 이득도 0이다.
      */
-    private var sessionPlacementSource: String = "FALLBACK"
-    private var plan: SplitPlan? = null
-    private var resolvedAspect: ResolvedAspect? = null
+    private class Session(
+        val targetPackage: String,
+        val targetLabel: String?,
+        val desiredPlacement: Placement,
+        /**
+         * P3-5 저장 억제 판정용. placementSource 체인의 최종 결정값 스냅샷
+         * ("OVERRIDE"/"FLEX"/"LAST_SUCCESS"/"PROFILE"/"DEFAULTS"/"FALLBACK"). FLEX 는 사용자가 고른
+         * 값이 아니라 자세 자동 결정이므로 reportTerminal 의 last-success 저장에서 제외한다.
+         */
+        val placementSource: String,
+        /** 합치 실패 시 폴백할 이번 세션의 PRESET 값(aspectOverride ?: config.defaults.aspect ?: DEFAULT_ASPECT) */
+        val presetAspect: Float,
+        /** window_profiles.json defaults.requireMeasurementAgreement 의 세션 스냅샷(#12 롤백 레버) */
+        val requireAgreement: Boolean,
+        /** defaults.cacheMeasuredAspect 의 세션 스냅샷(§6 롤백 레버) */
+        val cacheAspectEnabled: Boolean,
+        /** 이 앱의 캐시된 실측 종횡비(DESIGN_12 §6). 합치 불합치 시 PRESET 보다 우선하는 폴백 사전값 */
+        val cachedAspect: Float?,
+        /** confirm 합치 게이트의 비교 대상(진입 전 행축 pre-measure 결과) */
+        val preMeasurement: AspectMeasurement?,
+        /**
+         * [실기기 확인, 2026-07-25] UNRESIZEABLE 앱(넷플릭스류)은 드래그 레시피가 팝업(프리폼)으로
+         * 라우팅돼 상하 분할-선택 진입이 불가능함이 확인됐다. `ResizeModeDetector` 판정 결과로
+         * `beginSession` 이 세션마다 결정한다(세션 밖 폴백은 종전 `cleanupSession` 과 동일하게 DRAG).
+         */
+        val entryRecipe: EntryRecipe,
+        /**
+         * 이번 세션의 오케스트레이션 설정. 종전 `arrangeConfig` 필드는 [cleanupSession] 이 리셋하지
+         * **않아서** 세션 종료 후에도 직전 값이 남아 있었지만, 세션 밖에서 이 값이 관측될 수 있는
+         * 경로가 없으므로 `ArrangeConfig()` 기본값 폴백과 등가다:
+         * (a) session==null ⟺ [machineState]==Idle 이고, `ArrangeStateMachine.reduce` 의 Idle 분기
+         *     (`reduceIdle`)는 config 를 인자로 받지도 않는다 → 스테일 이벤트 경로에서 관측 불가,
+         * (b) [handlePerformEntryStep] 은 세션 진행 중에만 도달하고,
+         * (c) [reportTerminal] 은 [dispatch] 안에서 [cleanupSession] **보다 먼저** 호출돼 세션이
+         *     아직 살아 있으며,
+         * (d) Start 이벤트는 [beginSession] 이 이 값을 확정한 **뒤** 디스패치된다.
+         */
+        val config: ArrangeConfig,
+    ) {
+        var effectivePlacement: Placement = desiredPlacement
+        var plan: SplitPlan? = null
+        var resolvedAspect: ResolvedAspect? = null
 
-    // ── DESIGN_12 측정 합치 게이트 세션 필드 (cleanupSession() 이 초기값으로 리셋) ──
-    /** confirm 합치 게이트의 비교 대상(진입 전 행축 pre-measure 결과) */
-    private var preMeasurement: AspectMeasurement? = null
+        /** confirm 은 세션당 1회만 — 보정 재드래그(Verifying→Dragging 재진입)에서 반복하지 않는다 */
+        var aspectConfirmed: Boolean = false
 
-    /** 합치 실패 시 폴백할 이번 세션의 PRESET 값(aspectOverride ?: config.defaults.aspect ?: DEFAULT_ASPECT) */
-    private var sessionPresetAspect: Float = DEFAULT_ASPECT
+        /** 이번 세션에서 합치로 채택된 종횡비. non-null ∧ Done(verified=true) 이면 캐시에 저장한다(§6 admission) */
+        var consensusAdoptedAspect: Float? = null
+        var lastHandle: DividerHandle? = null
+    }
 
-    /** confirm 은 세션당 1회만 — 보정 재드래그(Verifying→Dragging 재진입)에서 반복하지 않는다 */
-    private var aspectConfirmed = false
+    /** 진행 중인 배치 세션. 터미널 상태에서 [cleanupSession] 이 null 로 되돌린다 */
+    private var session: Session? = null
 
-    /** window_profiles.json defaults.requireMeasurementAgreement 의 세션 스냅샷(#12 롤백 레버) */
-    private var requireAgreement = true
-
-    /** 이 앱의 캐시된 실측 종횡비(DESIGN_12 §6). 합치 불합치 시 PRESET 보다 우선하는 폴백 사전값 */
-    private var sessionCachedAspect: Float? = null
-
-    /** defaults.cacheMeasuredAspect 의 세션 스냅샷(§6 롤백 레버) */
-    private var cacheAspectEnabled = true
-
-    /** 이번 세션에서 합치로 채택된 종횡비. non-null ∧ Done(verified=true) 이면 캐시에 저장한다(§6 admission) */
-    private var consensusAdoptedAspect: Float? = null
-
-    /**
-     * [실기기 확인, 2026-07-25] UNRESIZEABLE 앱(넷플릭스류)은 드래그 레시피가 팝업(프리폼)으로
-     * 라우팅돼 상하 분할-선택 진입이 불가능함이 확인됐다. `ResizeModeDetector` 판정 결과로
-     * `beginSession` 이 세션마다 결정하고, `cleanupSession` 이 DRAG 로 리셋한다.
-     */
-    private var entryRecipe: EntryRecipe = EntryRecipe.DRAG
+    // ── 서비스 수명 필드 (세션 상태가 아니다 — cleanupSession() 이 건드리지 않는다) ──
     private val geometry = WindowGeometry.foldSevenLandscape()
     private var lastScreenshotAtMs: Long = 0L
     private var lastDragCompletedAtMs: Long = 0L
-    private var lastHandle: DividerHandle? = null
     private var lastDividerLocateAtMs: Long = 0L
 
     /** window_profiles.json 파싱 성공 결과만 캐싱한다. 실패는 매 세션 재시도(자산이 나중에 고쳐질 수 있음) */
@@ -256,8 +285,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val pkg = event.packageName?.toString() ?: return
             if (pkg != packageName && pkg !in EXCLUDED_FOREGROUND_PACKAGES) {
-                // 포그라운드 추적은 배치 진행 중에도 계속 돈다. 세션은 시작 시점의 스냅샷([targetPackage])
-                // 만 쓰므로 Recents 진입 중 런처가 잠깐 포그라운드가 돼도 세션이 오염되지 않는다.
+                // 포그라운드 추적은 배치 진행 중에도 계속 돈다. 세션은 시작 시점의 스냅샷
+                // ([Session.targetPackage])만 쓰므로 Recents 진입 중 런처가 잠깐 포그라운드가 돼도
+                // 세션이 오염되지 않는다.
                 lastForegroundPkg = pkg
             }
         }
@@ -690,7 +720,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     /**
      * 현재 전면 앱 패키지. 자기 앱·런처(homePackage)·시스템 UI 는 null 로 취급한다.
      * [beginSession] 의 타깃 결정과 같은 소스([activeAppPackage] 1차, [lastForegroundPkg] 이벤트
-     * 추적 폴백)를 읽되, 세션 상태([targetPackage] 등)는 전혀 건드리지 않는 읽기 전용 함수다.
+     * 추적 폴백)를 읽되, 세션 상태([Session.targetPackage] 등)는 전혀 건드리지 않는 읽기 전용 함수다.
      * [FloatingLauncherService] 의 바로가기 export(exportAppPair)와 [startArrangeWhenForeground]
      * 양쪽이 쓴다.
      */
@@ -798,11 +828,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // 시작된 세션이 진행 중인데 자세가 HALF_OPENED_HORIZONTAL 을 벗어나면(FLAT/UNKNOWN 등
             // 사용자가 이어서 완전히 펴거나 접었다는 뜻) "의도 번복"으로 보고 세션을 취소한다.
             // 세션 활성 판정은 startArrange 의 "이미 배치 진행 중" 체크와 동일한 관용구를 그대로
-            // 쓴다. sessionPlacementSource == "FLEX" 조건 덕분에 수동 트리거(OVERRIDE/LAST_SUCCESS
+            // 쓴다. placementSource == "FLEX" 조건 덕분에 수동 트리거(OVERRIDE/LAST_SUCCESS
             // 등, 사용자가 시작한 행위)는 자세가 바뀌어도 취소되지 않고, 세션이 이미 Done/Failed 로
             // 정리됐다면(cleanupSession 이 machineState 를 Idle 로 되돌리므로) 이 조건 자체가
             // 거짓이 돼 배치 완료 후 기기를 펴서 시청하는 정상 사용례를 건드리지 않는다.
-            if ((machineState != ArrangeState.Idle || sessionInFlight) && sessionPlacementSource == "FLEX") {
+            if ((machineState != ArrangeState.Idle || sessionInFlight) &&
+                (session?.placementSource ?: "FALLBACK") == "FLEX"
+            ) {
                 Log.i(TAG, "flex session cancelled: posture-exit")
                 cancelArrange()
             }
@@ -991,8 +1023,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // Cancel)에서 공통으로 수행한다.
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(true)
 
-        targetPackage = target
-        targetLabel = runCatching {
+        // [M1 1단계] 세션 상태는 전부 로컬 val 로 계산한 뒤 이 함수 끝에서 [Session] 하나로 확정한다.
+        // 종전에는 여기서부터 서비스 필드에 순차 대입해, 중간 suspend 호출이 예외로 이탈하면 반쯤
+        // 채워진 세션이 필드에 남았다 — 이제 그 상태에서는 session 이 null 로 남는다.
+        val targetLabel = runCatching {
             val appInfo = packageManager.getApplicationInfo(target, 0)
             packageManager.getApplicationLabel(appInfo).toString()
         }.getOrNull()
@@ -1010,7 +1044,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // [실기기 확인, 2026-07-25] target 확정 직후 리사이즈 모드를 판정해 진입 레시피를 고른다.
         // null(판정 불가 — 리플렉션 실패 등)은 안전하게 DRAG 로 폴백한다 (조용한 실패 금지: 로그로 드러냄).
         val unresizeableDetection = ResizeModeDetector.isActivitiesUnresizeable(packageManager, target)
-        entryRecipe = if (unresizeableDetection == true) EntryRecipe.MENU else EntryRecipe.DRAG
+        val entryRecipe = if (unresizeableDetection == true) EntryRecipe.MENU else EntryRecipe.DRAG
         Log.i(
             TAG,
             "resize-mode detection: target=$target unresizeableDetection=$unresizeableDetection " +
@@ -1025,8 +1059,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val presetAspect = aspectOverride ?: config?.defaults?.aspect ?: DEFAULT_ASPECT
         // [DESIGN_12 §6] 아래 else 분기의 캐시 조회가 이 값을 바로 써야 하므로 requireAgreement
         // 스냅샷과 나란히 여기서 먼저 확정한다(대입을 사용 지점보다 늦추면 조회 자체가 불가능하다).
-        cacheAspectEnabled = config?.defaults?.cacheMeasuredAspect ?: true
+        val cacheAspectEnabled = config?.defaults?.cacheMeasuredAspect ?: true
         val measurement: AspectMeasurement?
+        val sessionCachedAspect: Float?
         val resolved: ResolvedAspect
         if (aspectOverride != null) {
             // [DESIGN_12 §4, 인접 결함 수정] aspectOverride(메뉴 프리셋 선택 / adb --ef aspect,
@@ -1036,6 +1071,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // 레이트리밋 예산 절약, "강제" 의미론 정상화). 캐시 조회도 동일 논리로 생략한다 —
             // override 는 이미 확정값이라 tier ②.5 비교 자체가 무의미하다.
             measurement = null
+            // 종전에도 이 분기는 sessionCachedAspect 에 대입하지 않아 cleanupSession 이 되돌린
+            // null 이 그대로 유지됐다 — 로컬 val 로 옮기면서 그 값을 명시적으로 적는다.
+            sessionCachedAspect = null
             resolved = ResolvedAspect(aspectOverride, AspectSource.PRESET, null)
         } else {
             // ADR-1 티어 ②: 분할 진입 전 스냅샷 실측 (best effort — 실패해도 진행)
@@ -1044,11 +1082,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
             sessionCachedAspect = cachedAspect
             resolved = AspectResolver.resolve(profile, measurement, presetAspect, cachedAspect)
         }
-        resolvedAspect = resolved
         // [DESIGN_12 §3.2] confirm 합치 게이트(handleDragDividerTo 첫 호출)가 쓸 세션 상태.
-        preMeasurement = measurement
-        sessionPresetAspect = presetAspect
-        requireAgreement = config?.defaults?.requireMeasurementAgreement ?: true
+        val requireAgreement = config?.defaults?.requireMeasurementAgreement ?: true
 
         // P3-3: 명시 오버라이드(메뉴 위/아래 선택)가 항상 최우선이고, 그다음 이 앱의 "마지막 성공
         // 배치"(store.lastSuccessfulPlacement), 그다음 프로파일/기본값, 최종 폴백은 TOP. 조용한
@@ -1091,13 +1126,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 placementSource = "FALLBACK"
             }
         }
-        desiredPlacement = placement
-        effectivePlacement = placement
-        // [P3-5] 저장 억제(reportTerminal) 판정용 스냅샷 — cleanupSession() 이 세션 종료 시 리셋한다.
-        sessionPlacementSource = placementSource
-
         val computedPlan = SplitPlanner.plan(geometry, resolved.aspect, placement)
-        plan = computedPlan
 
         Log.i(
             TAG,
@@ -1116,7 +1145,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // [DESIGN_12 §4] aspectOverride(사용자 명시 "강제")도 동일 논리로 보정에서 제외한다 —
         // verify 재측정이 사용자가 고른 종횡비를 재차 덮어쓰면 "강제" 의미론이 깨진다(잔여값은
         // reportTerminal 이 토스트로 정직하게 보고한다).
-        arrangeConfig = ArrangeConfig(
+        val arrangeConfig = ArrangeConfig(
             residualTolerancePx = config?.defaults?.residualTolerancePx ?: 8,
             // [실기기 확인, 2026-07-25] 진입 단계 수는 레시피에 따라 달라진다 — DRAG(리사이저블
             // 앱 기본) 3단계, MENU(UNRESIZEABLE 전용, 회전 우회) 5단계.
@@ -1129,6 +1158,25 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 aspectOverride == null &&
                 (config?.defaults?.closedLoopCorrection ?: true),
         )
+
+        // [M1 1단계] 여기서 처음으로 세션이 "존재"하게 된다. dispatch(Start) 보다 반드시 먼저여야
+        // 한다 — Start 리듀스가 만들어내는 첫 효과(QuerySplitState 등)의 핸들러가 session 을 읽는다.
+        session = Session(
+            targetPackage = target,
+            targetLabel = targetLabel,
+            desiredPlacement = placement,
+            placementSource = placementSource,
+            presetAspect = presetAspect,
+            requireAgreement = requireAgreement,
+            cacheAspectEnabled = cacheAspectEnabled,
+            cachedAspect = sessionCachedAspect,
+            preMeasurement = measurement,
+            entryRecipe = entryRecipe,
+            config = arrangeConfig,
+        ).also {
+            it.plan = computedPlan
+            it.resolvedAspect = resolved
+        }
 
         dispatch(ArrangeEvent.Start(SystemClock.uptimeMillis(), computedPlan.dividerCenterY))
         startTickLoop()
@@ -1319,7 +1367,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         try {
             var e: ArrangeEvent? = event
             while (e != null) {
-                val transition = ArrangeStateMachine.reduce(machineState, e, arrangeConfig)
+                // [M1 1단계] 매 반복마다 다시 읽는다 — 루프 안에서 cleanupSession() 이 돌 수 있다.
+                // session==null(=Idle) 일 때의 기본값 폴백이 관측 불가능한 근거는 [Session.config] 참고.
+                val transition = ArrangeStateMachine.reduce(machineState, e, session?.config ?: ArrangeConfig())
                 if (transition.state != machineState) {
                     Log.i(TAG, "transition: $machineState -> ${transition.state} (event=$e)")
                 }
@@ -1363,22 +1413,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         tickJob?.cancel()
         tickJob = null
         machineState = ArrangeState.Idle
-        targetPackage = null
-        targetLabel = null
-        plan = null
-        resolvedAspect = null
-        lastHandle = null
-        desiredPlacement = Placement.TOP
-        effectivePlacement = Placement.TOP
-        sessionPlacementSource = "FALLBACK"
-        entryRecipe = EntryRecipe.DRAG
-        preMeasurement = null
-        sessionPresetAspect = DEFAULT_ASPECT
-        aspectConfirmed = false
-        requireAgreement = true
-        sessionCachedAspect = null
-        consensusAdoptedAspect = null
-        cacheAspectEnabled = true
+        session = null
         // 세션 시작 시 숨긴 버블을 복원한다 (beginSession 의 setBubbleHiddenForArrange(true) 짝).
         FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
     }
@@ -1407,7 +1442,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     private fun handlePerformEntryStep(step: Int) {
         scope.launch {
-            val target = targetPackage
+            val target = session?.targetPackage
             if (target == null) {
                 Log.w(TAG, "PerformEntryStep: targetPackage null — 실패로 처리")
                 dispatch(ArrangeEvent.EntryStepResult(SystemClock.uptimeMillis(), false))
@@ -1417,15 +1452,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
             val screen = screenRect()
             val ctx = EntryContext(
                 targetPackage = target,
-                targetLabel = targetLabel,
+                targetLabel = session?.targetLabel,
                 selfPackage = packageName,
                 screen = Rect(screen.left, screen.top, screen.right, screen.bottom),
-                recipe = entryRecipe,
+                recipe = session?.entryRecipe ?: EntryRecipe.DRAG,
             )
 
             // 머신 Tick 타임아웃(entryStepTimeoutMs)보다 먼저 결과 이벤트가 도착하도록 폴링 예산에
             // 여유를 둔다 — 실기기에서 3001ms > 3000ms 경합 관측 (2026-07-25).
-            val stepBudgetMs = (arrangeConfig.entryStepTimeoutMs - ENTRY_STEP_RESULT_MARGIN_MS).coerceAtLeast(500L)
+            val stepBudgetMs = ((session?.config ?: ArrangeConfig()).entryStepTimeoutMs - ENTRY_STEP_RESULT_MARGIN_MS)
+                .coerceAtLeast(500L)
             val success = splitEntry.performStep(step, ctx, stepBudgetMs)
             dispatch(ArrangeEvent.EntryStepResult(SystemClock.uptimeMillis(), success))
         }
@@ -1443,14 +1479,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
             val windowList = safeWindows()
             val handle = dividerLocator.locate(windowList, screenRect())
-            if (handle != null) lastHandle = handle
+            if (handle != null) session?.lastHandle = handle
             dispatch(ArrangeEvent.DividerResult(SystemClock.uptimeMillis(), handle?.centerY))
         }
     }
 
     private fun handleDragDividerTo(targetY: Int) {
         scope.launch {
-            val target = targetPackage
+            // [M1 1단계] session 은 매 사용 지점에서 인라인으로 다시 읽는다 — 아래에 suspend 호출이
+            // 여러 개 있고, 그 사이 cleanupSession() 이 세션을 끝냈을 수 있다([Session] 읽기 규약).
+            val target = session?.targetPackage
             val screen = screenRect()
             var realTargetY = targetY
 
@@ -1458,20 +1496,24 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // MEASURED 후보 세션에서만 발동한다(PRESET/PROFILE/override 는 이미 확정값이라 스킵).
             // 머신이 넘긴 targetY 는 이미 "자문(advisory) 값"이라는 선례가 있다(아래 스왑 실패
             // 분기가 동일 변수를 재계산해 덮어씀) — confirm 재계획도 같은 realTargetY 를 덮어쓴다.
-            if (!aspectConfirmed) {
-                aspectConfirmed = true
-                if (requireAgreement && resolvedAspect?.source == AspectSource.MEASURED) {
+            if (!(session?.aspectConfirmed ?: false)) {
+                session?.aspectConfirmed = true
+                if ((session?.requireAgreement ?: true) &&
+                    session?.resolvedAspect?.source == AspectSource.MEASURED
+                ) {
                     confirmMeasuredAspect(target, screen)?.let { newTargetY -> realTargetY = newTargetY }
                 }
             }
 
-            val actualPosition = actualVideoPanePosition(target, screen) ?: desiredPlacement
+            val actualPosition = actualVideoPanePosition(target, screen)
+                ?: session?.desiredPlacement ?: Placement.TOP
 
-            if (actualPosition != desiredPlacement) {
-                val handleForSwap = lastHandle
+            if (actualPosition != (session?.desiredPlacement ?: Placement.TOP)) {
+                val handleForSwap = session?.lastHandle
                 val swapped = if (handleForSwap != null) {
                     paneSwapper.swap(handleForSwap, SWAP_TIMEOUT_MS, ::awaitDividerSettled) {
-                        actualVideoPanePosition(target, screenRect()) == desiredPlacement
+                        actualVideoPanePosition(target, screenRect()) ==
+                            (session?.desiredPlacement ?: Placement.TOP)
                     }
                 } else {
                     Log.w(TAG, "DragDividerTo: swap 시도 불가 — lastHandle null")
@@ -1479,9 +1521,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 }
 
                 if (swapped) {
-                    effectivePlacement = desiredPlacement
-                    dividerLocator.locate(safeWindows(), screen)?.let { lastHandle = it }
-                    Log.i(TAG, "DragDividerTo: pane swap 성공 — 희망 위치($desiredPlacement) 유지")
+                    session?.effectivePlacement = session?.desiredPlacement ?: Placement.TOP
+                    dividerLocator.locate(safeWindows(), screen)?.let { session?.lastHandle = it }
+                    Log.i(
+                        TAG,
+                        "DragDividerTo: pane swap 성공 — 희망 위치(${session?.desiredPlacement ?: Placement.TOP}) 유지",
+                    )
                 } else {
                     // [측정 2026-07-25] "창 전환" 클릭 result=true 인데 실제 스왑 미발생이 2회
                     // 연속 실측됐다 — 원인 미상. 최종 폴백으로 디바이더 핸들 회전을 2회 반복한다
@@ -1491,16 +1536,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     val rotated = rotateTwiceFallback(target, screen)
 
                     if (rotated) {
-                        effectivePlacement = desiredPlacement
-                        dividerLocator.locate(safeWindows(), screen)?.let { lastHandle = it }
-                        Log.i(TAG, "DragDividerTo: 회전×2 폴백 성공 — 희망 위치($desiredPlacement) 유지")
+                        session?.effectivePlacement = session?.desiredPlacement ?: Placement.TOP
+                        dividerLocator.locate(safeWindows(), screen)?.let { session?.lastHandle = it }
+                        Log.i(
+                            TAG,
+                            "DragDividerTo: 회전×2 폴백 성공 — " +
+                                "희망 위치(${session?.desiredPlacement ?: Placement.TOP}) 유지",
+                        )
                     } else {
                         val recomputedActual = actualVideoPanePosition(target, screenRect()) ?: actualPosition
-                        effectivePlacement = recomputedActual
-                        val aspect = resolvedAspect?.aspect
+                        session?.effectivePlacement = recomputedActual
+                        val aspect = session?.resolvedAspect?.aspect
                         if (aspect != null) {
                             val recomputedPlan = SplitPlanner.plan(geometry, aspect, recomputedActual)
-                            plan = recomputedPlan
+                            session?.plan = recomputedPlan
                             realTargetY = recomputedPlan.dividerCenterY
                         }
                         Log.w(
@@ -1514,13 +1563,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
             }
 
             // [측정 2026-07-25] 보정 드래그가 이전 위치(984)의 스테일 핸들로 허공을 스와이프함 — 매 드래그 직전 재조회 필수.
-            val handle = dividerLocator.locate(safeWindows(), screen) ?: lastHandle
+            val handle = dividerLocator.locate(safeWindows(), screen) ?: session?.lastHandle
             if (handle == null) {
                 Log.w(TAG, "DragDividerTo: lastHandle null — 드래그 불가")
                 dispatch(ArrangeEvent.DragResult(SystemClock.uptimeMillis(), false))
                 return@launch
             }
-            lastHandle = handle
+            session?.lastHandle = handle
 
             // [실기기 확인, 2026-07-25] `input swipe 1092 984 1092 1235 500` (단일 스트로크)만으로
             // 디바이더가 984→1235 로 정확히 이동해 검은 띠가 완전히 제거됐다 — 홀드가 필요 없음이
@@ -1536,7 +1585,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     /**
      * [DESIGN_12 §3.2] MEASURED 후보 세션의 첫 드래그 직전 confirm 측정 + 합치 판정.
-     * 합치 → MEASURED 확정 / 불합치·확인불가 → PRESET 폴백. 어느 쪽이든 [resolvedAspect] 를
+     * 합치 → MEASURED 확정 / 불합치·확인불가 → PRESET 폴백. 어느 쪽이든 [Session.resolvedAspect] 를
      * 갱신하고 재계획한 새 dividerCenterY 를 반환한다(모든 경로가 [finishConfirm] 으로 모이므로
      * "측정 실패"가 "재계획 실패"로 번지지 않는다).
      *
@@ -1596,35 +1645,35 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * [DESIGN_12 §3.2 4~5단계] pre×confirm 합치 판정 → [resolvedAspect] 갱신 → 재계획. confirm 의
+     * [DESIGN_12 §3.2 4~5단계] pre×confirm 합치 판정 → [Session.resolvedAspect] 갱신 → 재계획. confirm 의
      * 모든 경로(성공/불합치/측정 실패)가 여기로 모인다 — 불합치도 PRESET 폴백으로 "결정"이라는
      * 점에서 성공 경로와 동일하게 취급한다(조용한 실패 금지: verdict 를 항상 로그로 남긴다).
      */
     private fun finishConfirm(outcome: ConfirmOutcome, paneAspect: Float): Int {
-        val result = MeasurementConsensus.agree(preMeasurement, outcome, paneAspect)
+        val result = MeasurementConsensus.agree(session?.preMeasurement, outcome, paneAspect)
         // [DESIGN_12 §6] 불합치 폴백은 정적 PRESET 보다 이 앱의 과거 합치∧verified 이력(캐시)이
         // 더 나은 사전값이다 — 오측 시 치유 경로(closedLoopCorrection)가 PRESET 소스와 동일하게
         // 적용되므로 안전망은 그대로 유지된다(§3.5 의 "신규 증거 없으면 차선 증거라도 정적 기본값
         // 보다 우선" 비대칭 논리를 그대로 확장한 것).
         val newResolved = result.adopted?.let { ResolvedAspect(it.value, AspectSource.MEASURED, it) }
-            ?: sessionCachedAspect?.let { ResolvedAspect(it, AspectSource.CACHED, null) }
-            ?: ResolvedAspect(sessionPresetAspect, AspectSource.PRESET, null)
-        resolvedAspect = newResolved
+            ?: session?.cachedAspect?.let { ResolvedAspect(it, AspectSource.CACHED, null) }
+            ?: ResolvedAspect(session?.presetAspect ?: DEFAULT_ASPECT, AspectSource.PRESET, null)
+        session?.resolvedAspect = newResolved
         // 캐시 admission(§6) 은 합치로 채택된 값만 대상이다 — result.agreed(=adopted != null) 가
         // 아니면 기록하지 않는다. 이 세션이 CACHED/PRESET 으로 낙착하는 것과는 별개로, "이번 세션이
         // 새 합치 증거를 냈는가"만이 저장 여부를 결정한다.
         if (result.agreed) {
-            consensusAdoptedAspect = result.adopted?.value
+            session?.consensusAdoptedAspect = result.adopted?.value
         }
         Log.i(
             TAG,
             "consensus: verdict=${result.verdict} outcome=$outcome " +
-                "pre=${preMeasurement?.let { "raw=${it.raw} snapped=${it.snapped}" } ?: "none"} " +
+                "pre=${session?.preMeasurement?.let { "raw=${it.raw} snapped=${it.snapped}" } ?: "none"} " +
                 "→ aspect=${newResolved.aspect} source=${newResolved.source}",
         )
 
-        val newPlan = SplitPlanner.plan(geometry, newResolved.aspect, desiredPlacement)
-        plan = newPlan
+        val newPlan = SplitPlanner.plan(geometry, newResolved.aspect, session?.desiredPlacement ?: Placement.TOP)
+        session?.plan = newPlan
         return newPlan.dividerCenterY
     }
 
@@ -1680,7 +1729,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
      * `SplitEntry.menuStep5` 와 공유한다.
      *
      * 1회차 성공 조건: target+self 두 페인이 [PaneGeometry.isLeftRightSplit].
-     * 2회차 성공 조건: 두 페인이 [PaneGeometry.isTopBottomSplit] ∧ 실제 위치가 [desiredPlacement].
+     * 2회차 성공 조건: 두 페인이 [PaneGeometry.isTopBottomSplit] ∧ 실제 위치가 [Session.desiredPlacement].
      */
     private suspend fun rotateTwiceFallback(target: String?, screen: IntRect): Boolean {
         fun paneRects(): List<IntRect> = listOfNotNull(
@@ -1698,7 +1747,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         val secondRotated = popupRotator.rotateOnce(screen, ROTATE_STEP_TIMEOUT_MS) {
             PaneGeometry.isTopBottomSplit(paneRects(), screen) &&
-                actualVideoPanePosition(target, screen) == desiredPlacement
+                actualVideoPanePosition(target, screen) == (session?.desiredPlacement ?: Placement.TOP)
         }
         if (!secondRotated) {
             Log.w(TAG, "rotateTwiceFallback: 2회차 회전 실패(상하 분할 또는 희망 위치 미도달)")
@@ -1730,8 +1779,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
             try {
                 val screen = screenRect()
-                val paneRect = actualVideoPaneRect(targetPackage, screen)
-                    ?: plan?.videoRect?.let { PaneGeometry.visibleRect(it, screen) }
+                val paneRect = actualVideoPaneRect(session?.targetPackage, screen)
+                    ?: session?.plan?.videoRect?.let { PaneGeometry.visibleRect(it, screen) }
 
                 if (paneRect == null) {
                     Log.w(TAG, "MeasureLetterbox: 유효한 video pane rect 없음")
@@ -1766,7 +1815,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     Log.i(TAG, "verify: residualRows=${residualPx}px residualCols=${residualColsPx}px")
 
                     val correctedTargetY = measurement?.let {
-                        SplitPlanner.plan(geometry, it.value, effectivePlacement).dividerCenterY
+                        val placement = session?.effectivePlacement ?: Placement.TOP
+                        SplitPlanner.plan(geometry, it.value, placement).dividerCenterY
                     }
                     // 알려진 한계(PROGRESS.md 열린 질문): 이 스캔은 상/하 행만 본다. 필러박스(좌우
                     // 검은 띠, 과소 이동으로 세로 방향이 남는 경우)는 residual 0 으로 오판될 수 있다.
@@ -1788,6 +1838,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
     // ══════════════════════════════════════════════════════════
 
     private fun reportTerminal(state: ArrangeState) {
+        // [M1 1단계] [Session] 읽기 규약의 유일한 예외 — 이 함수 본문에는 중단점이 없고(아래
+        // `scope.launch { }` 들은 pkg·placementToPersist·adoptedAspect 를 이미 로컬로 캡처해
+        // 넘긴다), [dispatch] 가 [cleanupSession] 보다 먼저 호출하므로 세션이 아직 살아 있다.
+        val s = session
+        val arrangeConfig = s?.config ?: ArrangeConfig()
+        val desiredPlacement = s?.desiredPlacement ?: Placement.TOP
+        val effectivePlacement = s?.effectivePlacement ?: Placement.TOP
+
         when (state) {
             is ArrangeState.Done -> {
                 // [F9 v1 대응, 계획서 §F9] verified=true 는 "잔여가 허용치 이내" 를 보장하지
@@ -1821,13 +1879,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // 세션(effectivePlacement != desiredPlacement)은 저장하지 않는다. 사용자가 고르지
                 // 않은 위치가 다음 탭의 기본값을 조용히 오염시키면 안 된다(PROGRESS 열린 질문
                 // #19/#20, 위치 전환 실패 실측 근거). verified(측정 검증) 여부는 배치 자체의 성공과
-                // 무관하므로 저장 조건에 넣지 않는다. cleanupSession() 이 targetPackage 를 곧
-                // null 로 되돌리므로 지역 변수로 캡처한 뒤 기존 서비스 스코프에서 저장한다.
+                // 무관하므로 저장 조건에 넣지 않는다. cleanupSession() 이 session 을 곧 null 로
+                // 되돌리므로 지역 변수로 캡처한 뒤 기존 서비스 스코프에서 저장한다.
                 // [P3-5] FLEX(자세 자동 결정) placement 도 동일 논리로 제외한다 — 사용자가 고른
                 // 값이 아닌 자동화 결과가 last-success 를 조용히 오염시키면 안 된다.
-                val pkg = targetPackage
+                val pkg = s?.targetPackage
                 val placementToPersist = effectivePlacement
-                if (pkg != null && effectivePlacement == desiredPlacement && sessionPlacementSource != "FLEX") {
+                if (pkg != null &&
+                    effectivePlacement == desiredPlacement &&
+                    (s?.placementSource ?: "FALLBACK") != "FLEX"
+                ) {
                     // fire-and-forget — ProfileStore.saveLastSuccessfulPlacement 이 내부에서
                     // IOException 을 잡아 Log.w 로 드러내므로(safeWrite) 여기서 scope 예외 처리가
                     // 필요 없다. 이 launch 는 startArrange 의 바깥 try/catch 범위 밖(별도 코루틴)이라
@@ -1842,8 +1903,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // CACHED/PRESET/PROFILE 세션은 consensusAdoptedAspect 가 null 이라 자연 제외되고,
                 // requireAgreement=false 롤백 세션은 confirm 자체가 안 돌아 역시 null — 단일 프레임 값은
                 // 어떤 경로로도 캐시에 들어올 수 없다.
-                val adoptedAspect = consensusAdoptedAspect
-                if (pkg != null && state.verified && adoptedAspect != null && cacheAspectEnabled) {
+                val adoptedAspect = s?.consensusAdoptedAspect
+                if (pkg != null && state.verified && adoptedAspect != null && (s?.cacheAspectEnabled ?: true)) {
                     Log.i(TAG, "aspect cache save: pkg=$pkg aspect=$adoptedAspect (합치∧verified)")
                     scope.launch { store.saveMeasuredAspect(pkg, adoptedAspect) }
                 }
