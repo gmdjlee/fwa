@@ -542,7 +542,7 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 2. **`ExportedReceiver`×2 는 "S1 로 자동 해소" 가 아니었다** — S1 은 W1 항목이라 W0 시점에 `app/src/debug/` 가 없다. baseline 임시 편입했으므로 **W1 종료 시 baseline 에서 이 2건을 제거**해야 게이트가 정직해진다.
 3. **`res/xml/backup_rules.xml` + `android:fullBackupContent` 추가** — minSdk 30(<31)이라 `dataExtractionRules` 단독으로는 lint 갭이 안 닫힌다. 계획에 없던 파일이지만 `allowBackup="false"` 와 정합(전부 제외), 런타임 영향 0.
 
-### W1 — 보안 차단 · **[완료 2026-07-29]**
+### W1 — 보안 차단 · **[완료 2026-07-29 · `be3f337`]**
 **항목:** S1(debug 소스셋 분리, probe 포함) · S4(finish 토큰) · F7(bitmap recycle) · F8(Idle+Cancel)
 **실기기:** 디버그 빌드 adb 트리거 1회 · 메뉴 경유 분할 해제 1회 → **미실시 [미검증]**, `DEVICE_FACTS.md` W1 절에 4항목 등재
 **DoD:** 위 + 릴리스 APK 에 `ArrangeTriggerReceiver`/probe 부재를 `aapt dump badging` 으로 확인
