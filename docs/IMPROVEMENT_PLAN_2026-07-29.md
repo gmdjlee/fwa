@@ -528,7 +528,7 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 
 각 웨이브는 **CLAUDE.md DoD 충족 상태로 종료**한다 = 언제든 중단 가능한 지점.
 
-### W0 — 무위험 정리 · 게이트 정비 · 아키텍처 테스트 · **[완료 2026-07-29]**
+### W0 — 무위험 정리 · 게이트 정비 · 아키텍처 테스트 · **[완료 2026-07-29 · `ffc545d`]**
 **항목:** M7(lint 수정 7종 + baseline) · M4(버전·아이콘·`panelIntent`·KDoc) · M2(CLAUDE.md 정정) · M6(proguard 규칙 준비) · T2(순수성 테스트) · 스타일 4건
 **실기기:** **불필요**
 **DoD:** `testDebugUnitTest` PASS · `assembleDebug` PASS · **`lintDebug` PASS(신규)**
