@@ -7,6 +7,7 @@ import android.os.IBinder
 import android.util.Log
 import dev.dj.foldwindow.BuildConfig
 import dev.dj.foldwindow.IShellExec
+import dev.dj.foldwindow.domain.ShellCommandPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -30,6 +31,17 @@ object ShizukuShell {
     private const val REQUEST_CODE = 30_201
     private const val BIND_POLL_INTERVAL_MS = 50L
     private const val BIND_TIMEOUT_MS = 3_000L
+
+    /**
+     * [exec] 의 클라이언트 쪽 [withTimeoutOrNull] 예산을, 원격에 넘기는 `timeoutMs` 보다 이만큼
+     * 더 크게 잡기 위한 여유. F3 근본 원인: `binder.run(...)` 는 블로킹 바인더 호출이라 코루틴
+     * 취소가 걸리지 않는다(중단점이 없다) — 그래서 실효 타임아웃은
+     * 원격([ShellExecUserService.run])의 `Process.waitFor(timeoutMs, ...)` 뿐이다. 클라 예산을
+     * 원격 예산보다 크게 잡아야 원격이 먼저 포기하고 `"-1\ntimeout ..."` 을 정상적으로 돌려줄
+     * 여유가 생긴다. 클라 타임아웃은 바인더 자체가 죽어 응답이 영영 안 오는 경우를 위한 최후
+     * 방어선일 뿐이다.
+     */
+    private const val BINDER_OVERHEAD_MS = 2_000L
 
     private val userServiceArgs: Shizuku.UserServiceArgs by lazy {
         Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, ShellExecUserService::class.java.name))
@@ -93,18 +105,33 @@ object ShizukuShell {
     }
 
     /**
-     * [command] 를 shell UID 프로세스에서 실행하고 "종료코드\n출력" 문자열을 반환한다.
-     * 실패(바인드 실패/타임아웃/원격 예외)는 null — 호출자가 실패를 명시적으로 처리해야 한다
-     * (조용한 실패 금지).
+     * [argv] 를 shell UID 프로세스에서 실행하고 "종료코드\n출력" 문자열을 반환한다. 실행 전
+     * [ShellCommandPolicy] 허용 목록으로 걸러진다. 실패(정책 차단/바인드 실패/타임아웃/원격
+     * 예외)는 전부 null — 호출자가 실패를 명시적으로 처리해야 한다(조용한 실패 금지).
+     *
+     * **타임아웃 구조 (F3):** 이 함수의 [withTimeoutOrNull] 은 블로킹 바인더 호출
+     * ([IShellExec.run]) 을 취소하지 못한다 — 코루틴 취소는 중단점에서만 작동하는데 바인더
+     * 호출은 중단점이 아니다. 실효 타임아웃은 원격([ShellExecUserService.run])의
+     * `Process.waitFor(timeoutMs, ...)` 뿐이므로, 이 함수의 예산을 [timeoutMs] +
+     * [BINDER_OVERHEAD_MS] 로 원격 예산보다 크게 잡아 원격이 먼저 포기하도록 한다
+     * ([BINDER_OVERHEAD_MS] KDoc 참고).
+     *
+     * [ensureBound] 를 이 타임아웃 창 **밖에서** 먼저 실행하는 이유: `ensureBound` 는 자체
+     * 데드라인([BIND_TIMEOUT_MS])을 갖고 정상적으로 중단 가능(suspend)하다. 안에 넣으면 최대
+     * 3초짜리 바인드 대기가 exec 타임아웃 예산을 갉아먹어 명령 자체에 남는 시간이 줄어든다.
      */
-    suspend fun exec(command: String, timeoutMs: Long): String? = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(timeoutMs) {
-            if (!ensureBound()) {
-                Log.w(TAG, "exec: UserService 바인드 실패 — cmd=$command")
-                return@withTimeoutOrNull null
-            }
-            runCatching { binder?.run(command) }
-                .onFailure { Log.w(TAG, "exec 실패: cmd=$command", it) }
+    suspend fun exec(argv: Array<String>, timeoutMs: Long): String? = withContext(Dispatchers.IO) {
+        if (!ShellCommandPolicy.isAllowed(argv.toList())) {
+            Log.e(TAG, "exec: 허용되지 않은 명령 차단 — argv=${argv.joinToString(" ")}")
+            return@withContext null
+        }
+        if (!ensureBound()) {
+            Log.w(TAG, "exec: UserService 바인드 실패 — argv=${argv.joinToString(" ")}")
+            return@withContext null
+        }
+        withTimeoutOrNull(timeoutMs + BINDER_OVERHEAD_MS) {
+            runCatching { binder?.run(argv, timeoutMs) }
+                .onFailure { Log.w(TAG, "exec 실패: argv=${argv.joinToString(" ")}", it) }
                 .getOrNull()
         }
     }
@@ -126,6 +153,13 @@ object ShizukuShell {
             }
             binder != null
         }
+        // F5: 여기서 바인드 실패(타임아웃/예외)로 낙착됐는데 binding=true 로 고착되면, 다음
+        // exec 호출마다 ensureBound 가 "이미 바인딩 중"으로 오판해 재바인드를 시도조차 하지
+        // 않는다(영구 불능). 실패로 확정된 시점에 래치를 풀어 다음 호출이 재시도할 수 있게 한다.
+        // 뒤늦게 onServiceConnected 가 와도 binder 가 채워지고 이 필드도 재설정되므로 다음 exec
+        // 이 그대로 재사용한다 — unbindUserService 는 호출하지 않는다(도착 직전 연결을 죽이면
+        // 새로운 실패 모드가 생긴다).
+        if (bound != true) binding = false
         return bound ?: false
     }
 }

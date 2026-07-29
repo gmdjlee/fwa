@@ -537,10 +537,11 @@ class ArrangerAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 작은따옴표 필수 — 컴포넌트 클래스명에 '$' 가 올 수 있다(예: YouTube Shell$HomeActivity,
-        // DEVICE_FACTS.md 「P4-1 프로브 F1~F6」 부수 실측 참고).
+        // argv 로 직접 전달되므로(F3+F4+S2+S3) 셸 파싱이 없다 — 컴포넌트 클래스명에 올 수 있는
+        // '$'(예: YouTube Shell$HomeActivity, DEVICE_FACTS.md 「P4-1 프로브 F1~F6」)도 셸 변수
+        // 치환 대상이 아니므로 원천적으로 무해하다. 구 `sh -c` + 작은따옴표 인용 방식은 폐기됐다.
         val startResult = ShizukuShell.exec(
-            "am start --windowingMode 5 -n '${component.flattenToString()}'",
+            arrayOf("am", "start", "--windowingMode", "5", "-n", component.flattenToString()),
             SHELL_EXEC_TIMEOUT_MS,
         )
         if (startResult == null) {
@@ -562,7 +563,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             return
         }
 
-        val stackListOutput = ShizukuShell.exec("am stack list", SHELL_EXEC_TIMEOUT_MS)
+        val stackListOutput = ShizukuShell.exec(arrayOf("am", "stack", "list"), SHELL_EXEC_TIMEOUT_MS)
         val taskId = stackListOutput?.let { StackListParser.taskIdFor(it, target) }
         if (taskId == null) {
             Log.w(TAG, "startPopup: taskId 조회 실패 (target=$target)")
@@ -571,7 +572,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
 
         val resizeResult = ShizukuShell.exec(
-            "am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}",
+            arrayOf(
+                "am", "task", "resize", "$taskId",
+                "${bounds.left}", "${bounds.top}", "${bounds.right}", "${bounds.bottom}",
+            ),
             SHELL_EXEC_TIMEOUT_MS,
         )
         if (resizeResult == null) {
@@ -1994,7 +1998,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
          */
         private const val SHORTCUT_FOREGROUND_TIMEOUT_MS = 5_000L
 
-        /** [P4-1] [ShizukuShell.exec] 개별 셸 명령(am start/am stack list/am task resize) 타임아웃. */
+        /**
+         * [P4-1] [ShizukuShell.exec] 개별 셸 명령(am start/am stack list/am task resize) 타임아웃.
+         * F3+F4+S2+S3 리팩터 이후 이 값은 **원격**([ShellExecUserService.run])의
+         * `Process.waitFor(timeoutMs, ...)` 데드라인으로 그대로 전달된다 — 실효 타임아웃은
+         * 원격에서만 걸린다(클라이언트 쪽 `withTimeoutOrNull` 은 블로킹 바인더 호출을 취소하지
+         * 못하기 때문). 클라이언트 쪽 예산은 이 값에 여유분이 더해져 더 크게 잡히므로 원격이
+         * 먼저 포기한다 — 자세한 근거는 [ShizukuShell.exec] KDoc 참고.
+         */
         private const val SHELL_EXEC_TIMEOUT_MS = 5_000L
 
         /** [P4-1] [startPopup] 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */

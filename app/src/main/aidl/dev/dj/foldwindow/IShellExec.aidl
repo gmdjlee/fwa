@@ -1,5 +1,5 @@
 package dev.dj.foldwindow;
 
 interface IShellExec {
-    String run(String command);
+    String run(in String[] argv, long timeoutMs);
 }

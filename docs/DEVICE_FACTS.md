@@ -931,3 +931,42 @@ purge 가 세션 내에서 카드를 지운 타이밍, 스크롤/레이아웃 �
   정상 존재함을 육안 확인. `FloatingLauncherService.startForegroundCompat()` 에 `@SuppressLint` +
   근거 주석으로 억제 (baseline 미사용 — 억제 근거를 코드 옆에 남기는 쪽을 택함)
 
+---
+
+## 개선 웨이브 W2 (Shizuku 셸 하드닝) — 실기기 재검증 대기 [미검증]
+
+**2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W2.
+해소 대상 = F3(타임아웃 무효) · F4(파이프 데드락) · F5(바인드 래치 고착) · S2(허용 목록 부재) ·
+S3(셸 문자열 보간). 정적 DoD 통과(테스트 299 · assembleDebug · lintDebug 신규 0 · assembleRelease).
+
+**⚠ 이 웨이브는 P4-1 팝업 경로 전체를 관통하는 변경이다.** AIDL 시그니처가 바뀌었으므로
+`versionCode` 를 2→3 으로 올렸다(`Shizuku.UserServiceArgs.version()` 이 UserService 프로세스
+재생성을 결정 — 안 올리면 구 바이너리 재사용으로 `AbstractMethodError`). 재검증 전까지
+**팝업 모드는 전부 [미검증] 로 간주**한다.
+
+| # | 항목 | 확인해야 할 것 | 유도 방법 | 상태 |
+|---|---|---|---|---|
+| W2-1 | **AIDL 재생성** | 재설치 후 첫 팝업에서 `AbstractMethodError` 없이 UserService 가 바인드되는가. 기대 로그 = `FWArranger.Shizuku: ShellExecUserService 연결됨` | 자연 발생 (첫 팝업 시도) | [미검증] |
+| W2-2 | **P4-1 E2E 유튜브** | argv 전환 후 팝업 창이 뜨고 실제 bounds 가 `PopupPlanner` 계산값과 일치하는가. **17차 절차 그대로 재사용** | 버블 메뉴 → 「팝업으로 열기」 | [미검증] |
+| W2-3 | **P4-1 E2E 넷플릭스** | 동일 + DRM 콘텐츠 재생 | 동일 | [미검증] |
+| W2-4 | **S3 회귀 없음 (`$` 클래스명)** | `am start --windowingMode 5 -n <component>` 가 `Shell$HomeActivity` 같은 `$` 포함 클래스명에서 정상 동작. 구 방식의 작은따옴표 인용을 제거했으므로 **이것이 argv 전환의 직접 실증**이다 | W2-2 유튜브가 곧 이 케이스 | [미검증] |
+| W2-5 | **S2 허용 목록 오차단 없음** | 실사용 3종(`am start`/`am stack list`/`am task resize`)이 전부 통과. `blocked by policy` 로그가 **0건**이어야 한다 | W2-2·W2-3 로그 확인 | [미검증] |
+| W2-6 | **F5 재바인드 복구** | 바인드 실패 후 다음 `exec` 이 **재바인드를 시도**하는가 (구 코드는 `binding=true` 고착으로 영구 불능) | `adb shell am force-stop moe.shizuku.privileged.api` → 팝업 시도(실패 관찰) → Shizuku 재실행 → 팝업 재시도(성공해야 함) | [미검증] |
+| W2-7 | **F3 타임아웃 실효** | `am` 이 걸렸을 때 원격이 `-1 / timeout after 5000ms` 를 돌려주고 `popupInFlight` 가 풀리는가 | **인위 유도 곤란** — 자연 발생 대기. `logcat -s FWArranger.Shizuku` 상시 계측 | [미검증] |
+
+**정적으로 확정된 사실 (실기기 없이 검증 완료):**
+- **argv 토큰 순서가 구 셸 문자열과 정확히 일치** — `am start --windowingMode 5 -n <component>` /
+  `am stack list` / `am task resize <id> <l> <t> <r> <b>`. 토큰 단위 대조 완료.
+  `performStartPopup` 의 제어 흐름·폴링 조건·토스트 문구는 무변경(17차 검증분 보존)
+- **허용 목록 강제 지점은 원격**(`ShellExecUserService.run`)이다. 클라이언트(`ShizukuShell.exec`)의
+  동일 검사는 fail-fast 용 중복이며, 우회 가능한 클라 검사만으로는 보안 통제가 성립하지 않는다
+- **타임아웃 예산 배치**: 클라 `withTimeoutOrNull` = `timeoutMs + BINDER_OVERHEAD_MS(2s)` >
+  원격 `waitFor(timeoutMs)`. 코루틴 취소는 중단점에서만 작동하는데 바인더 호출은 중단점이
+  아니므로 **실효 타임아웃은 원격에만 존재한다** — 클라 예산을 더 크게 잡아야 원격이 먼저
+  포기하고 진단 가능한 timeout 문자열이 돌아온다. `ensureBound()` 는 자체 데드라인
+  (`BIND_TIMEOUT_MS` 3s)을 가지므로 이 창 **밖**에 둬 예산 이중 소비를 막았다
+- **소스 위생 함정 [신규]** — Kotlin 소스에 NUL 문자 이스케이프를 쓰려다 파일 기록 과정에서
+  **raw NUL 바이트(0x00)가 소스에 그대로 박히는** 현상 발생. Read 계열 도구가 NUL 을 공백처럼
+  렌더해 오타로 오인하기 쉽다. `c.code == 0` / `0.toChar()` 형태로 재작성해 이스케이프 자체를
+  소스에서 제거함. **이 도구 체인에서 파일 내용에 유니코드 이스케이프를 넣을 때 상시 주의**
+

@@ -13,8 +13,13 @@ android {
         applicationId = "dev.dj.foldwindow"
         minSdk = 30              // takeScreenshot() 이 API 30+
         targetSdk = 36           // Android 16 적응형 동작을 적극 활용
-        versionCode = 2
-        versionName = "0.4.0"
+        // W2(F3+F4+S2+S3): IShellExec.aidl 시그니처가 바뀌었다. Shizuku.UserServiceArgs.version()
+        // 이 이 값을 근거로 UserService 프로세스 재생성 여부를 결정하므로, AIDL 변경 시 버전을
+        // 반드시 올려야 한다 — 안 그러면 기기에 이미 떠 있는 구 바이너리가 재사용돼
+        // AbstractMethodError 가 난다. (W0 에서 1→2 로 올렸으나 그 빌드가 기기에 설치돼 있을 수
+        // 있으므로, AIDL 이 실제로 바뀌는 이 커밋에서 다시 올린다.)
+        versionCode = 3
+        versionName = "0.4.1"
     }
 
     buildTypes {
