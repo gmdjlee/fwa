@@ -7,7 +7,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
-import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
@@ -1339,14 +1338,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
             }
 
             val screen = screenRect()
-            val panelIntent = Intent(this@ArrangerAccessibilityService, PanelActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
             val ctx = EntryContext(
                 targetPackage = target,
                 targetLabel = targetLabel,
                 selfPackage = packageName,
-                panelIntent = panelIntent,
                 screen = Rect(screen.left, screen.top, screen.right, screen.bottom),
                 recipe = entryRecipe,
             )
@@ -1862,9 +1857,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     // ══════════════════════════════════════════════════════════
 
     private suspend fun captureScreen(): Bitmap? = suspendCancellableCoroutine { cont ->
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            cont.resume(null); return@suspendCancellableCoroutine
-        }
+        // [M7, minSdk=30=R] SDK_INT < R 가드는 항상 거짓인 죽은 분기였다(ObsoleteSdkInt) — 제거.
         lastScreenshotAtMs = SystemClock.uptimeMillis() // 호출 시점 기준 — 성공/실패와 무관하게 레이트리밋을 소비한다
         runCatching {
             takeScreenshot(

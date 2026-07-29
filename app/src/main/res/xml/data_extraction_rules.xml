@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    android:allowBackup="false" (AndroidManifest.xml) 와 정합: 클라우드 백업·기기 이전 모두
+    전부 제외한다. lint DataExtractionRules 경고 대응(Android 12+ 명시적 표현) — 실질 동작은
+    allowBackup="false" 가 이미 모든 백업 경로를 막고 있으므로 변경 없음.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

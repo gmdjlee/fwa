@@ -39,6 +39,10 @@ object ResizeModeDetector {
      *   패키지 조회 실패 등). null 을 반환하는 것은 조용한 실패가 아니라 명시적 미판정 상태다 —
      *   호출측이 로그로 원인을 남기고 안전한 기본값(DRAG)으로 폴백한다.
      */
+    // lint SoonBlockedPrivateApi/DiscouragedPrivateApi 억제: 폴백 비트(FALLBACK_UNRESIZEABLE_BIT)가
+    // 이미 예외를 대응하므로 기능적 문제 없음 — 위 KDoc 실측 근거 참고(상수 리플렉션은 hiddenapi
+    // max-target-o 로 denied 될 수 있으나 runCatching + 폴백값으로 이미 흡수됨).
+    @Suppress("SoonBlockedPrivateApi", "DiscouragedPrivateApi")
     fun isActivitiesUnresizeable(pm: PackageManager, packageName: String): Boolean? =
         runCatching {
             val appInfo: ApplicationInfo = pm.getApplicationInfo(packageName, 0)

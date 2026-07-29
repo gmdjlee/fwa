@@ -63,8 +63,12 @@ data/       프로파일 영속화 (DataStore)
 
 ### 의존성
 
-Hilt DI, Jetpack Compose, Kotlin Coroutines/Flow, DataStore.
+Jetpack Compose, Kotlin Coroutines/Flow, DataStore, kotlinx-serialization, androidx.window, Shizuku API.
 `domain/` 은 kotlin-stdlib 외의 의존성을 갖지 않는다.
+
+**DI 프레임워크는 쓰지 않는다.** 각 컴포넌트가 필요한 협력자를 직접 생성한다
+(예: `by lazy { ProfileStore(this) }`). 이 규모에서는 수동 생성이 옳은 선택이며,
+Hilt 도입은 이득 없는 부채다 — 새 코드도 이 관례를 따를 것.
 
 ---
 
@@ -118,9 +122,10 @@ API 36 타겟 시 sw≥600dp 화면에서 `screenOrientation`, `maxAspectRatio`,
 작업 하나가 끝났다고 말하려면:
 1. `./gradlew :app:testDebugUnitTest` 통과
 2. `./gradlew :app:assembleDebug` 통과
-3. `domain/` 변경 시 대응 테스트 추가/갱신
-4. `PROGRESS.md` 갱신
-5. 실기기 검증이 필요한 항목은 `docs/DEVICE_FACTS.md` 에 "미검증" 으로 명시
+3. `./gradlew :app:lintDebug` 통과 (W0 에서 게이트화. baseline 에 없는 **신규** 경고만 잡힌다)
+4. `domain/` 변경 시 대응 테스트 추가/갱신
+5. `PROGRESS.md` 갱신
+6. 실기기 검증이 필요한 항목은 `docs/DEVICE_FACTS.md` 에 "미검증" 으로 명시
 
 빌드가 깨진 상태로 "완료" 보고 금지.
 
@@ -128,9 +133,20 @@ API 36 타겟 시 sw≥600dp 화면에서 `screenOrientation`, `maxAspectRatio`,
 
 ## 검증 명령
 
+**전제 — `JAVA_HOME`:** `gradle.properties` 의 `org.gradle.java.home` 은 Gradle **데몬**의 JDK 만
+지정한다. `gradlew` **런처 스크립트 자체**는 별도로 `JAVA_HOME` 을 요구하므로, 이 머신의 Git Bash 에서는
+프리픽스가 없으면 `JAVA_HOME is not set` 로 실패하거나 조용히 실패한다(installDebug 가 구버전 APK 를
+남겨 40분을 태운 실측 사례 있음). 아래 모든 gradlew 명령에 다음을 붙인다:
+
+```bash
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+```
+
 ```bash
 ./gradlew :app:testDebugUnitTest        # 도메인 단위 테스트
 ./gradlew :app:assembleDebug            # 빌드
+./gradlew :app:lintDebug                # lint 게이트 (W0 도입, lint-baseline.xml 기준선)
+./gradlew :app:updateLintBaseline       # 기준선 갱신 — 근거 없이 실행 금지
 ./gradlew :app:installDebug             # 설치
 adb shell am start -n dev.dj.foldwindow/.probe.ProbeActivity
 adb shell settings put secure enabled_accessibility_services \

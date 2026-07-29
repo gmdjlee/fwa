@@ -3,7 +3,6 @@ package dev.dj.foldwindow.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -38,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import dev.dj.foldwindow.R
 import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.service.ArrangerAccessibilityService
@@ -127,7 +127,7 @@ class OnboardingActivity : ComponentActivity() {
     private fun requestOverlayPermission() {
         val intent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$packageName"),
+            "package:$packageName".toUri(),
         )
         startActivity(intent)
     }

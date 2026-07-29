@@ -13,14 +13,19 @@ android {
         applicationId = "dev.dj.foldwindow"
         minSdk = 30              // takeScreenshot() 이 API 30+
         targetSdk = 36           // Android 16 적응형 동작을 적극 활용
-        versionCode = 1
-        versionName = "0.1.0-phase0"
+        versionCode = 2
+        versionName = "0.4.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
     }
 
     compileOptions {

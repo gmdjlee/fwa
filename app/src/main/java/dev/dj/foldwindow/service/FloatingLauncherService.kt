@@ -34,6 +34,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.IconCompat
 import dev.dj.foldwindow.R
 import dev.dj.foldwindow.data.ProfileStore
@@ -296,6 +297,16 @@ class FloatingLauncherService : Service() {
         attachBubbleView()
     }
 
+    /**
+     * lint `ClickableViewAccessibility` 대응(setOnTouchListener 호출부 검사): 정적 검사가 "터치
+     * 리스너를 단 뷰의 실제 클래스가 `performClick()` 을 오버라이드하는지" 를 보므로, 프레임워크
+     * `ImageView` 를 그대로 쓰면 상속만으로는 통과하지 못한다. `super.performClick()` 만 호출하는
+     * 최소 오버라이드라 동작은 `View.performClick()` 기본 구현과 완전히 동일하다(행동 변경 없음).
+     */
+    private inner class BubbleImageView : ImageView(this@FloatingLauncherService) {
+        override fun performClick(): Boolean = super.performClick()
+    }
+
     private fun createBubbleViewIfNeeded() {
         if (bubbleView != null) return
 
@@ -318,12 +329,17 @@ class FloatingLauncherService : Service() {
             y = savedY.coerceIn(0, maxY)
         }
 
-        val view = ImageView(this).apply {
+        val view = BubbleImageView().apply {
             setImageResource(R.drawable.ic_bubble)
             setBackgroundResource(R.drawable.bubble_background)
             contentDescription = getString(R.string.bubble_content_description)
-            val pad = (14 * resources.displayMetrics.density).toInt()
+            val pad = (BUBBLE_ICON_PADDING_DP * resources.displayMetrics.density).toInt()
             setPadding(pad, pad, pad, pad)
+            // lint ClickableViewAccessibility 대응: 탭 실행은 performClick() 경로로 통일한다 —
+            // 스크린리더의 ACTION_CLICK(예: TalkBack "두 번 탭하여 활성화")도 이 리스너를 거쳐
+            // onBubbleTap() 을 실행하게 하기 위함이다. 실제 탭 판정(BubbleTouchListener)은
+            // 여전히 터치 이벤트로 하되, 확정된 탭은 view.performClick() 을 호출해 여기로 수렴한다.
+            setOnClickListener { onBubbleTap() }
         }
         view.setOnTouchListener(BubbleTouchListener(view, params))
 
@@ -424,7 +440,10 @@ class FloatingLauncherService : Service() {
                     when {
                         longPressFired -> Unit // 이미 롱프레스 콜백에서 처리됨
                         dragging -> snapToEdge(view, params)
-                        else -> onBubbleTap()
+                        // lint ClickableViewAccessibility 대응: 탭 확정 시 performClick() 을 거친다
+                        // (view 의 OnClickListener 가 onBubbleTap() 을 호출). 탭/드래그/롱프레스
+                        // 판정 임계값·타이밍은 변경 없음 — 실행 경로만 표준 클릭 경로로 통일했다.
+                        else -> view.performClick()
                     }
                     return true
                 }
@@ -581,7 +600,7 @@ class FloatingLauncherService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundResource(R.drawable.menu_background)
-            val pad = (4 * density).toInt()
+            val pad = (MENU_CONTAINER_PADDING_DP * density).toInt()
             setPadding(pad, pad, pad, pad)
         }
 
@@ -634,8 +653,8 @@ class FloatingLauncherService : Service() {
             setTextColor(MENU_ITEM_TEXT_COLOR)
             textSize = MENU_ITEM_TEXT_SIZE_SP
             setBackgroundResource(R.drawable.menu_item_background)
-            val horizontal = (14 * density).toInt()
-            val vertical = (10 * density).toInt()
+            val horizontal = (MENU_ITEM_PADDING_H_DP * density).toInt()
+            val vertical = (MENU_ITEM_PADDING_V_DP * density).toInt()
             setPadding(horizontal, vertical, horizontal, vertical)
             isClickable = true
             setOnClickListener { onClick() }
@@ -797,7 +816,7 @@ class FloatingLauncherService : Service() {
         (drawable as? BitmapDrawable)?.bitmap?.let { return it }
         val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 1
         val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 1
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, canvas.width, canvas.height)
         drawable.draw(canvas)
@@ -845,12 +864,20 @@ class FloatingLauncherService : Service() {
         private const val BUBBLE_SIZE_DP = 56
         private const val SNAP_ANIM_DURATION_MS = 200L
 
+        /** [createBubbleViewIfNeeded] 버블 아이콘(ImageView) 내부 패딩. */
+        private const val BUBBLE_ICON_PADDING_DP = 14
+
         // P3-2 확장 메뉴 스타일. 과한 꾸밈 없이 bubble_background 와 톤만 맞춘다.
-        // -1 은 0xFFFFFFFF(불투명 흰색 ARGB)의 32비트 부호있는 Int 표현과 동일하다 — hex 리터럴이
-        // Int 범위를 넘는 애매함을 피하기 위해 직접 값으로 적었다.
-        private const val MENU_ITEM_TEXT_COLOR = -1
+        private val MENU_ITEM_TEXT_COLOR = Color.WHITE
         private const val MENU_ITEM_TEXT_SIZE_SP = 15f
         private const val MENU_DIVIDER_COLOR = 0x33FFFFFF
+
+        /** [buildMenuContent] 스크림 컨테이너(LinearLayout)의 사방 패딩. */
+        private const val MENU_CONTAINER_PADDING_DP = 4
+
+        /** [addMenuItem] 메뉴 항목 TextView 의 좌우/상하 패딩. */
+        private const val MENU_ITEM_PADDING_H_DP = 14
+        private const val MENU_ITEM_PADDING_V_DP = 10
 
         /**
          * setBubbleHiddenForArrange(true) 후 복원 신호가 오지 않을 때 자동 재표시까지의 유예.

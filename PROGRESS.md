@@ -2,16 +2,79 @@
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
 
-**최종 갱신:** 2026-07-28 밤 **#27 종결 — 19차 실기기 캠페인 완료 + 축 B 기각·제거** (테스트 282 PASS · assembleDebug PASS · 제거 빌드 실기기 3/3 done 무회귀). **채택 = 축 A(파괴 제거) + #28**, **기각 = 축 B(소환)**. 근거: ① 소환 카드의 base intent 가 `NEW_DOCUMENT|MULTIPLE_TASK` 로 오염돼 **step3 를 깨뜨림**(전체화면 낙착 → 가드 3회 → `ENTRY_STEP_FAILED`) — 대조군 런처 형태 카드(`flg=0x10000000`)는 정상 낙착 ② **전제 반증**: 카드 0 에서도 배치 **5/5 성공**(`pm clear` 표본 2건으로 신규 설치 교란 배제) — 피커는 앱 목록에서도 「FW Panel」 제공. G4·G5·G6·G7·레버 전부 통과, G2 만 실패. 상세 = `docs/DEVICE_FACTS.md` 19차 절 · 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`. **[미해결]** 17차 3전멸의 진짜 원인 — 카드 0 은 재현 안 됨. 직전 = **#27 v1 구현(축 A+축 B+#28)** — A1 `finishAndRemoveTask()`→`finish()` 격하 4경로 5곳(커버 해제·dismissSplit instance·자가 가드·EXTRA_FINISH_PANEL onCreate/onNewIntent) + A2 `purgeStalePanelTasks`→`pruneExtraPanelTasks`(판정은 신규 순수 도메인 `PanelTaskPolicy`, MRU 1개 보존) + 반증된 premise 서술 KDoc 정리. **테스트 282 PASS(신규 `PanelTaskPolicyTest` 11개 포함) · assembleDebug PASS**. 실기기 G4~G7 [미검증]. 잔여 = 축 B 소환(B0) · #28. 직전 = **18차 프로브 — #27 원인 확정·설계 확정** (adb 전용·코드 무변경: purge 자충 재현 + G1·G3 통과 + AOSP 사실관계 확정 → 주 수정을 「소환 신설」에서 **「파괴 제거」**로 전환. `docs/DESIGN_27_PANEL_CARD.md` · DEVICE_FACTS 18차 절). 그 직전 = **17차 실기기 캠페인** — Phase 4 구현분 4종 검증 **실질 완료** (adb 주도, DEVICE_FACTS 17차 절): **P4-2 5/5** · **P4-4 4.5/5** · **P4-3 6/7** (신규 수단 `cmd device_state state 0/reset` 에뮬레이션으로 커버 게이트 전 경로 발화 — 핵심 미지수였던 "닫힘 중 패널 finish 의 분할 해소" 에뮬 기준 해소) · **P4-1 7/7** (Shizuku v13.6.0 adb 설치·스타터 활성 — 온보딩 3분기·메뉴 출현·재바인드·유튜브/넷플릭스 팝업 E2E bounds 정확·DRM 재생 Secure layer 팝업 내 구동). 부수: 12차 캐시 폴백 실전 2회 발동 실증. **⚠ 신규 중대 결함 발견**: step3 패널 소환 경로 부재 — 피커 「FW Panel」 노드 = recents 태스크 카드인데 `finishAndRemoveTask`(커버 해제·dismissSplit·purge·자가 가드)가 카드를 제거하면 배치 전체 불능 (node-not-found 3전멸, 재현 4회 + 원인 결정 실험 완료). purge 는 세션 시작마다 자충. 과거 캠페인은 카드 상시 잔존 우연에 의존했음. **P4-3 실배포 전 수정 필수** — DEVICE_FACTS 17차 「신규 결함」 절에 수정 방향 3후보
+**최종 갱신:** 2026-07-29 **개선 계획 W0 완료 — 무위험 정리·lint 게이트 도입·아키텍처 테스트** (M7·M4·M2·M6·T2·스타일 4건. `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W0). **DoD 3종 PASS: 테스트 285(282+T2 3) · assembleDebug · `lintDebug`(신규 게이트, baseline 17건 필터)**. 실기기 불필요. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **잔여 작업 재편 (코드 무변경, 문서 정리만)** — 착수 목록을 A(사용자 물리 확인) · B(미발동·희귀 경로) · C(v1.5 후보) 로 3분류, Phase 4 행 갱신(19차 종결 반영), 번호 중복 해소. **차단 작업 0 — v1 기능은 전부 구현·검증 완료 상태.** 직전 = 2026-07-28 밤 **#27 종결 — 19차 실기기 캠페인 완료 + 축 B 기각·제거** (테스트 282 PASS · assembleDebug PASS · 제거 빌드 실기기 3/3 done 무회귀). **채택 = 축 A(파괴 제거) + #28**, **기각 = 축 B(소환)**. 근거: ① 소환 카드의 base intent 가 `NEW_DOCUMENT|MULTIPLE_TASK` 로 오염돼 **step3 를 깨뜨림**(전체화면 낙착 → 가드 3회 → `ENTRY_STEP_FAILED`) — 대조군 런처 형태 카드(`flg=0x10000000`)는 정상 낙착 ② **전제 반증**: 카드 0 에서도 배치 **5/5 성공**(`pm clear` 표본 2건으로 신규 설치 교란 배제) — 피커는 앱 목록에서도 「FW Panel」 제공. G4·G5·G6·G7·레버 전부 통과, G2 만 실패. 상세 = `docs/DEVICE_FACTS.md` 19차 절 · 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`. **[미해결]** 17차 3전멸의 진짜 원인 — 카드 0 은 재현 안 됨. 직전 = **#27 v1 구현(축 A+축 B+#28)** — A1 `finishAndRemoveTask()`→`finish()` 격하 4경로 5곳(커버 해제·dismissSplit instance·자가 가드·EXTRA_FINISH_PANEL onCreate/onNewIntent) + A2 `purgeStalePanelTasks`→`pruneExtraPanelTasks`(판정은 신규 순수 도메인 `PanelTaskPolicy`, MRU 1개 보존) + 반증된 premise 서술 KDoc 정리. **테스트 282 PASS(신규 `PanelTaskPolicyTest` 11개 포함) · assembleDebug PASS**. 실기기 G4~G7 [미검증]. 잔여 = 축 B 소환(B0) · #28. 직전 = **18차 프로브 — #27 원인 확정·설계 확정** (adb 전용·코드 무변경: purge 자충 재현 + G1·G3 통과 + AOSP 사실관계 확정 → 주 수정을 「소환 신설」에서 **「파괴 제거」**로 전환. `docs/DESIGN_27_PANEL_CARD.md` · DEVICE_FACTS 18차 절). 그 직전 = **17차 실기기 캠페인** — Phase 4 구현분 4종 검증 **실질 완료** (adb 주도, DEVICE_FACTS 17차 절): **P4-2 5/5** · **P4-4 4.5/5** · **P4-3 6/7** (신규 수단 `cmd device_state state 0/reset` 에뮬레이션으로 커버 게이트 전 경로 발화 — 핵심 미지수였던 "닫힘 중 패널 finish 의 분할 해소" 에뮬 기준 해소) · **P4-1 7/7** (Shizuku v13.6.0 adb 설치·스타터 활성 — 온보딩 3분기·메뉴 출현·재바인드·유튜브/넷플릭스 팝업 E2E bounds 정확·DRM 재생 Secure layer 팝업 내 구동). 부수: 12차 캐시 폴백 실전 2회 발동 실증. **⚠ 신규 중대 결함 발견**: step3 패널 소환 경로 부재 — 피커 「FW Panel」 노드 = recents 태스크 카드인데 `finishAndRemoveTask`(커버 해제·dismissSplit·purge·자가 가드)가 카드를 제거하면 배치 전체 불능 (node-not-found 3전멸, 재현 4회 + 원인 결정 실험 완료). purge 는 세션 시작마다 자충. 과거 캠페인은 카드 상시 잔존 우연에 의존했음. **P4-3 실배포 전 수정 필수** — DEVICE_FACTS 17차 「신규 결함」 절에 수정 방향 3후보
 **직전(P4-1 프로브+구현):** 프로브 F1~F6 게이트 통과·후보 A(Shizuku 셸) 채택(`7e1d912`) → 구현 완료(UserService AIDL + PopupPlanner·StackListParser + startPopup 5단 폴링 + 메뉴 조건부 노출 + 온보딩 카드). 테스트 271·빌드 PASS. 그 전 Phase 4 구현(`9c36905`)·16차·15차 = DEVICE_FACTS 각 절 참조
-**현재 Phase:** Phase 4 — **전 항목 구현 + 17차 검증 완료**. 잔여 = Phase B 물리 3건(아래 1번) + step3 소환 결함 수정. Phase 3 완료 확정
-**다음 행동 (착수 목록):**
-1. **~~#27 실기기 검증 캠페인~~ → 완료(19차)**. 잔여는 **Phase B 물리 3건**(아래 2번)과 아래 v1.5 후보들뿐 — #27 은 종결됐다. 남은 미지: 17차 3전멸 원인 [미해결] — 재발 시 피커 화면 상태·purge 타이밍을 후보로 재조사 (카드 0 가설은 5/5 반증으로 폐기)
-2. **Phase B 물리 확인 3건** (사용자 조작): P4-3 항목1·2 물리 접기(화면 꺼짐 실상태) · P4-1 DRM 육안(팝업 재생 실화면) · (참고) 600ms 재펴기는 미검증 수용
-2. P3-5 발 v1.5 후보: 포그라운드 안정성 윈도(폴드 전환 중 월렛 quick 카드가 event-tracked 오염 → 게이트5 통과 실측) · 재열기 멈칫 Done-후 분할 잔존(수동 해제로 복구, 키가드 게이트는 정당 사용례 훼손으로 기각) · 각도 대역 경계값 실측
-3. #12 v1.5 후보 축적분: BOTH_AXES_BARS 시 보정 생략(G1 드리프트 실측) · 적응형 residual(글로우 필러박스 블라인드 G5 실측) · 비-16:9 콘텐츠 합치·캐시 실측 · flex 게이트2↔startArrange TOCTOU(이론상, DEVICE_FACTS 기록)
-4. P3-2 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로). 회전×2 폴백 검증 기회 확보
-5. #20 잔여 미발동 경로는 자연 발생 대기 (mech 로그 상시 계측) — 3시도 전멸 재발 시 FORENSIC viewId 로 특정 후 스텝 되감기 재검토
+**현재 Phase:** Phase 4 — **전 항목 구현 + 17차·19차 검증 완료, #27 종결**. 잔여 = 아래 「남은 작업」 A(물리 2건) · B(희귀 경로) · C(v1.5) 뿐. Phase 0~3 완료 확정
+
+---
+
+## 🔖 남은 작업 (2026-07-29 정리 — 재개 지점)
+
+**전제:** Phase 0~4 전 항목 구현 완료. 17차·19차 실기기 캠페인으로 주 경로 검증 완료. **차단 작업 없음.**
+아래는 전부 "v1 을 더 단단하게" 하는 잔여이며, 어느 것도 다른 것을 막지 않는다. 착수 순서는 자유.
+
+### A. 사용자 물리 조작 필요 — adb 대체 불가 (실질 유일한 잔여)
+
+| # | 항목 | 현재 상태 | 필요한 조작 |
+|---|---|---|---|
+| A-1 | **P4-3 항목1·2 물리 접기** | 17차에 `cmd device_state state 0/reset` **에뮬레이션으로만** 커버 게이트 전 경로 발화 확인 | 실제로 기기를 접어 **화면 꺼짐 실상태**에서 커버 자동 해제 발화 확인 |
+| A-2 | **P4-1 DRM 육안** | 팝업 창 내 Secure layer 구동은 로그로 확인 (17차 7/7) | 넷플릭스 등 DRM 재생을 팝업 창에서 **눈으로** 정상 렌더 확인 |
+| A-3 | (참고) 600ms 재펴기 | **조치 불필요** — 15차 결정으로 미검증 수용 확정 | — |
+
+### B. 미발동·희귀 경로 [미검증] — 자연 발생 대기 또는 인위적 유도
+
+| # | 경로 | 유도 방법 / 비고 |
+|---|---|---|
+| B-1 | **#28** `performDismissSplit` 3분기 중 "패널 태스크 부재" 분기 | 조건 = `instance==null` ∧ 패널 태스크 부재 ∧ 분할 활성 판정 통과. 희귀 — `am force-stop` + 태스크 스와이프 조합으로 인위 유도 필요 |
+| B-2 | **P3-2** dismissSplit 인텐트 폴백 | 조건 = `instance==null` (프로세스 사망 후 분할 잔존). B-1 과 인접 조건 — 같은 세션에서 함께 유도 가능 |
+| B-3 | **#20** 클릭 사이클 cycle-2(a11y) · 스왑 제스처 사이클(cycle-1/2) | 10차 이후 미발동. `mech` 로그 상시 계측 중 — 자연 발생 대기. 3시도 전멸 재발 시 FORENSIC viewId 로 특정 후 스텝 되감기 재검토 |
+| B-4 | **#19** 스왑 실패 시 회전×2 폴백 | 누적 12+ 세션 미발동 (PaneSwapper 가 항상 수렴). 검증 기회 확보 대기 |
+| B-5 | **`PanelTaskPolicy`** `ActivityManager.appTasks` MRU-first 순서 계약 | 공개 API 로 `lastActiveTime` 조회 불가 → 플랫폼이 전부 0 전달, 순서에 위임. 이 계약 자체가 [미검증] — prune 오제거 시 재조사 |
+
+### C. v1.5 후보 (v1 범위 밖, 결정 완료 — 근거는 각 항목 참조)
+
+- **#12 축적분**: BOTH_AXES_BARS 시 보정 생략(G1 드리프트 실측) · 적응형 residual(글로우 필러박스 블라인드 G5 실측) · 비-16:9 콘텐츠 합치·캐시 실측 · flex 게이트2↔startArrange TOCTOU(이론상, DEVICE_FACTS 기록)
+- **P3-5 축적분**: 포그라운드 안정성 윈도(폴드 전환 중 월렛 quick 카드가 event-tracked 오염 → 게이트5 통과 실측) · 재열기 멈칫 Done-후 분할 잔존(수동 해제로 복구, 키가드 게이트는 정당 사용례 훼손으로 기각) · 각도 대역 경계값 실측
+- **열린 질문 잔여**: #1 `rowStride` 축소의 역산 정밀도 영향 · #3 wavve 패키지명 · #5 `ADAPTIVE_*` 상수 실기기 재검증 · #6 셀렉터 다국어(EN) 안정성 · #14 BOTTOM 배치 시 스왑 생략 가능성
+
+### D. 미해결 (원인 미상 — 재발 시 재조사)
+
+- **17차 step3 3전멸의 진짜 원인**. 19차에 「카드 0」 가설은 **5/5 배치 성공으로 반증·폐기**(`pm clear` 표본 2건이 신규 설치 교란 배제). 재발 시 후보 = 피커 화면 상태 · purge 타이밍 · 오염 카드 잔존. 관련 기록 = 열린 질문 #27, DEVICE_FACTS 17차·19차 절
+
+---
+
+## 🌊 개선 웨이브 진행 (2026-07-29 리뷰 대응)
+
+계획서 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` · 원 리뷰 = `docs/CODE_REVIEW_2026-07-29.md`
+전 8웨이브(W0~W7) / 23항목. 각 웨이브 종료 = CLAUDE.md DoD 충족 = 언제든 중단 가능한 지점.
+
+| 웨이브 | 상태 | 실기기 |
+|---|---|---|
+| **W0** 무위험 정리·게이트·아키텍처 테스트 | ✅ **완료** | 불필요 |
+| W1 보안 차단 (S1·S4·F7·F8) | ⬜ 미착수 | 0.5회 |
+| W2 Shizuku 셸 하드닝 (F3·F4·F5·S2·S3) | ⬜ 미착수 | 1회 |
+| W3 기하 정합성·도메인 불변식 (F2 1단계·F1) | ⬜ 미착수 | 0.5회 |
+| W4 테스트 안전망 (T1) | ⬜ 미착수 | 불필요 |
+| W5 구동부 안정화 (F6·F9) | ⬜ 미착수 | 1회 |
+| W6 세션 상태 캡슐화 (M1 1단계) ⚠ 최대 위험·단독 커밋 | ⬜ 미착수 | 1회 |
+| W7 성능·중복 정리 (P1·M3·P2·P4) | ⬜ 미착수 | 1회 |
+
+### W0 완료 내역 (실기기 불필요 · 런타임 동작 변경 0줄)
+
+- **M7 lint 게이트 도입** — 실제 수정 7종(`PropertyEscape` 2곳·`MissingApplicationIcon`·`ObsoleteSdkInt`×2·`ClickableViewAccessibility`×2·`DataExtractionRules`·`RedundantLabel`) + 코드 억제 2종(`ResizeModeDetector` 리플렉션 `@Suppress`, 폴백 비트가 이미 대응) → **그 다음에** baseline 생성. `app/lint-baseline.xml` **17건 = `AndroidGradlePluginVersion`×2·`GradleDependency`×6·`NewerVersionAvailable`×7·`ExportedReceiver`×2**. 앞 15건은 의존성 상향(P-5, v1.5 일괄), `ExportedReceiver` 는 **W1/S1 에서 해소 예정**(W0 시점엔 `app/src/debug/` 부재라 해소 불가 — 검증자 확인). **금지 ID(고치기로 한 8종) baseline 진입 0건** 감사 완료. baseline 경로는 전부 상대경로 — 머신 종속 없음
+- **M4** versionCode 1→2 · versionName `0.4.0`(**W2 Shizuku AIDL 변경의 선행 조건** — `UserServiceArgs.version` 이 프로세스 재생성을 결정) · `android:icon` · `EntryContext.panelIntent` 필드+생성부 삭제(재사용처 0 확인) · `tapPoint` KDoc 정정
+- **M2** CLAUDE.md 정정 — 「의존성」에서 **Hilt 삭제**(실제 미사용, 컴포넌트가 직접 생성하는 것이 이 규모에서 옳음) + 「검증 명령」에 `JAVA_HOME` 전제 명시(런처는 `org.gradle.java.home` 과 별개로 요구) + DoD 3번에 `lintDebug` 편입
+- **M6** `app/proguard-rules.pro` 신규 — `ApplicationInfo.privateFlags` keep 규칙 사전 작성 + release 배선. `isMinifyEnabled=false` 유지라 현재는 무효, v1.5 대비
+- **T2** `app/src/test/.../ArchitectureTest.kt` 3개 — `domain/` 순수성 + `ProfileStoreMapping` 순수성 + **vacuous-pass 가드**(경로 오타로 항상 통과하는 것이 이 테스트의 유일한 실패 모드). **실효성 실증**: `domain/Profiles.kt` 에 `import android.util.Log` 임시 주입 → 실제 FAILED 확인 후 원복. CLAUDE.md 「철칙」이 사람 리뷰 의존에서 기계 강제로 전환됨
+- **스타일** dp 리터럴 4종 상수화(값 불변 14/4/14/10) · `MENU_ITEM_TEXT_COLOR = -1` → `Color.WHITE`(동일 값, `const`→`val` 은 외부 정적 필드라 불가피) · 로그 태그 `PanelActivity`→`FWPanelActivity`(유일하게 `FW` 접두사 이탈 → `logcat -s` 누락 원인)
+- **부수 추가** `res/xml/backup_rules.xml` + `android:fullBackupContent` — minSdk 30(<31) 이라 `dataExtractionRules` 단독으로는 lint 갭이 안 닫힘. `allowBackup="false"` 와 정합하게 전부 제외
+- **KTX 치환 2건** `Bitmap.createBitmap`→KTX `createBitmap` · `Uri.parse`→`toUri()`. core-ktx 1.15.0 sources jar 실물 확인으로 **둘 다 순수 pass-through inline** 판정 (baseline 로 숨기지 않고 실수정한 근거)
+
+**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS → 권고 2건 반영 후 종료.** 검증 핵심 2건:
+① **`BubbleImageView` 이중 발화 없음** — `BubbleTouchListener.onTouch` 4분기 전부 `return true` → 프레임워크 `onTouchEvent` 미호출 → `performClick()` 호출 지점은 탭 확정 분기 단 하나. 탭/드래그/롱프레스 임계값·분기 구조 무변경(16차 오분류 0 검증분 보존)
+② `SDK_INT < R` 죽은 분기 제거 2곳(minSdk=30=R) 후 제어 흐름 동일, `ArrangerAccessibilityService` 의 `import android.os.Build` 는 미사용 확정 제거 / `ProbeAccessibilityService` 는 `Build.MANUFACTURER` 등 실사용이라 유지 — 판단 정확
+
+---
 
 **개발 환경 주의 (실측 누적)**: Git Bash 에서 gradlew 는 `JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` 프리픽스 필수 — 없으면 installDebug 가 조용히 실패해 구버전 APK 로 검증하게 됨 (실제 발생, 40분 소모). screencap 은 `-d 4630946449689556883` (멀티 디스플레이). adb 롱프레스 시뮬레이션은 `input swipe x y x y 1200` (700ms 는 경계 실패). **10차 추가**: Git Bash 가 `/sdcard/...` 인자를 로컬 경로로 변환해 파괴 — 원격 명령은 `adb shell "cat /sdcard/x"` 처럼 통째 인용, `adb pull` 은 `MSYS_NO_PATHCONV=1` 프리픽스. E2E 리셋 = 패널 페인 탭+`keyevent 4` (PanelActivity finish → 상대 앱 전체화면 복귀). 유튜브 상태 셋업 = `am force-stop` 후 `am start -a VIEW -d '...watch?v=aqz-KE-bpKQ&t=120'` (기존 태스크는 딥링크 미라우팅) → 컨트롤 탭 → 전체화면 버튼 (2184×1968 가로에서 ≈1466,858). 회전 강제 = `accelerometer_rotation 0` + `user_rotation 1` (외부 요인으로 리셋되니 캠페인 중 재확인). **13차 추가**: Shorts 진입이 포트레이트 강제 + 잠금 무시하며, 복귀 후 settings put 만으론 WM 재평가 안 됨 — `adb shell cmd window user-rotation lock 1` 이 즉시 적용 (`free` 로 해제). pre-null(측정 실패) 상태 유도 = 세로 직캠(MPD직캠 검색) immersive 전체화면 — 다크 UI 는 상태바/엣지 순흑 행 때문에 pre 가 항상 후보 생성(한쪽 밴드 0 허용). 종료 대기 = `adb logcat -s FWArranger -e "arrange (done|failed)" -m 1`. **15차 추가**: 13차 `user-rotation lock` 잔재가 남아 있으면 FoldingFeature orientation 이 물리 자세와 무관하게 VERTICAL — 폴드 검증 전 `cmd window user-rotation free` 확인 필수. 재설치 후 `settings put secure enabled_accessibility_services` 를 **동일 값**으로 put 하면 no-op (서비스 재기동 로그 안 나옴) — 기동 로그 관찰하려면 `none` 으로 토글 후 재설정.
 **실기기 검증 절차 (참고):**
@@ -38,7 +101,7 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.servic
 | Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
 | Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
 | Phase 3 UI | ✅ 완료 | DoD 3항목(콜드부팅 버블 복귀 · 프로파일 유지 · 권한 미부여 무크래시 안내) 실기기 검증 완료. P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). P3-3 DataStore ✅ **실기기 검증 완료** (141 테스트 + 7차 실기기 #26 5항목 전부 — 이관·goAsync 부팅·placement 복원 E2E·corruption 복구·중지 레이스). P3-5 FoldingFeature ✅ **15차 실기기 검증 5항목 전부 통과** (결함 2건 현장 수정: UiContext 3-인자 채택·닫기 오발화 2층 방어. qa PASS 230/230, DEVICE_FACTS 15차 절) |
-| Phase 4 확장 | 🔄 검증 완료·#27 축 A 구현 완료 (축 B·#28 대기) | P4-1·2·3·4 구현 + **17차 실기기 검증 완료** (P4-2 5/5 · P4-3 6/7 에뮬 · P4-4 4.5/5 · P4-1 7/7, DEVICE_FACTS 17차 절). 잔여 = **#27 축 B 소환 + #28** + 실기기 G2·G4~G7 + Phase B 물리 3건(물리 접기·DRM 육안) |
+| Phase 4 확장 | ✅ 구현·검증 완료 (물리 확인 2건 이월) | P4-1·2·3·4 구현 + **17차 실기기 검증** (P4-2 5/5 · P4-3 6/7 에뮬 · P4-4 4.5/5 · P4-1 7/7, DEVICE_FACTS 17차 절) + **19차 #27 종결** (축 A 채택·축 B 기각 제거·#28 수정. G4~G7 통과, G2 실패가 축 B 기각 근거. DEVICE_FACTS 19차 절). 잔여 = 「남은 작업」 A-1 물리 접기 · A-2 DRM 육안 + B 희귀 경로 |
 
 ## 작성된 코드
 

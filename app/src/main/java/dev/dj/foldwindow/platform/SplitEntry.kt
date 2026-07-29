@@ -2,7 +2,6 @@ package dev.dj.foldwindow.platform
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.SystemClock
@@ -249,8 +248,7 @@ class SplitEntry(
      * 분할 선택 상태 자체를 파괴했고, 구조적으로 성공 실측 0회였다. 게다가 예산은 항상
      * true 를 반환하는 죽은 ACTION_CLICK(피커 폴백 미발동, DESIGN_20 §1 [code-certain])의
      * 단일 수렴 폴링에 전부 소진돼 전략2가 ~0ms 예산으로 발화 — 3연속 동일 실패를 만드는
-     * 재시도 오염원이었다. `EntryContext.panelIntent` 필드 자체는 유지한다(서비스가 여전히
-     * 생성해서 넘긴다) — 이 함수가 더 이상 쓰지 않을 뿐이다.
+     * 재시도 오염원이었다.
      *
      * 성공 조건: [isSplitPairPresent] — 패키지 2종(대상·자기 자신) 존재 **그리고**
      * 두 창의 IntRect 가 [PaneGeometry.isTopBottomSplit] 통과. (패키지 존재만으로는 팝업/
@@ -773,7 +771,7 @@ class SplitEntry(
         return tapPoint(bounds.centerX(), bounds.centerY())
     }
 
-    /** 임의 좌표에 [TAP_DURATION_MS] 탭 제스처를 디스패치한다 (menuStep5 핸들 탭에 사용). */
+    /** 임의 좌표에 [TAP_DURATION_MS] 탭 제스처를 디스패치한다. */
     private fun tapPoint(x: Int, y: Int): Boolean {
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
         val gesture = GestureDescription.Builder()
@@ -807,8 +805,6 @@ data class EntryContext(
     /** PackageManager 로 조회한 대상 앱 표시 이름. 조회 실패 시 null */
     val targetLabel: String?,
     val selfPackage: String,
-    /** PanelActivity 실행용 인텐트 (FLAG_ACTIVITY_LAUNCH_ADJACENT | FLAG_ACTIVITY_NEW_TASK 포함해서 서비스가 만든다) */
-    val panelIntent: Intent,
     /** 현재 화면 전체 rect (landscape 2184×1968). 서비스가 WindowMetrics 로 채운다 */
     val screen: Rect,
     /** 이번 세션에 적용할 진입 레시피. 서비스가 ResizeModeDetector 판정 결과로 결정한다 */

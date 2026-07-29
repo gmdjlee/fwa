@@ -147,7 +147,7 @@ class PanelActivity : ComponentActivity() {
         this?.getBooleanExtra(EXTRA_FINISH_PANEL, false) == true
 
     companion object {
-        private const val TAG = "PanelActivity"
+        private const val TAG = "FWPanelActivity"
 
         /**
          * [실측 2026-07-25, 결함 #24①] dispatchGesture 로 디바이더를 가장자리까지 SINGLE_STROKE

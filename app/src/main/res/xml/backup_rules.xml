@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    API 30~31 미만(minSdk 30)을 위한 레거시 전체 백업 규칙. data_extraction_rules.xml(API 31+)과
+    쌍을 이룬다 — 둘 다 android:allowBackup="false" 와 정합하게 전부 제외로 작성한다. 실질적으로는
+    allowBackup="false" 가 이미 모든 백업 경로를 막고 있어 동작에 영향은 없다(lint
+    DataExtractionRules 경고를 minSdk 30 조건까지 완전히 해소하기 위한 문서화 목적).
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

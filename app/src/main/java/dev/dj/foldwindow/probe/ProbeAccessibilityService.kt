@@ -220,9 +220,7 @@ class ProbeAccessibilityService : AccessibilityService() {
      * ⚠ 함정 #4: HardwareBuffer 는 반드시 close 한다.
      */
     private suspend fun captureScreen(): Bitmap? = suspendCancellableCoroutine { cont ->
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            cont.resume(null); return@suspendCancellableCoroutine
-        }
+        // [M7, minSdk=30=R] SDK_INT < R 가드는 항상 거짓인 죽은 분기였다(ObsoleteSdkInt) — 제거.
         runCatching {
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
