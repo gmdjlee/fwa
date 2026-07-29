@@ -594,7 +594,7 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 
 **부수 발견 [미수정, v1.5]:** `toLetterboxScan:25` / `toPillarboxScan:113,115` 의 `coerceIn(0, w/2 - 1)` 은 `w==1` 이면 빈 범위로 `IllegalArgumentException`. 실입력에서 도달 불가라 W4 범위 밖으로 두고 `PROGRESS.md` C 항목에 등재 — **P4 가 이 함수를 손댈 때 함께 정리**한다.
 
-### W5 — 구동부 안정화 · **[완료 2026-07-29]**
+### W5 — 구동부 안정화 · **[완료 2026-07-29 · `70e53fa`]**
 **항목:** F6(이벤트 큐) · F9 v1 대응(터미널 메시지 구분)
 **실기기:** DRAG 세션 1 + MENU 세션 1 무회귀 → **[미검증]**, `docs/DEVICE_FACTS.md` W5 절 4항목으로 등재
 **DoD:** 위 + 전이 로그가 기존과 동일 순서인지 logcat 대조 → 로그 포맷 문자 단위 무변경 확인(보간 변수명만 `event`→`e`)
