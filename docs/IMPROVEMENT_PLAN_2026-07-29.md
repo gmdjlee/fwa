@@ -571,7 +571,7 @@ Robolectric 4.14.1 이 compileSdk 36 을 못 다루면 테스트 클래스에 `@
 **DoD:** 위 + `PROGRESS.md` C 항목에 "F2 2단계 = 세로 기하 실측 선행" 등재
 **규모:** Worker 1세션
 
-### W4 — 테스트 안전망 (W5·W7 의 선행 조건) · **[완료 2026-07-29]**
+### W4 — 테스트 안전망 (W5·W7 의 선행 조건) · **[완료 2026-07-29 · `0f53af2`]**
 **항목:** T1(Robolectric 배선 + `ScreenshotSampler` 5종)
 **실기기:** 불필요
 **DoD:** `testDebugUnitTest` PASS (282 → 약 290)
