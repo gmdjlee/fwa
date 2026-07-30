@@ -619,11 +619,24 @@ W4 에서 Robolectric 배선이 생겼으므로 서비스 레이어 테스트 �
 **DoD:** 위 + 순수 기계적 변환임을 diff 로 확인(동작 변경 0줄)
 **규모:** Worker 1세션(집중) + 실기기 세션 1회
 
-### W7 — 성능 · 중복 정리
-**항목:** P1(단일 순회 + 예산) · M3(`NodeActions`/`Polling` 추출) · P2(runBlocking 제거) · P4(getPixels stride)
-**실기기:** 진입 레시피 직격 — DRAG 1 + MENU 1 + 부팅 후 버블 복귀 1
-**DoD:** 위 + 노드 탐색 로그의 `matched via selector [...]` 가 기존과 동일 셀렉터를 고르는지 대조
-**규모:** Worker 1~2세션 + 실기기 세션 1회
+### W7 — 성능 · 중복 정리 · **[완료 2026-07-30]**
+**항목:** P1(단일 순회 + 예산) · M3(`NodeActions`/`Polling` 추출) · P2(runBlocking 제거) · ~~P4(getPixels stride)~~ → P4 대체안
+**실기기:** 진입 레시피 직격 — **6항목으로 확장**(DRAG 1 + **UNRESIZEABLE 앱** MENU 1 + 부팅 후 버블 복귀 1 + 신규 상한 로그 부재 + PaneSwapper 스왑 1 + 경합 가드) → **[미검증]**, `docs/DEVICE_FACTS.md` W7 절
+**DoD:** 위 + `matched via selector [...]` 셀렉터 대조 → 로그 렌더 결과 문자 단위 무변경 확인(보간식만 치환)
+**결과:** 테스트 322(312+10) · assembleDebug · lintDebug(신규 0, baseline 15 무변경). 독립 검증 CONDITIONAL PASS(조건 = 실기기 6항목 + KDoc 3건 정정(조치 완료), 차단 결함 0).
+
+**[확정] P4 의 해결책은 API 계약상 실행 불가였다.** `Bitmap.getPixels(pixels, offset, stride, x, y, w, h)` 의
+`stride` 는 **목적지 배열의 행간 건너뛰기**이고 계약상 `>= width` 다 — 소스 영역은 **항상 전부 복사**되므로
+열 서브샘플링 수단이 아니다. 게다가 `toLetterboxScan` 은 `height=1`(한 행씩) 호출이라 `stride` 가 의미조차 없다.
+→ **`toLetterboxScan` 무변경**, 근거를 소스에 「다시 시도하지 말 것」으로 동결. 대신 실재하던 과다 복사
+(`toPillarboxScan` 이 `[0,h)` 를 읽고 `[y0,y1)` 만 소비 = `edgeMarginPct` 0.12 기준 **24% 폐기**)를 잡았고,
+`PROGRESS.md` §C 가 W7 에 배정했던 **1px `coerceIn(0,-1)` 크래시** 3곳을 함께 해소했다.
+
+**[확정] `MAX_NODES_VISITED` 는 통합하지 않았다.** 이 상수를 가진 곳은 `PaneSwapper` 뿐이고 값 500 은
+팝업 탐색용 실측값이다. `SplitEntry` 순회는 **상한이 아예 없었으므로** 500 을 확대 적용하면 Recents 트리가
+500 노드를 넘는 순간 진입 경로 전체가 죽는다(CLAUDE.md 함정 #7). 신규 `MAX_NODES_VISITED_TREE = 4000` /
+`MAX_TREE_DEPTH = 50` 을 별도로 두되 **실측값이 아님**을 명시하고 초과 시 `Log.w` — `DEVICE_FACTS.md` W7-2 가
+그 로그의 **부재**를 확인한다.
 
 ---
 

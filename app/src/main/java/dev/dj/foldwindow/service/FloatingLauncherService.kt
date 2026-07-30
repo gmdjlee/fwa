@@ -51,7 +51,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
@@ -98,6 +97,13 @@ import kotlin.math.abs
  * 지금은 메뉴를 화면 전체를 덮는 투명 스크림 창 하나로 재구성해 이 경합 클래스 자체를 구조적으로
  * 없앴다 — 스크림이 모든 터치를 먼저 받으므로 메뉴가 열려 있는 동안 버블 창은 어떤 터치 이벤트도
  * 받을 수 없다(자세한 내용은 [showMenu] KDoc 참고).
+ *
+ * [W7-B/P2] 저장된 버블 위치 복원은 **비동기**다([restoreBubblePositionAsync]). 예전에는
+ * `onCreate` 에서 코루틴 블로킹 브리지로 DataStore 를 메인 스레드 동기 대기했는데, 이 경로는
+ * `BootReceiver → startForegroundService` 직후 — ANR 판정이 가장 가혹한 구간 — 에서 실행되고
+ * 최초 실행 시에는 `SharedPreferencesMigration`(레거시 "bubble_prefs" 이관)까지 동기로 돈다.
+ * **의도된 사용자 체감 변화**: 부팅 직후 한두 프레임 동안 버블이 기본 위치(우측 가장자리,
+ * 화면 높이 1/3)에 떴다가 저장 위치로 이동한다. 이 트레이드오프는 계획서가 명시적으로 수용했다.
  */
 class FloatingLauncherService : Service() {
 
@@ -110,11 +116,44 @@ class FloatingLauncherService : Service() {
 
     /**
      * [ProfileStore.bubblePosition] 의 콜드 스타트 1회 스냅샷 캐시(P3-3). onCreate 에서 한 번만
-     * runBlocking 으로 읽고, 이후 createBubbleView/savePosition 은 전부 이 캐시만 쓴다 — 매 위치
-     * 조회마다 DataStore I/O 를 걸지 않기 위함이다. null 이면 아직 저장된 위치가 없다는 뜻이다.
+     * 읽고([restoreBubblePositionAsync] — W7-B/P2 이전에는 메인 스레드 동기 읽기였다), 이후
+     * createBubbleView/savePosition 은 전부 이 캐시만 쓴다 — 매 위치 조회마다 DataStore I/O 를
+     * 걸지 않기 위함이다. null 이면 아직 읽기가 도착하지 않았거나 저장된 위치가 없다는 뜻이며,
+     * 그때는 [createBubbleViewIfNeeded] 가 화면 크기 기반 기본 위치를 쓴다.
      */
     private var cachedBubbleX: Int? = null
     private var cachedBubbleY: Int? = null
+
+    /**
+     * [W7-B/P2] 사용자가 이미 버블 위치를 손댔는지. 이 플래그가 서 있으면
+     * [restoreBubblePositionAsync] 는 캐시를 덮어쓰지 않는다.
+     *
+     * 복원이 비동기가 되면서 생긴 **신규 실패 모드**를 막는다: DataStore 읽기가 도착하기 전에
+     * 사용자가 버블을 드래그해 놓으면, 뒤늦게 도착한 **옛 저장값이 방금 옮긴 위치를 되돌린다**.
+     * 창은 밀리초 단위로 좁지만 부팅 직후 오동작은 재현이 어려워 더 나쁘다.
+     *
+     * [W7-C] 실제로 막는 지점은 **세 곳**이다:
+     *  1. **드래그 확정** — [BubbleTouchListener] 의 `ACTION_MOVE` 가 touchSlop 을 넘겨
+     *     `params.x/y` 를 실제로 바꾸기 시작하는 그 지점에서 곧바로 잠근다.
+     *  2. **스냅 종료 저장** — [savePosition] (드래그 끝 → [snapToEdge] 애니메이션 완료).
+     *  3. **스냅 애니메이션 진행 중** — [applyCachedBubblePosition] 이 `snapAnimator.isRunning`
+     *     이면 조용히 반환한다(플래그와 무관한 별도 가드).
+     *
+     * W7-C 이전에는 2번뿐이었다 — 즉 **스냅 애니메이션이 끝나야** 플래그가 섰다. 그 사이에
+     * 복원이 도착하면 버블이 손가락 밑에서 저장 위치로 튀고, 이어 `onAnimationEnd` 가 그 오염된
+     * 좌표를 저장했다.
+     *
+     * **남는 창(정직하게):** 터치 `ACTION_DOWN` ~ 드래그 확정(touchSlop 초과) 사이 수 ms 는
+     * 여전히 열려 있다. 다만 `initialX/initialY` 를 `ACTION_DOWN` 시점에 스냅샷해 두므로, 그 창에
+     * 복원이 도착해도 **다음 `ACTION_MOVE` 가 드래그 기준 좌표로 다시 덮어쓴다** — 남는 증상은
+     * 한 프레임짜리 시각적 튐이고 저장값이 오염되지는 않는다. 그 창에서 제스처가 탭/롱프레스로
+     * 끝나면 복원값이 그대로 남는데, 그건 사용자가 위치를 안 옮긴 경우라 올바른 동작이다.
+     *
+     * 메인 스레드([serviceScope] = `Dispatchers.Main.immediate`, 터치 리스너/애니메이터도 전부
+     * 메인)에서만 읽고 쓰므로 `@Volatile` 은 불필요하다 — [bubbleAttached]/[menuView] 와 달리
+     * 다른 스레드에서 접근하는 경로가 없다.
+     */
+    private var bubblePositionUserAdjusted = false
 
     private var bubbleView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -148,21 +187,70 @@ class FloatingLauncherService : Service() {
         createNotificationChannel()
         instance = this
         preloadPresetsIfNeeded()
-        // 콜드 스타트 1회 한정 동기 스냅샷 읽기(위 cachedBubbleX/Y KDoc 참고). 최초 접근 시
-        // SharedPreferencesMigration(레거시 "bubble_prefs" 이관)도 함께 실행되므로 이 1회는
-        // 약간의 I/O 비용이 있으나, 버블 뷰 생성 전에 위치가 확정돼야 하므로 동기 대기가 맞다.
-        //
-        // [실기기 검증 리뷰 지적 반영, 2026-07-25] ProfileStore.bubblePosition() 은 내부적으로
-        // 이미 읽기 실패를 잡아 null 로 폴백하지만(safeRead), 이 onCreate 경로는 BootReceiver ->
-        // startForegroundService 직후 즉시 실행돼 부팅 크래시 루프로 이어질 수 있는 가장 민감한
-        // 지점이라 runCatching 으로 한 번 더 방어한다(조용한 실패 금지 — 실패 시 Log.w 로 드러내고
-        // 기본 위치로 폴백. cachedBubbleX/Y == null 이면 createBubbleView 가 화면 비율 기반 기본
-        // 위치를 계산한다).
-        val position = runCatching { runBlocking { store.bubblePosition() } }
-            .onFailure { e -> Log.w(TAG, "onCreate: 저장된 버블 위치 읽기 실패 — 기본 위치로 폴백", e) }
-            .getOrNull()
-        cachedBubbleX = position?.first
-        cachedBubbleY = position?.second
+        restoreBubblePositionAsync()
+    }
+
+    /**
+     * 콜드 스타트 1회 한정 위치 스냅샷 읽기(위 [cachedBubbleX]/[cachedBubbleY] KDoc 참고).
+     *
+     * [W7-B/P2] **비동기**다. 예전에는 코루틴 블로킹 브리지로 메인 스레드에서 동기 대기했는데, 이
+     * onCreate 경로는 `BootReceiver → startForegroundService` 직후 — ANR 판정이 가장 가혹한 구간 —
+     * 에 실행되고 최초 접근 시에는 `SharedPreferencesMigration`(레거시 "bubble_prefs" 이관)까지
+     * 동기로 돈다. 대신 버블은 기본 위치로 먼저 뜨고, 저장 위치는 도착하는 대로 반영된다
+     * ([applyCachedBubblePosition] — 뷰가 아직 없으면 캐시만 갱신하고 조용히 반환하며,
+     * 나중에 [createBubbleViewIfNeeded] 가 그 캐시를 읽는다).
+     *
+     * [실기기 검증 리뷰 지적 반영, 2026-07-25 / W7-B 로 갱신] ProfileStore.bubblePosition() 은
+     * 내부적으로 이미 읽기 실패를 잡아 null 로 폴백하지만(safeRead), 이 경로는 부팅 직후 실행돼
+     * 크래시 루프로 이어질 수 있는 가장 민감한 지점이라 runCatching 으로 한 번 더 방어한다
+     * (조용한 실패 금지 — 실패 시 Log.w 로 드러내고 기본 위치로 폴백). 메인 스레드 블로킹이
+     * 사라져 "블로킹 대기 중 예외" 라는 최악 경우는 이제 성립하지 않지만, 방어 자체는 유지한다
+     * (DataStore 파일 손상 시 부팅 크래시 루프 — [ProfileStore] KDoc 참고 — 은 여전히 유효한 위협).
+     */
+    private fun restoreBubblePositionAsync() {
+        serviceScope.launch {
+            val position = runCatching { store.bubblePosition() }
+                .onFailure { e -> Log.w(TAG, "onCreate: 저장된 버블 위치 읽기 실패 — 기본 위치로 폴백", e) }
+                .getOrNull() ?: return@launch
+            // 경합 가드: 읽기가 도착하기 전에 사용자가 이미 버블을 옮겼다면 옛 값으로 되돌리지 않는다.
+            if (bubblePositionUserAdjusted) {
+                Log.i(TAG, "restoreBubblePositionAsync: 복원 전 사용자가 버블을 이동 — 저장값 적용 생략")
+                return@launch
+            }
+            cachedBubbleX = position.first
+            cachedBubbleY = position.second
+            applyCachedBubblePosition()
+        }
+    }
+
+    /**
+     * 캐시된 버블 위치([cachedBubbleX]/[cachedBubbleY])를 실제 창에 반영한다(W7-B/P2).
+     *
+     * 항상 메인 스레드에서만 불린다([serviceScope] = `Dispatchers.Main.immediate`).
+     * 뷰/LayoutParams 가 아직 없으면(= `onStartCommand → addBubbleIfNeeded` 이전) 캐시만 갱신된
+     * 채 조용히 반환한다 — 나중에 [createBubbleViewIfNeeded] 가 같은 캐시를 읽어 반영하므로
+     * 뷰 유무 양쪽에서 안전하다.
+     *
+     * 클램프에 `view.width`/`view.height` 를 **쓰지 않는다**: `addView` 직후에는 아직 레이아웃
+     * 전이라 둘 다 0 이라서 maxX/maxY 가 화면 크기 그대로가 돼 버린다. [createBubbleViewIfNeeded]
+     * 와 동일하게 `layoutParams.width`/`.height`(= sizePx) 를 기준으로 삼아야 두 경로의 클램프가
+     * 어긋나지 않는다. 화면 크기는 매번 재조회한다(좌표 하드코딩 금지, CLAUDE.md 함정 #2).
+     */
+    private fun applyCachedBubblePosition() {
+        // [W7-C] 스냅 애니메이션 진행 중에는 좌표를 덮어쓰지 않는다 — 애니메이터가 매 프레임
+        // params.x 를 다시 쓰므로 여기서 끼어들어도 무의미하고, onAnimationEnd 가 그 사이에
+        // 섞인 y 좌표를 저장해 버린다.
+        if (snapAnimator?.isRunning == true) return
+        val view = bubbleView ?: return
+        val params = layoutParams ?: return
+        val bounds = windowManager.currentWindowMetrics.bounds
+        val maxX = (bounds.width() - params.width).coerceAtLeast(0)
+        val maxY = (bounds.height() - params.height).coerceAtLeast(0)
+        params.x = (cachedBubbleX ?: params.x).coerceIn(0, maxX)
+        params.y = (cachedBubbleY ?: params.y).coerceIn(0, maxY)
+        if (!bubbleAttached) return
+        runCatching { windowManager.updateViewLayout(view, params) }
+            .onFailure { e -> Log.w(TAG, "applyCachedBubblePosition: 버블 위치 반영 실패", e) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -431,6 +519,12 @@ class FloatingLauncherService : Service() {
                     val dy = event.rawY - initialTouchY
                     if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
                         dragging = true
+                        // [W7-C] 드래그가 확정되는 = params.x/y 를 실제로 바꾸기 시작하는 이 지점이
+                        // "사용자가 위치를 손댄 순간" 이다. 종전엔 스냅 애니메이션이 끝난 뒤
+                        // savePosition() 에서야 잠갔던 탓에, 그 사이 도착한 비동기 복원이 손가락
+                        // 밑의 버블을 저장 위치로 되돌렸다([bubblePositionUserAdjusted] KDoc 참고).
+                        // 판정 조건·임계값은 기존 그대로이며 추가된 것은 이 대입 한 줄뿐이다.
+                        bubblePositionUserAdjusted = true
                         handler.removeCallbacks(longPressRunnable)
                         dismissMenu() // 드래그로 버블이 움직이면 옛 위치에 뜬 메뉴는 무의미하므로 닫는다
                     }
@@ -861,6 +955,9 @@ class FloatingLauncherService : Service() {
     }
 
     private fun savePosition(x: Int, y: Int) {
+        // [W7-B/P2] 사용자가 위치를 확정한 순간 — 뒤늦게 도착할 수 있는 비동기 복원이 이 값을
+        // 되돌리지 못하게 잠근다([bubblePositionUserAdjusted] KDoc 참고).
+        bubblePositionUserAdjusted = true
         cachedBubbleX = x
         cachedBubbleY = y
         // fire-and-forget — ProfileStore.saveBubblePosition 이 내부에서 예외를 잡는다(safeWrite).

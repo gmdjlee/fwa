@@ -37,8 +37,8 @@ private const val TAG = "FWProfileStore"
  *
  * [실기기 검증 리뷰 지적 반영, 2026-07-25] `corruptionHandler` 없이는 기본 `NoOpCorruptionHandler`
  * 가 적용돼 `fwa_store.preferences_pb` 파일이 손상되면(쓰기 도중 전원 차단 등) 모든 읽기/쓰기가
- * `CorruptionException` 을 영구적으로 던진다 — [FloatingLauncherService.onCreate] 의
- * `runBlocking { store.bubblePosition() }` 이 서비스 시작마다 크래시하는 부팅 크래시 루프로
+ * `CorruptionException` 을 영구적으로 던진다 — [FloatingLauncherService.onCreate] 의 비동기
+ * 버블 위치 복원 읽기(`store.bubblePosition()`)가 서비스 시작마다 실패하는 부팅 크래시 루프로
  * 이어진다(레거시 SharedPreferences 는 손상 시 그냥 빈 값을 돌려줄 뿐 이런 실패 모드가 없었다).
  * [ReplaceFileCorruptionHandler] 로 손상 감지 시 빈 Preferences 로 재시작해 레거시와 동등한
  * 의미론(손상 시 기본값 복구)을 유지한다. 원본 예외는 성공적으로 교체되면 삼켜지므로 여기서

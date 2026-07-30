@@ -7,6 +7,15 @@ import dev.dj.foldwindow.domain.LetterboxScan
 /**
  * Bitmap → 도메인 모델 변환. 여기가 Android SDK 와 순수 도메인의 경계다.
  *
+ * [W7-B/P4 검토 결과 — 다시 시도하지 말 것] "행 안에서 `colStride` 로만 픽셀을 받아 복사량을
+ * 줄이자"는 최적화는 `getPixels` 로 **불가능**하다.
+ * `Bitmap.getPixels(pixels, offset, stride, x, y, width, height)` 의 `stride` 는 **목적지 배열에서
+ * 행과 행 사이에 건너뛸 엔트리 수**이고 계약상 `>= width` 여야 하며, 소스 영역
+ * `(x, y, width, height)` 는 **항상 전부** 복사된다 — 즉 `stride` 는 열 서브샘플링 수단이 아니다.
+ * 게다가 이 함수는 `height=1`(한 행씩)로 호출하므로 `stride` 는 의미조차 없다.
+ * 결론: 이 함수의 소스 복사량은 이미 최소(가로 마진 제외 구간 1행)이며 더 줄일 여지가 없다.
+ * (반면 [toPillarboxScan] 은 실제로 줄일 여지가 있었고 W7-B 에서 세로 마진만큼 축소했다.)
+ *
  * @param rowStride    몇 행마다 한 번 샘플링할지. 1이면 전체. 성능/정밀도 트레이드오프
  * @param colStride    행 안에서 몇 픽셀마다 볼지
  * @param darkLuma     이 값 이하의 휘도를 "어두운 픽셀" 로 본다 (0..255)
@@ -19,10 +28,18 @@ fun Bitmap.toLetterboxScan(
     sideMarginPct: Float = 0.05f,
 ): LetterboxScan {
     require(rowStride >= 1 && colStride >= 1) { "stride must be >= 1" }
+    // [W7-C] 클램프가 아니라 require 인 이유: 음수 마진은 정상 입력이 아니라 호출자의 계산
+    // 오류이므로 조용히 0 으로 뭉개면 안 된다(W3 의 `WindowGeometry.init` require 와 동일 판단).
+    require(sideMarginPct >= 0f) { "sideMarginPct must be >= 0" }
 
     val w = width
     val h = height
-    val x0 = (w * sideMarginPct).toInt().coerceIn(0, w / 2 - 1)
+    // [W7-B] w == 1 이면 `coerceIn(0, w/2 - 1)` 의 상한이 -1 이 되어 빈 범위 → IllegalArgumentException
+    // 이었다. `coerceAtMost` + 상한 0 하한 보정으로 바꾼다. `(w * sideMarginPct).toInt()` 는
+    // 위 require 가 sideMarginPct >= 0 을 보장하므로 항상 >= 0 이라 하한 0 은 불필요하고,
+    // w >= 2 에서는 `(w/2 - 1).coerceAtLeast(0) == w/2 - 1` 이라 기존 동작과 **정확히 등가**다 —
+    // w == 1 에서만 크래시 대신 x0 = 0 이 된다.
+    val x0 = (w * sideMarginPct).toInt().coerceAtMost((w / 2 - 1).coerceAtLeast(0))
     val x1 = (w - x0).coerceAtLeast(x0 + 1)
 
     val sampledRows = (h + rowStride - 1) / rowStride
@@ -107,12 +124,20 @@ fun Bitmap.toPillarboxScan(
     sideMarginPct: Float = 0.005f,
 ): LetterboxScan {
     require(colStride >= 1 && rowStride >= 1) { "stride must be >= 1" }
+    // [W7-C] 위 [toLetterboxScan] 과 동일 근거 — 음수 마진은 호출자 버그이므로 클램프로 덮지 않고
+    // 즉시 거른다(조용히 0 으로 뭉개면 잘못된 스캔 범위가 정상값처럼 흘러간다).
+    require(edgeMarginPct >= 0f && sideMarginPct >= 0f) { "margin pct must be >= 0" }
 
     val w = width
     val h = height
-    val y0 = (h * edgeMarginPct).toInt().coerceIn(0, h / 2 - 1)
+    // [W7-B] h == 1 / w == 1 크래시 수정. `coerceIn(0, n/2 - 1)` 은 n == 1 일 때 상한이 -1 이 되어
+    // 빈 범위 → IllegalArgumentException 이었다. `(n * pct).toInt()` 는 위 require 가 보장하는
+    // pct >= 0 덕에 항상 >= 0 이므로 하한 0 은 불필요하고, n >= 2 에서는
+    // `(n/2 - 1).coerceAtLeast(0) == n/2 - 1` 이라 기존 동작과 **정확히 등가**다 —
+    // n == 1 에서만 크래시 대신 0 이 된다. (자세한 근거는 toLetterboxScan 참고)
+    val y0 = (h * edgeMarginPct).toInt().coerceAtMost((h / 2 - 1).coerceAtLeast(0))
     val y1 = (h - y0).coerceAtLeast(y0 + 1)
-    val x0 = (w * sideMarginPct).toInt().coerceIn(0, w / 2 - 1)
+    val x0 = (w * sideMarginPct).toInt().coerceAtMost((w / 2 - 1).coerceAtLeast(0))
     val x1 = (w - x0).coerceAtLeast(x0 + 1)
 
     val sampledCols = (x1 - x0 + colStride - 1) / colStride
@@ -120,20 +145,30 @@ fun Bitmap.toPillarboxScan(
     val meanLuma = FloatArray(sampledCols)
     val lumaVariance = FloatArray(sampledCols)
 
-    // 열 전체(0..h)를 한 번에 읽고 margin·rowStride 는 배열 순회에서 적용한다.
+    // [W7-B/P4] 실제로 소비하는 세로 구간 `y0 until y1` 만 읽는다. 예전에는 열 전체(0..h)를
+    // 읽고 마진은 배열 순회에서만 걸렀는데, edgeMarginPct 기본 0.12 기준 위아래 12%씩 —
+    // **읽은 픽셀의 약 24% 를 버리고 있었다**. 버퍼 인덱스는 `y - y0` 오프셋이 붙는다
+    // (루프 변수 y 는 여전히 비트맵 절대 좌표계, 경계·스텝은 무변경).
+    //
+    // rowStride 서브샘플링(한 열 안에서 8행마다 하나)까지 getPixels 로 줄이는 것은 **불가능**하다:
+    // `getPixels(pixels, offset, stride, x, y, width, height)` 의 `stride` 는 목적지 배열의 행 간
+    // 건너뛰기 수(계약상 `>= width`)일 뿐, 소스 영역 `(x, y, width, height)` 는 항상 전부 복사된다.
+    // 여기서는 width=1 이라 stride 로 표현할 수 있는 여지 자체가 없다 — 다시 시도하지 말 것.
+    //
     // 열마다 getPixels 호출 1회 — 총 호출 수 ≈ (x1-x0)/colStride (행 스캔과 동일 오더).
-    val colBuf = IntArray(h)
+    val colHeight = y1 - y0
+    val colBuf = IntArray(colHeight)
     var idx = 0
     var x = x0
     while (x < x1) {
-        getPixels(colBuf, 0, 1, x, 0, 1, h)
+        getPixels(colBuf, 0, 1, x, y0, 1, colHeight)
         var dark = 0
         var counted = 0
         var sumLuma = 0L
         var sumLumaSq = 0L
         var y = y0
         while (y < y1) {
-            val c = colBuf[y]
+            val c = colBuf[y - y0]
             val luma = (77 * Color.red(c) + 150 * Color.green(c) + 29 * Color.blue(c)) shr 8
             if (luma <= darkLuma) dark++
             sumLuma += luma

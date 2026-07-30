@@ -5,6 +5,7 @@ import android.graphics.Color
 import dev.dj.foldwindow.domain.LetterboxDetector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +52,35 @@ class ScreenshotSamplerTest {
             val color = if (x < leftBarPx || x >= width - rightBarPx) Color.BLACK else Color.WHITE
             val col = IntArray(height) { color }
             bmp.setPixels(col, 0, 1, x, 0, 1, height)
+        }
+        return bmp
+    }
+
+    // ── W7-B 추가 헬퍼 ────────────────────────────────────────────
+
+    /** 단색 Bitmap. 초소형/퇴화 크기(1x1, 1xN, Nx1) 경계 테스트 전용. */
+    private fun solidBitmap(width: Int, height: Int, color: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(color)
+        return bmp
+    }
+
+    /**
+     * [toPillarboxScan] 의 **세로 마진 격리** 검증 전용 Bitmap (테스트 8).
+     *
+     * - 마진 밴드(`y < interiorTop` 또는 `y >= interiorBottom`) = 순흑(luma 0) — 결과에 절대
+     *   섞이면 안 되는 픽셀
+     * - 내부 구간 = 회색 램프 `RGB(y, y, y)` — 샘플러의 정수 근사 휘도가 **정확히 y** 가 된다
+     *   (`77 + 150 + 29 == 256` 이므로 `(77y + 150y + 29y) shr 8 == (256y) shr 8 == y`)
+     *
+     * 모든 열이 동일한 패턴이므로 산출 배열의 모든 entry 가 같은 값이어야 한다.
+     */
+    private fun verticalRampBitmap(width: Int, height: Int, interiorTop: Int, interiorBottom: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        for (y in 0 until height) {
+            val level = if (y < interiorTop || y >= interiorBottom) 0 else y
+            val row = IntArray(width) { Color.rgb(level, level, level) }
+            bmp.setPixels(row, 0, width, 0, y, width, 1)
         }
         return bmp
     }
@@ -167,8 +197,9 @@ class ScreenshotSamplerTest {
     @Test
     fun `tiny bitmaps do not throw when computing side margins`() {
         // 4x4, 2x2 — toLetterboxScan/toPillarboxScan 의 coerceIn(0, w/2-1) 류 경계 연산이 예외
-        // 없이 동작해야 한다. w=1(또는 h=1) 은 coerceIn(0,-1) 로 예외가 나는 별개의 잠재 결함이며
-        // W4 범위 밖이다 — 여기서 고치지 않고 최종 보고에만 남긴다(trap #8).
+        // 없이 동작해야 한다. w=1(또는 h=1) 의 coerceIn(0,-1) 예외(trap #8)는 W7 에서
+        // coerceAtMost((w/2-1).coerceAtLeast(0)) 로 수정됐고, 아래 1×1·1×N/N×1 테스트(6·7)가
+        // 그 회귀 가드다.
         for (size in intArrayOf(4, 2)) {
             val bitmap = horizontalBandsBitmap(width = size, height = size, topBarPx = 1, bottomBarPx = 1)
 
@@ -178,5 +209,147 @@ class ScreenshotSamplerTest {
             assertTrue("size=$size 행 스캔이 비어 있음", rowScan.height > 0)
             assertTrue("size=$size 열 스캔이 비어 있음", colScan.height > 0)
         }
+    }
+
+    // ── 6. 1x1 Bitmap — W7-B/1-B 회귀 가드 ────────────────────────
+
+    @Test
+    fun `1x1 bitmap does not throw in either sampler`() {
+        // W7-B 이전에는 `coerceIn(0, w/2 - 1)` 의 상한이 w == 1 에서 -1 이 되어 빈 범위
+        // → IllegalArgumentException 이었다(테스트 5 주석의 trap #8, PROGRESS §C 가 W7 에 배정).
+        // 수정 후: x0 = 0, x1 = 1 로 떨어져 한 픽셀을 정상 샘플링한다.
+        //
+        // 손계산(1x1, 기본 인자):
+        //  - toLetterboxScan : x0=0, x1=max(1-0,1)=1 → rowBuf 1칸, sampledRows=(1+2-1)/2=1
+        //                      → entries 1개, scaledWidth=(1/2).toInt()=0 → coerceAtLeast(1)=1
+        //  - toPillarboxScan : y0=0, y1=max(1-0,1)=1, x0=0, x1=1
+        //                      → sampledCols=(1-0+2-1)/2=1 → entries 1개, scaledHeight=1
+        val bitmap = solidBitmap(width = 1, height = 1, color = Color.BLACK)
+
+        val rowScan = bitmap.toLetterboxScan()
+        val colScan = bitmap.toPillarboxScan()
+
+        assertEquals("행 스캔 entries", 1, rowScan.height)
+        assertEquals("열 스캔 entries", 1, colScan.height)
+        assertEquals("행 스캔 scaledWidth", 1, rowScan.width)
+        assertEquals("열 스캔 scaledHeight", 1, colScan.width)
+        // 순흑 1픽셀 → 두 스캔 모두 dark ratio 1.0
+        assertEquals(1f, rowScan.rowDarkRatio[0], 0.0001f)
+        assertEquals(1f, colScan.rowDarkRatio[0], 0.0001f)
+    }
+
+    // ── 7. 1xN / Nx1 퇴화 Bitmap — W7-B/1-B 회귀 가드 ─────────────
+
+    @Test
+    fun `degenerate 1xN and Nx1 bitmaps do not throw in either sampler`() {
+        // 1xN(폭 1): toLetterboxScan/toPillarboxScan 둘 다 `w/2 - 1 == -1` 경로를 탄다.
+        // Nx1(높이 1): toPillarboxScan 의 `h/2 - 1 == -1` 경로(edgeMarginPct)를 탄다.
+        // 어느 쪽도 예외 없이 최소 1개 entry 를 내야 한다.
+        //
+        // 손계산(기본 인자):
+        //  1x8  toLetterboxScan : x0=0,x1=1, sampledRows=(8+2-1)/2=4 → entries 4,
+        //                         scaledWidth=(1/2).toInt()=0 → 1
+        //       toPillarboxScan : y0=(8*0.12f).toInt()=0, y1=8, x0=0, x1=1,
+        //                         sampledCols=(1-0+2-1)/2=1 → entries 1, scaledHeight=(8/2)=4
+        //  8x1  toLetterboxScan : x0=(8*0.05f).toInt()=0, x1=8, sampledRows=(1+2-1)/2=1 → entries 1,
+        //                         scaledWidth=(8/2)=4
+        //       toPillarboxScan : y0=0, y1=1, x0=0, x1=8, sampledCols=(8-0+2-1)/2=4 → entries 4,
+        //                         scaledHeight=(1/2).toInt()=0 → 1
+        val tall = solidBitmap(width = 1, height = 8, color = Color.BLACK)
+        val wide = solidBitmap(width = 8, height = 1, color = Color.BLACK)
+
+        val tallRow = tall.toLetterboxScan()
+        val tallCol = tall.toPillarboxScan()
+        val wideRow = wide.toLetterboxScan()
+        val wideCol = wide.toPillarboxScan()
+
+        assertEquals("1x8 행 스캔 entries", 4, tallRow.height)
+        assertEquals("1x8 행 스캔 scaledWidth", 1, tallRow.width)
+        assertEquals("1x8 열 스캔 entries", 1, tallCol.height)
+        assertEquals("1x8 열 스캔 scaledHeight", 4, tallCol.width)
+        assertEquals("8x1 행 스캔 entries", 1, wideRow.height)
+        assertEquals("8x1 행 스캔 scaledWidth", 4, wideRow.width)
+        assertEquals("8x1 열 스캔 entries", 4, wideCol.height)
+        assertEquals("8x1 열 스캔 scaledHeight", 1, wideCol.width)
+    }
+
+    // ── 8. toPillarboxScan 세로 마진 격리 — W7-B/1-A 인덱스 매핑 직격 ──
+
+    @Test
+    fun `toPillarboxScan excludes pixels outside the vertical margin band`() {
+        // W7-B/1-A 는 `getPixels` 로 읽는 세로 범위를 열 전체(0..h)에서 실제 소비 구간
+        // `y0 until y1` 로 줄이고 버퍼 인덱스에 `-y0` 오프셋을 붙였다. 그 매핑이 어긋나면
+        // (오프셋 누락 → AIOOBE, 시작 y 누락 → 마진 픽셀 혼입, off-by-one → 이웃 행 샘플링)
+        // 반드시 여기서 잡힌다.
+        //
+        // ── 입력 ───────────────────────────────────────────────
+        // 20x100, 마진 밴드(y<12, y>=88)=순흑(luma 0), 내부(12..87)=회색 램프 RGB(y,y,y)→luma==y.
+        //
+        // ── 기본 인자로부터의 경계 손계산 ──────────────────────
+        //  edgeMarginPct=0.12f → y0 = (100 * 0.12f).toInt()
+        //    0.12f 의 정확값 = 16106127/2^27 = 11.99999973177909851…
+        //    100 배의 정확값 = 11.9999997317790985…, 12.0 과의 거리 2.68e-7 <
+        //    12 근방 ulp(2^-20 ≈ 9.54e-7)의 절반(4.77e-7) → float 반올림 결과는 **정확히 12.0f**
+        //    → y0 = 12
+        //  y1 = (100 - 12).coerceAtLeast(13) = 88
+        //  sideMarginPct=0.005f → x0 = (20 * 0.005f).toInt() = (0.099999994f).toInt() = 0
+        //  x1 = (20 - 0).coerceAtLeast(1) = 20
+        //  sampledCols = (20 - 0 + 2 - 1) / 2 = 21 / 2 = 10  (colStride=2 → x=0,2,…,18)
+        //  scaledHeight = (100 / 2).toInt() = 50
+        //
+        // ── 한 열의 샘플(모든 열이 동일 패턴) ──────────────────
+        //  rowStride=8, y = 12,20,28,36,44,52,60,68,76,84  (y<88) → counted = 10
+        //  luma = y 이므로 표본 = {12,20,28,36,44,52,60,68,76,84}
+        //  dark(luma <= 24) = {12, 20} → 2개 → rowDarkRatio = 2/10 = 0.2
+        //  Σluma = (12+84)*10/2 = 480 → rowMeanLuma = 480/10 = 48.0
+        //  Σluma² = 144+400+784+1296+1936+2704+3600+4624+5776+7056 = 28320
+        //  E[X²] = 2832.0 → 분산 = 2832.0 - 48.0² = 2832.0 - 2304.0 = 528.0
+        //
+        // ── 실패 시 나올 값(대조군) ────────────────────────────
+        //  · 마진 혼입(getPixels 를 y=0 부터 읽는 회귀): 표본 = {0,0,16,24,32,40,48,56,64,72}
+        //    → dark 4개 → ratio 0.4, mean = 352/10 = 35.2  (셋 다 어긋난다)
+        //  · off-by-one(`colBuf[y - y0 + 1]`): 표본 = {13,21,…,85} → mean 49.0 (ratio·분산은 동일)
+        //  · 오프셋 누락(`colBuf[y]`): 버퍼 크기 76 < y=84 → ArrayIndexOutOfBoundsException
+        val bitmap = verticalRampBitmap(width = 20, height = 100, interiorTop = 12, interiorBottom = 88)
+
+        val scan = bitmap.toPillarboxScan()
+
+        assertEquals("entries(= 샘플링된 열 개수)", 10, scan.height)
+        assertEquals("scaledHeight", 50, scan.width)
+        assertNotNull("rowMeanLuma 가 채워져야 한다", scan.rowMeanLuma)
+        assertNotNull("rowLumaVariance 가 채워져야 한다", scan.rowLumaVariance)
+        for (i in 0 until scan.height) {
+            assertEquals("col[$i] darkRatio", 0.2f, scan.rowDarkRatio[i], 0.0001f)
+            assertEquals("col[$i] meanLuma", 48.0f, scan.rowMeanLuma!![i], 0.0001f)
+            assertEquals("col[$i] lumaVariance", 528.0f, scan.rowLumaVariance!![i], 0.01f)
+        }
+    }
+
+    // ── 9. 음수 마진 비율 거부 — W7-C/수정 2 회귀 가드 ─────────────
+
+    @Test
+    fun `negative margin percentages are rejected instead of silently clamped`() {
+        // W7-B 가 `coerceIn(0, n/2-1)` 를 `coerceAtMost(...)` 로 바꾸면서 **하한 0 방어가
+        // 사라졌다**. 음수 pct 가 들어오면 x0/y0 가 음수가 되어 `getPixels` 가 진단하기 어려운
+        // 지점에서 IllegalArgumentException 을 던진다. W7-C 는 이를 클램프가 아니라 진입부
+        // `require` 로 막는다 — 음수 마진은 정상 입력이 아니라 호출자의 계산 오류이므로 조용히
+        // 0 으로 뭉개면 안 된다(CLAUDE.md "조용한 실패 금지").
+        //
+        // 여기서 잡히는 회귀: require 를 지우거나 `>= 0f` 를 `<= 0f` 등으로 뒤집는 변경.
+        val bitmap = solidBitmap(width = 16, height = 16, color = Color.BLACK)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            bitmap.toLetterboxScan(sideMarginPct = -0.01f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            bitmap.toPillarboxScan(edgeMarginPct = -0.01f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            bitmap.toPillarboxScan(sideMarginPct = -0.01f)
+        }
+
+        // 대조군: 0f 는 유효한 입력이므로 통과해야 한다(경계가 `> 0` 로 잘못 좁혀지면 여기서 실패).
+        assertEquals(8, bitmap.toLetterboxScan(sideMarginPct = 0f).height)
+        assertEquals(8, bitmap.toPillarboxScan(edgeMarginPct = 0f, sideMarginPct = 0f).height)
     }
 }

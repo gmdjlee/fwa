@@ -1,21 +1,18 @@
 package dev.dj.foldwindow.platform
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
-import android.graphics.Path
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import dev.dj.foldwindow.domain.BestMatchTracker
 import dev.dj.foldwindow.domain.ClickCyclePlan
 import dev.dj.foldwindow.domain.ClickMechanism
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.PaneGeometry
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /**
@@ -278,7 +275,7 @@ class SplitEntry(
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
-        val clicked = clickWhenFound(remaining(), "menuStep2 card-icon") { findCardIconNode(ctx) }
+        val clicked = service.clickWhenFound(remaining(), "menuStep2 card-icon", TAG) { findCardIconNode(ctx) }
         if (!clicked) {
             Log.w(TAG, "menuStep2: 카드 아이콘 발견/클릭 실패")
             return false
@@ -308,7 +305,7 @@ class SplitEntry(
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         fun remaining() = (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
 
-        val clicked = clickWhenFound(remaining(), "menuStep3 split-menu-item") { findSplitMenuNode() }
+        val clicked = service.clickWhenFound(remaining(), "menuStep3 split-menu-item", TAG) { findSplitMenuNode() }
         if (!clicked) {
             Log.w(TAG, "menuStep3: 분할 화면 메뉴 노드 발견/클릭 실패")
             return false
@@ -522,84 +519,46 @@ class SplitEntry(
             }
             .mapNotNull { w -> runCatching { w.root }.getOrNull() }
 
-    /** 트리를 걸어 predicate 를 만족하는 첫 노드를 찾는다. 재귀 중 개별 노드 접근은 모두 runCatching. */
-    private fun findNode(
-        roots: List<AccessibilityNodeInfo>,
-        predicate: (AccessibilityNodeInfo) -> Boolean,
-    ): AccessibilityNodeInfo? {
-        for (root in roots) {
-            val found = searchNode(root, predicate)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    private fun searchNode(
-        node: AccessibilityNodeInfo,
-        predicate: (AccessibilityNodeInfo) -> Boolean,
-    ): AccessibilityNodeInfo? {
-        if (runCatching { predicate(node) }.getOrDefault(false)) return node
-        val childCount = runCatching { node.childCount }.getOrDefault(0)
-        for (i in 0 until childCount) {
-            val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
-            searchNode(child, predicate)?.let { return it }
-        }
-        return null
-    }
-
     /**
-     * 셀렉터 체인을 순서대로 시도한다. 어떤 셀렉터가 매치됐는지 Log.i 로 남겨
+     * 셀렉터 체인을 **단일 트리 순회**로 평가한다. 어떤 셀렉터가 매치됐는지 Log.i 로 남겨
      * 향후 로케일 확장(어떤 후보가 실제로 쓰였는지) 근거로 삼는다.
+     *
+     * [P1, 2026-07-29] 기존에는 셀렉터 개수만큼 트리를 반복 순회했다(`findCardIconNode` 기준
+     * 폴링 주기당 3회). 이제 순회는 1회이고, 각 노드에서 [BestMatchTracker.accepts] 를 통과한
+     * 셀렉터만 평가한다. **어떤 노드가 선택되는지는 바뀌지 않는다** — 등가 논증은
+     * [BestMatchTracker] KDoc 참조(엄격 부등호 + pre-order 순회 유지 + 멀티 루트 처리).
+     *
+     * 추가된 유일한 동작 차이는 경계다: 깊이 [MAX_TREE_DEPTH] 초과 서브트리는 잘라내고,
+     * 노드 방문이 [MAX_NODES_VISITED_TREE] 를 넘으면 순회를 중단한다(둘 다 경고 로그).
+     * 기존 순회에는 상한이 아예 없었다.
      */
     private fun firstMatch(
         logLabel: String,
         roots: List<AccessibilityNodeInfo>,
         selectors: List<Pair<String, (AccessibilityNodeInfo) -> Boolean>>,
     ): AccessibilityNodeInfo? {
-        for ((name, predicate) in selectors) {
-            val node = findNode(roots, predicate)
-            if (node != null) {
-                Log.i(TAG, "$logLabel matched via selector [$name]")
-                return node
+        val tracker = BestMatchTracker<AccessibilityNodeInfo>()
+        // 예산은 루트 루프 바깥 — 이 호출 전체가 공유하고, 경고도 호출당 1회만 찍힌다.
+        var budget = MAX_NODES_VISITED_TREE
+        for (root in roots) {
+            walk(root, maxDepth = MAX_TREE_DEPTH) { node ->
+                if (budget-- <= 0) {
+                    Log.w(TAG, "$logLabel: 노드 예산 $MAX_NODES_VISITED_TREE 소진 — 순회 중단")
+                    return@walk false
+                }
+                selectors.forEachIndexed { i, (_, pred) ->
+                    if (tracker.accepts(i) && runCatching { pred(node) }.getOrDefault(false)) {
+                        tracker.offer(i, node)
+                    }
+                }
+                !tracker.isTopPriority() // 0순위 매치면 조기 종료
             }
+            // 예산 소진(budget < 0)이든 0순위 매치든 루트 루프를 더 돌 이유가 없다.
+            if (tracker.isTopPriority() || budget < 0) break
         }
-        return null
-    }
-
-    // ══════════════════════════════════════════════════════════
-    // 조건 폴링 (ADR-2: 고정 지연 금지)
-    // ══════════════════════════════════════════════════════════
-
-    /** [timeoutMs] 안에서 [POLL_INTERVAL_MS] 간격으로 condition 이 true 가 될 때까지 대기한다. */
-    private suspend fun pollUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
-        if (timeoutMs <= 0) return condition()
-        return withTimeoutOrNull(timeoutMs) {
-            while (!condition()) {
-                delay(POLL_INTERVAL_MS)
-            }
-            true
-        } ?: false
-    }
-
-    /**
-     * [timeoutMs] 안에서 [POLL_INTERVAL_MS] 간격으로 [find] 가 null 이 아닌 값을 반환할 때까지
-     * 폴링한다. 제네릭 버전 — [step2DragToTopEdge] 의 "목표 상태 이미 도달" 대 "유효 카드 아이콘
-     * 확보" 이중 판정처럼, 매 폴링 주기마다 여러 조건을 함께 확인해야 하는 경우에 재사용한다
-     * ([회귀 수정, 2026-07-25] 기존 `pollForNode` 를 일반화해 대체).
-     */
-    private suspend fun <T> pollForValue(
-        timeoutMs: Long,
-        find: () -> T?,
-    ): T? {
-        if (timeoutMs <= 0) return find()
-        return withTimeoutOrNull(timeoutMs) {
-            var value = find()
-            while (value == null) {
-                delay(POLL_INTERVAL_MS)
-                value = find()
-            }
-            value
-        }
+        val node = tracker.best
+        if (node != null) Log.i(TAG, "$logLabel matched via selector [${selectors[tracker.bestIndex].first}]")
+        return node
     }
 
     /**
@@ -664,7 +623,7 @@ class SplitEntry(
                         Log.e(TAG, "clickCycle: [$what] own touchable overlay present — tap would be swallowed")
                         return false
                     }
-                    tapNodeCenter(node)
+                    service.tapNodeCenter(node)
                 }
 
                 ClickMechanism.A11Y_ACTION -> {
@@ -673,7 +632,7 @@ class SplitEntry(
                         runCatching { clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
                             .getOrDefault(false)
                     // clickable 조상이 없거나 ACTION_CLICK 이 false 면 같은 사이클 안에서 즉시 제스처로 폴백.
-                    if (clicked) true else tapNodeCenter(node)
+                    if (clicked) true else service.tapNodeCenter(node)
                 }
             }
             val mechLabel = if (mechanism == ClickMechanism.GESTURE_TAP) "gesture" else "a11y"
@@ -696,94 +655,8 @@ class SplitEntry(
         return false
     }
 
-    /**
-     * [budgetMs] 안에서 [find] 로 노드를 폴링 탐색해 발견 즉시 클릭한다.
-     * 트리 갱신 직후 일시적 미조회(윈도우 churn)에 대비해 탐색 자체를 재시도한다.
-     * 클릭까지 성공하면 true. 예산 소진 시 false.
-     *
-     * 클릭 해석 순서 (실측: 라벨 TextView 는 isClickable=false 인 경우가 있어 ACTION_CLICK 이 항상 실패할 수 있음):
-     *  1. 매치 노드에서 부모로 올라가며 isClickable 인 조상(또는 자신)에 ACTION_CLICK
-     *  2. 실패 시 매치 노드 중심 좌표에 50ms 탭 제스처 디스패치 (성공 여부는 호출자의 성공 조건 폴링이 판정)
-     *
-     * [#20] 잔여 호출자(menuStep2/3, DividerPopupRotator 와 동형의 자체 구현)만 남았다 —
-     * step3/menuStep4 는 [clickUntilCondition] 으로 이전됐다.
-     */
-    private suspend fun clickWhenFound(
-        budgetMs: Long,
-        what: String,
-        find: () -> AccessibilityNodeInfo?,
-    ): Boolean {
-        val attempt: () -> Boolean = attempt@{
-            val node = find() ?: return@attempt false
-            val label = runCatching {
-                "text=${node.text}/desc=${node.contentDescription}"
-            }.getOrDefault("?")
-            val clickable = clickableAncestorOrSelf(node)
-            if (clickable != null &&
-                runCatching { clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
-                    .getOrDefault(false)
-            ) {
-                val how = if (clickable == node) "clicked-self" else "clicked-ancestor"
-                Log.i(TAG, "clickWhenFound: [$what] $how ($label)")
-                return@attempt true
-            }
-            val tapped = tapNodeCenter(node)
-            if (tapped) {
-                Log.i(TAG, "clickWhenFound: [$what] gesture-tap-fallback ($label)")
-            }
-            tapped
-        }
-        val ok = if (budgetMs <= 0) {
-            attempt()
-        } else {
-            withTimeoutOrNull(budgetMs) {
-                while (!attempt()) {
-                    delay(POLL_INTERVAL_MS)
-                }
-                true
-            } ?: false
-        }
-        if (!ok) {
-            Log.w(TAG, "clickWhenFound: [$what] ${budgetMs}ms 예산 안에 노드 발견/클릭 실패")
-        }
-        return ok
-    }
-
-    /** 매치 노드부터 최대 [maxDepth] 단계 부모로 올라가며 isClickable 인 첫 노드(자신 포함)를 찾는다. */
-    private fun clickableAncestorOrSelf(
-        node: AccessibilityNodeInfo,
-        maxDepth: Int = 10,
-    ): AccessibilityNodeInfo? {
-        var cur: AccessibilityNodeInfo? = node
-        repeat(maxDepth + 1) {
-            val n = cur ?: return null
-            if (runCatching { n.isClickable }.getOrDefault(false)) return n
-            cur = runCatching { n.parent }.getOrNull()
-        }
-        return null
-    }
-
-    /** 노드 중심 좌표에 [TAP_DURATION_MS] 탭 제스처를 디스패치한다. 반환값은 dispatchGesture 수용 여부. */
-    private fun tapNodeCenter(node: AccessibilityNodeInfo): Boolean {
-        val bounds = Rect()
-        runCatching { node.getBoundsInScreen(bounds) }
-        if (bounds.isEmpty) return false
-        return tapPoint(bounds.centerX(), bounds.centerY())
-    }
-
-    /** 임의 좌표에 [TAP_DURATION_MS] 탭 제스처를 디스패치한다. */
-    private fun tapPoint(x: Int, y: Int): Boolean {
-        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, TAP_DURATION_MS))
-            .build()
-        return runCatching { service.dispatchGesture(gesture, null, null) }.getOrDefault(false)
-    }
-
     companion object {
         private const val TAG = "FWSplitEntry"
-        private const val POLL_INTERVAL_MS = 150L
-        private const val TAP_DURATION_MS = 50L
 
         /** [#20] clickUntilCondition 최대 사이클 수 (docs/DESIGN_20_CLICK_CYCLE.md §2-2). */
         private const val MAX_CLICK_CYCLES = 3

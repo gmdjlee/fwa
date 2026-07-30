@@ -1050,3 +1050,61 @@ JVM 테스트가 **0개**다(테스트 소스에는 주석 2건만 언급). qa �
 심각한 회귀**까지 포함해서다. 즉 **「테스트 312 통과」는 이 웨이브의 안전 근거가 아니며,
 실기기 스모크가 유일한 실효 검증 수단이다**(W5-4 와 동일 결론).
 
+---
+
+## 개선 웨이브 W7 (성능 · 중복 정리) — 실기기 재검증 대기 [미검증]
+
+**2026-07-30 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W7 · §P1+M3 · §P2 · §P4.
+해소 대상 = P1(셀렉터별 다중 DFS → 단일 DFS + 노드/깊이 상한) · M3(`NodeActions`/`Polling` 추출) ·
+P2(부팅 경로 `runBlocking` 제거) · P4(`toPillarboxScan` 세로 읽기 범위 축소 + 1px 크래시 수정).
+정적 DoD 통과(테스트 322 · assembleDebug · lintDebug 신규 0 · baseline 15 무변경).
+
+**이 웨이브가 실기기 세션을 요구하는 이유:** P1 은 **어떤 노드를 고르는가**를, P2 는 **부팅 시퀀스**를
+바꾼다. 둘 다 JVM 에서 관측 불가능한 표면이다. 계획서는 3세션을 요구했으나 qa 검증 결과
+**6항목으로 확장**한다 — 계획서의 "MENU 세션 1" 이 리사이저블 앱으로 수행되면 이 웨이브에서 가장 크게
+재작성된 `DividerPopupRotator`(−115줄)가 **한 줄도 실행되지 않기 때문**이다.
+
+준비:
+```bash
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+./gradlew :app:installDebug
+# ⚠ 앱 업데이트 시 접근성 서비스가 꺼진다 (CLAUDE.md 함정 #6) — 재활성화 필수
+adb shell settings put secure enabled_accessibility_services \
+  dev.dj.foldwindow/dev.dj.foldwindow.service.ArrangerAccessibilityService
+adb logcat -c
+adb logcat -s FWSplitEntry:V FWDividerRotator:V FWNodeActions:V FWPaneSwapper:V FWFloatingLauncher:V FWArranger:V
+```
+
+| # | 항목 | 확인 방법 / 유도 | 상태 |
+|---|---|---|---|
+| W7-1 | **P1 노드 선택 등가 (DRAG)** | 리사이저블 앱(유튜브) 버블 탭 → 배치 1회. `FWSplitEntry: step2 card-icon matched via selector [...]` 의 **셀렉터 이름이 W6 세션 로그와 동일**해야 한다(한국어 Fold 7 = `ko-content-desc` 기대). `structural-clickable-label` 로 바뀌면 **P1 회귀 확정** — 대형 카드 오매치로 Recents 세션이 파괴된다(2026-07-25 3차 실측 재발) | [미검증] |
+| W7-2 | **P1 신규 상한 미발동** | W7-1·W7-3 세션 전체에서 `FWSplitEntry: … 노드 예산 4000 소진` 과 `FWNodeActions: walk: 깊이 상한 50 초과` 가 **단 한 줄도 나오지 않아야** 한다. 한 줄이라도 나오면 구코드에 없던 절단이 주 경로에서 발동한 것 → 상한을 올리고 **실측 트리 규모를 이 문서에 기록** | [미검증] |
+| W7-3 | **M3 회전 클릭 (MENU · UNRESIZEABLE 앱 필수)** | 리사이저블 앱으로는 `DividerPopupRotator` 가 **호출조차 안 된다**. 넷플릭스류로 1세션. ① `menuStep2/3 split-menu matched via selector [ko-split-menu]` ② `FWDividerRotator: clickWhenFound: [rotateOnce rotate-node] clicked-self (text=…/desc=…)` — **`clicked` 가 아니라 `clicked-self`/`clicked-ancestor` + 괄호 라벨**이어야 통합본이 실행된 것 ③ 회전 후 상하 분할 성립 | [미검증] |
+| W7-4 | **PaneSwapper 탭 duration 해소** | 분할 성립 후 페인 스왑 1회. `FWPaneSwapper: swap:` 이 W6 와 동일 형태로 나오고 스왑 성립. `TAP_DURATION_MS`(50L) 소유권이 `NodeActions` 로 옮겨간 뒤에도 런타임이 맞는지의 유일한 실동작 경로 | [미검증] |
+| W7-5 | **P2 부팅 후 버블 위치 복원** | 버블을 기본 위치가 아닌 곳(좌하단 등)으로 옮겨 스냅 완료 → **재부팅**. ① 버블이 **기본 위치(우측 가장자리, 화면 높이 1/3)에 먼저 떴다가 저장 위치로 이동** — 이 한두 프레임 점프가 P2 의 **의도된** 체감 변화다. 점프가 안 보이면 복원이 아예 안 온 것일 수 있으니 ②로 구분 ② 최종 위치가 재부팅 전과 동일 ③ `applyCachedBubblePosition: 버블 위치 반영 실패` 미출현 ④ 부팅 직후 ANR·버벅임 없음 | [미검증] |
+| W7-6 | **P2 경합 가드 (best-effort)** | 재부팅 후 버블이 뜨자마자(1초 내) 즉시 잡고 드래그. 드래그 중 버블이 저장 위치로 튀지 않아야 한다. `FWFloatingLauncher: restoreBubblePositionAsync: 복원 전 사용자가 버블을 이동 — 저장값 적용 생략` 이 나오면 가드 동작. **창이 매우 좁아 미재현이 정상 — 미재현은 무결의 증거가 아니다** | [미검증] |
+
+**W7-2 · W7-4 는 계획서 원문(DRAG 1 + MENU 1 + 부팅 1)에 없던 항목**이고, W7-3 의 「UNRESIZEABLE 앱 필수」
+제약도 계획서에 없다. 전부 qa 검증자 권고로 추가했다.
+
+**[확정] 새로 도입된 상한 2개는 실측값이 아니다:** `MAX_TREE_DEPTH = 50`, `MAX_NODES_VISITED_TREE = 4000`
+(`platform/NodeActions.kt`). 구 순회에는 상한이 **아예 없었고**, Fold 7 Recents 런처 트리의 실제 깊이·노드 수는
+측정된 바 없다. 초과 시 조용히 다른 노드가 선택되거나 미발견된다 — 그래서 두 경우 모두 `Log.w` 를 남기고
+**W7-2 가 그 로그의 부재를 확인**한다. 참고로 `PaneSwapper.MAX_NODES_VISITED = 500` 은 **통합하지 않고 그대로 뒀다**
+(팝업 탐색용 실측값을 런처 전체 트리에 확대하면 진입 경로가 죽는다 — CLAUDE.md 함정 #7).
+
+**[확정] 로그 델타 2건 (실기기 대조 시 혼동 방지):** `DividerPopupRotator` 의
+① `clickWhenFound: [$what] clicked` → `clicked-self`/`clicked-ancestor (text=…/desc=…)`
+② `clickWhenFound: [$what] gesture-tap-fallback` → `gesture-tap-fallback (text=…/desc=…)`
+둘 다 `SplitEntry` 판 통합의 결과이며 **정보 증가 방향, 동작 변화 0**이다.
+`matched via selector [...]` / `transition:` / `arrange done:` / `arrange decision:` / `clickCycle:` /
+`swap:` / `resize-mode detection:` / `verify:` 는 **문자 단위 무변경**(qa 가 `Log.*` 리터럴 68→69개 전수 대조).
+
+**JVM 테스트 사각지대 [확정, qa 변조 실험 9종]:** `SplitEntry`/`DividerPopupRotator`/`PaneSwapper`/
+`FloatingLauncherService`/`NodeActions`/`Polling` 을 인스턴스화하는 JVM 테스트가 **0개**다.
+변조 9종 중 **4종만 잡혔고 그 4종은 전부 `BestMatchTracker`·`ScreenshotSampler` 라는 순수 함수 표면**이었다.
+**무검출 5종:** ① `walk` 자식 순회를 역순으로 ② `firstMatch` 의 `tracker.accepts(i)` 게이팅 삭제
+③ `MAX_NODES_VISITED_TREE` 를 **1** 로 ④ 버블 클램프를 `params.width` → `view.width`(= `addView` 직후 0 이라
+`maxX` 가 화면 폭 전체가 되어 버블이 화면 밖으로 나갈 수 있다) ⑤ 경합 가드 무력화 — **전부 322개 통과**.
+즉 **「테스트 322 통과」는 W7 의 안전 근거가 아니다**(W5-4·W6 에 이은 **세 번째 확정**). 위 표 6항목이 유일한 실효 검증이다.
+

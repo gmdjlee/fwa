@@ -287,7 +287,10 @@ class PaneSwapper(private val service: AccessibilityService) {
         /** [미검증] 실기기에서 팝업 문구를 확인해 갱신할 것 */
         private val SWITCH_KEYWORDS = listOf("전환", "switch", "Switch")
 
-        private const val TAP_DURATION_MS = 50L
+        // [M3] 탭 duration 은 platform/NodeActions.kt 의 공용 TAP_DURATION_MS(=50L) 를 쓴다.
+        // 나머지 디스패치 헬퍼(dispatchTap/tapNodeBounds/dispatchDoubleTap/dispatchNoWait)는
+        // 의도적으로 통합하지 않았다 — GestureResultCallback 로그 콜백과 refresh() 스테일 가드가
+        // 공용 tapPoint/tapNodeCenter 와 동작이 다르다.
         private const val DOUBLE_TAP_GAP_MS = 120L
 
         /** 회전 직후 첫 탭이 무시되는 현상(2026-07-25 실측) 대응 — 재시도 여지 확보를 위해 1200ms→700ms로 축소. */
