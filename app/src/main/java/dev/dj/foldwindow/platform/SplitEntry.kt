@@ -498,6 +498,15 @@ class SplitEntry(
      * step3/menuStep4 공통: Recents 파트너 피커(`FromRecentActivity`)에서 우리 패널 라벨을 찾는다.
      * [실측 2026-07-25] 피커의 앱 카드 라벨은 클릭 불가 텍스트 노드(클릭 가능 카드 컨테이너의 자식)라
      * isClickable 을 요구하면 절대 매치되지 않는다 — 클릭 대상 해석은 clickWhenFound 가 맡는다.
+     *
+     * [#29, 실측 2026-07-31] FW Panel 리센츠 카드가 잔존하면 0-bounds 유령 노드가 가시 노드보다
+     * DFS 앞에 출현한다. 유령을 매치하면 gesture 는 즉발 실패하고(tapNodeCenter 의 bounds.isEmpty
+     * 가드), a11y 폴백은 유령의 clickable 조상을 눌러 패널이 전체화면으로 낙착한다 — 카드 제거
+     * 실험(동일 조작 즉시 성공)으로 확정됐다. 그래서 bounds 를 predicate 에서 거른다 — step2 의
+     * 「유령 매치 — 재폴링 계속」(같은 파일) 과 동일 원칙.
+     *
+     * 이 find 는 DRAG step3 와 공유되므로 필터는 양쪽에 적용된다. DRAG 정상 경로의 매치 노드는
+     * bounds 유효가 실측 확인됐으므로(2026-07-25 S1) 영향 없음.
      */
     private fun findPanelPickerNode(): AccessibilityNodeInfo? {
         val roots = launcherWindowRoots()
@@ -506,7 +515,14 @@ class SplitEntry(
             "panel-label:$label" to { node: AccessibilityNodeInfo ->
                 val text = node.text?.toString().orEmpty()
                 val desc = node.contentDescription?.toString().orEmpty()
-                text.contains(label) || desc.contains(label)
+                if (text.contains(label) || desc.contains(label)) {
+                    // [#29] 0-bounds 유령 필터 — 위 KDoc 참조. predicate 안에서 걸러야 firstMatch 의
+                    // DFS 가 유령에서 멈추지 않고 같은 폴링 주기 안에서 뒤쪽 가시 노드를 계속 찾는다.
+                    val rect = Rect()
+                    runCatching { node.getBoundsInScreen(rect) }.isSuccess && !rect.isEmpty
+                } else {
+                    false
+                }
             }
         }
         return firstMatch("step3/menuStep4 panel-picker", roots, selectors)
