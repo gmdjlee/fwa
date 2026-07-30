@@ -11,3 +11,6 @@ captures/
 *.keystore
 docs/probe_report_raw_*.md
 app/release/
+
+# 실기기 검증 세션 로그 (20차~) — 로컬 전용
+logs/

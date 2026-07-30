@@ -904,7 +904,9 @@ purge 가 세션 내에서 카드를 지운 타이밍, 스크롤/레이아웃 �
 
 ---
 
-## 개선 웨이브 W1 (보안 차단) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W1 (보안 차단) — ✅ 20차 검증 (W1-1·2·3 통과, W1-4 만 [미검증] 유지)
+
+> **20차 판정 (2026-07-31):** W1-1 ✅ · W1-2 ✅ · W1-3 ✅ · W1-4 [미검증 유지 — 유도 3후보 소진, 아래 20차 절]. 상세 = 「20차 캠페인」 절.
 
 **2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W1.
 정적 DoD 는 전부 통과했다(테스트 286 · assembleDebug · lintDebug 신규 0 · assembleRelease ·
@@ -933,7 +935,9 @@ purge 가 세션 내에서 카드를 지운 타이밍, 스크롤/레이아웃 �
 
 ---
 
-## 개선 웨이브 W2 (Shizuku 셸 하드닝) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W2 (Shizuku 셸 하드닝) — ✅ 20차 검증 (W2-1~6 통과, W2-7 만 [미검증] 유지)
+
+> **20차 판정 (2026-07-31):** W2-1~W2-6 전부 ✅ · W2-7 [미검증 유지 — 인위 유도 곤란, 자연 발생 대기]. 상세 = 「20차 캠페인」 절.
 
 **2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W2.
 해소 대상 = F3(타임아웃 무효) · F4(파이프 데드락) · F5(바인드 래치 고착) · S2(허용 목록 부재) ·
@@ -972,7 +976,9 @@ S3(셸 문자열 보간). 정적 DoD 통과(테스트 299 · assembleDebug · li
 
 ---
 
-## 개선 웨이브 W3 (기하 정합성 · 도메인 불변식) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W3 (기하 정합성 · 도메인 불변식) — ✅ 20차 검증 완료
+
+> **20차 판정 (2026-07-31):** W3-1 ✅ · W3-2 ✅ (로그 + 토스트 육안). 상세 = 「20차 캠페인」 절.
 
 **2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W3.
 해소 대상 = F1(`WindowGeometry` 필드 간 불변식 부재) · F2 1단계(기하 하드코딩 / 실화면 불일치 —
@@ -989,7 +995,9 @@ v1 범위 밖이다.
 
 ---
 
-## 개선 웨이브 W5 (구동부 안정화) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W5 (구동부 안정화) — ✅ 20차 검증 완료
+
+> **20차 판정 (2026-07-31):** W5-1~W5-4 전부 ✅ (W5-4 는 tolerance=0 실험 후 8 원복 확인). 상세 = 「20차 캠페인」 절.
 
 **2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W5.
 해소 대상 = F6(`dispatch()` 재진입 → 이벤트 큐 + 단일 드레인 루프) · F9 v1 대응(터미널 메시지에
@@ -1020,7 +1028,9 @@ F6 의 동작 등가는 이 불변식에 의존한다 — 터미널 + effect 를
 
 ---
 
-## 개선 웨이브 W6 (세션 상태 캡슐화) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W6 (세션 상태 캡슐화) — ✅ 20차 검증 (W6-5 는 조건부)
+
+> **20차 판정 (2026-07-31):** W6-1~W6-4 ✅ · W6-5 조건부 ✅ (B 필드 전부 B 기준 확인; consensus 재발동·캐시 pkg 판정은 B=PROFILE 정당 스킵으로 관측 불가 — B=MEASURED 후보 세션 자연 관측 대기). 상세 = 「20차 캠페인」 절.
 
 **2026-07-29 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W6 · §M1.
 해소 대상 = M1 1단계(세션 가변 필드 17개 → `private class Session` 1개, `cleanupSession()` = `session = null`).
@@ -1052,7 +1062,9 @@ JVM 테스트가 **0개**다(테스트 소스에는 주석 2건만 언급). qa �
 
 ---
 
-## 개선 웨이브 W7 (성능 · 중복 정리) — 실기기 재검증 대기 [미검증]
+## 개선 웨이브 W7 (성능 · 중복 정리) — ✅ 20차 검증 완료
+
+> **20차 판정 (2026-07-31):** W7-1~W7-5 ✅ · W7-6 미재현·무이상 (best-effort 종료 — 미재현은 무결의 증거가 아님). 상세 = 「20차 캠페인」 절.
 
 **2026-07-30 · 코드 구현 완료, 실기기 미실시.** 계획 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W7 · §P1+M3 · §P2 · §P4.
 해소 대상 = P1(셀렉터별 다중 DFS → 단일 DFS + 노드/깊이 상한) · M3(`NodeActions`/`Polling` 추출) ·
@@ -1108,3 +1120,104 @@ adb logcat -s FWSplitEntry:V FWDividerRotator:V FWNodeActions:V FWPaneSwapper:V 
 `maxX` 가 화면 폭 전체가 되어 버블이 화면 밖으로 나갈 수 있다) ⑤ 경합 가드 무력화 — **전부 322개 통과**.
 즉 **「테스트 322 통과」는 W7 의 안전 근거가 아니다**(W5-4·W6 에 이은 **세 번째 확정**). 위 표 6항목이 유일한 실효 검증이다.
 
+
+---
+
+## 20차 — 개선 웨이브 실기기 검증 캠페인 + #29 발견·수정 (2026-07-31, adb 주도 + 사용자 물리 조작)
+
+절차 = `docs/DEVICE_VERIFICATION_RUNBOOK.md` (S-B~S7). 원 로그 = `logs/S0_baseline.txt`(베이스라인)
+`logs/S1_drag.txt` `logs/S2_menu_FAIL_head.txt`(#29 재현) `logs/S2_menu_fixed.txt`(#29 수정 검증).
+빌드 = HEAD(`20dd987`)+#29 수정 / 베이스라인 대조군 = `1965a72`(W0~W4, 구동부 재작성 3종 미포함).
+
+### 한 줄 결론
+
+**W1~W7 실기기 31항목 중 28 통과 · 3 [미검증] 유지(W1-4·W2-7·B계열 — 전부 계획된 자연 대기).
+부수로 신규 결함 #29(피커 유령 매치)를 발견·수정·재검증 완료. A-1(물리 접기)·A-2(DRM 육안)도 종결
+— PROGRESS「남은 작업」A 절 소진.**
+
+### 세션 지도 실행 결과
+
+| 세션 | 내용 | 결과 |
+|---|---|---|
+| S-B | 베이스라인 로그 (`1965a72`, DRAG top→bottom+스왑) | ✅ 대조군 확보 (`logs/S0_baseline.txt`) |
+| S0 | HEAD 설치·W1-1·W1-2 | ✅ |
+| S1 | DRAG 주경로 (유튜브, top→bottom→취소→재배치→해제) | ✅ 8항목 |
+| S2 | MENU 경로 (넷플릭스) | ⚠ **#29 발견** → 수정 → ✅ 재검증 (카드 잔존 조건 포함) |
+| S3 | 팝업/Shizuku (W2 전 항목 + A-2) | ✅ (W2-7 만 자연 대기) |
+| S4 | 재부팅 ×2 (W7-5·W7-6) | ✅ / 미재현·무이상 |
+| S5 | 세로 명시 실패 + 희귀 경로 유도 | W3-2 ✅ · W1-4/B-1/B-2 유도 불가 확정 |
+| S6 | 물리 접기 (A-1) | ✅ |
+| S7 | 허용치 0 실험 (W5-4) → 8 원복 | ✅ |
+
+### 항목별 판정 근거 (로그 인용)
+
+**W1-1** ✅ `adb broadcast ARRANGE` 로 배치 트리거 정상 (전 세션의 트리거 수단이 곧 이 판정).
+**W1-2** ✅ `cmd package query-activities` 에 `probe.ProbeActivity` 존재 + 접근성 Enabled services 에 프로브 등재.
+**W1-3** ✅ 분할 해제 시 `dismissSplit: 성공` + 토큰 로그 0건 = 1차 경로(`instance.finish()`) 사용.
+**W3-1** ✅ 가로 배치 정상, `기하 불일치` 로그 0건. **W3-2** ✅ 세로 트리거 → `startArrange: 화면 기하 불일치 — screen=1968x2184 expected=2184x1968 (v1 미지원)` 1건 + 토스트 육안 확인, 배치 미시도(전이 로그 0).
+**W5-1** ✅ residual=0 · 보정 0회, 베이스라인과 동수준. **W5-3** ✅ 전이 시퀀스 문자 단위 동일(콜드 진입·분할 활성 단축 경로 양쪽). 유일 델타 = `arrange done` 의 ` tolerance=8` 부기 — **W5/F9 의 의도된 추가**.
+**W5-4** ✅ tolerance=0 실험에서 토스트 **「배치 완료 · 잔여 30px (허용치 초과)」** 문구 육안 정확 일치 + `arrange done: … residual=30 … tolerance=0` 로그 대조. **실험 후 8 원복 + `git diff` 빈 출력 확인 완료.**
+**W6-1** ✅ `arrange decision:`/`verify:`/`arrange done:` 포맷 베이스라인 동일. **W6-2** ✅ `resize-mode detection: … unresizeableDetection=true recipe=MENU` + 5단 완주(`entryStepCount` 배선 실증). **W6-3** ✅ Dragging 중 Cancel → `Failed(reason=CANCELLED)` → **재배치 즉시 성공**(세션 완전 초기화의 직접 증거). 부수: 취소 후 늦게 도착한 스왑 코루틴이 `mech=none converged` 후 **후속 전이 0** — W6 세션 캡슐화의 「종료 후 쓰기 no-op」 경로 실발화 실증. **W6-4** ✅.
+**W6-5** 조건부 ✅ — B(넷플릭스) `arrange decision:` 의 `label=넷플릭스` `aspectSource=PROFILE` 전부 B 기준, A(유튜브) 잔재 0. 단 B=PROFILE 은 합치 게이트·캐시 저장을 **정당 스킵**하므로(확정값 경로) `consensus:` 재발동·`aspect cache save: pkg=` 판정은 이 세션에서 원리상 관측 불가. B=MEASURED 후보(무프로파일 앱) 세션에서 자연 관측 대기.
+**W7-1** ✅ `step2 card-icon matched via selector [ko-content-desc]` — 베이스라인과 동일(`structural-clickable-label` 회귀 아님). **W7-2** ✅ `노드 예산 4000 소진`·`깊이 상한 50 초과` **전 세션 0건**. **W7-3** ✅ ① `menuStep2/3 split-menu matched via selector [ko-split-menu]` ② `FWDividerRotator: clickWhenFound: [rotateOnce rotate-node] clicked-self (text=null/desc=시계 방향으로 회전)` — **통합본 라벨 부기 정확**(베이스라인 구판은 `clicked` 만) ③ 회전 후 상하 분할·완료. **W7-4** ✅ `swap: settleGate ok in 153ms` → `single tap completed` → `switch node found` → `swap: converged cycle=0 mech=a11y` — 베이스라인 동형(`TAP_DURATION_MS` 이관 후 실동작 정상).
+**W7-5** ✅ ② 재부팅 후 최종 위치 = 저장 위치(좌하단) ③ `applyCachedBubblePosition … 실패` 0건 ④ ANR 0. ① 기본 위치 점프는 육안 미관측(판정 목적인 「복원 도착」은 ②로 확정). **W7-6** 미재현·무이상 — 부팅 직후 1초 내 드래그에서 튐 없음, 가드 로그 미발화(= 경합 창 자체가 안 열림). **미재현은 무결의 증거가 아님.**
+**W2-1** ✅ `FWArranger.Shizuku: ShellExecUserService 연결됨`, `AbstractMethodError` 0건(versionCode 3 재생성 정상). **W2-2** ✅ 유튜브 `popup done bounds=(64,150,2120,1306)` = 2056×1156 = **1.778 정확**. **W2-4** ✅ `Starting: Intent { cmp=com.google.android.youtube/.app.honeycomb.Shell$HomeActivity }` — **`$` 클래스명이 인용 없이 argv 로 정상** = 전환 직접 실증. **W2-3** ✅ 넷플릭스 팝업 성립 + 동일 bounds (재생 동작은 아래 「신규 사실」). **W2-5** ✅ `blocked by policy` 전 세션 0건 (`am start`/`am stack list`/`am task resize` 전부 통과). **W2-6** ✅ 서버 kill(주의: `am force-stop` 은 shell uid 서버를 못 죽인다 — `kill <pid>` 직접) → 메뉴 항목 즉시 소멸(가용성 감지 역방향 반영) → 스타터 재실행 → 재시도 성공(`연결됨` 재발화 = 재바인드). F5 latch 직접 타격은 메뉴 게이팅이 시도 자체를 막아 불가 — 간접 검증으로 판정.
+**A-1** ✅ 실물리 접기: `fold posture: FLAT → HALF_OPENED_HORIZONTAL` → `hinge angle 90.0 → 0.0` → `UNKNOWN` → **`cover auto-dismiss fired`** → 펴짐 후 분할 해제 육안 확정. 17차 `cmd device_state` 에뮬 → 실물리 완결. **A-2** ✅ 넷플릭스 팝업 창 내 DRM 영상 **육안 정상 재생** (17차 Secure layer 로그 + 금회 육안 = 완결).
+**W1-4 · B-1 · B-2** [미검증 유지] — 유도 3후보 소진: ① 「활동 유지 안 함」은 분할 중 패널이 가시 상태라 destroy 안 되고 홈 이탈 시 분할 자체가 소멸(조건 논리적 유도 불가) ② `am kill` 은 FGS 보유로 거부 실증(pid 생존) ③ `force-stop` 은 접근성까지 죽여 조건 파괴. 자연 발생 대기 유지.
+**W2-7** [미검증 유지] — 인위 유도 곤란(계획대로). `logcat -s FWArranger.Shizuku` 계측 지속.
+
+### ⚠ 신규 결함 #29 — MENU 피커 유령(0-bounds) 매치 → 패널 전체화면 낙착 [발견·수정·재검증 완료]
+
+**증상:** FW Panel 리센츠 카드 **잔존** 상태에서 MENU 레시피 menuStep4 가 3attempt 전멸 → `ENTRY_STEP_FAILED`.
+사용자 육안 = 「검은 시계 화면(패널)이 두 번 떴다 사라짐」.
+
+**재현 로그 시그니처** (`logs/S2_menu_FAIL_head.txt`):
+```
+clickCycle: [menuStep4 panel-picker] cycle=0 mech=gesture dispatched=false   ← 5~30ms 간격 즉발
+clickCycle: [menuStep4 panel-picker] cycle=1 mech=gesture dispatched=false
+clickCycle: [menuStep4 panel-picker] cycle=2 mech=a11y dispatched=true
+FORENSIC viewClicked … viewId=…:id/icon_container                            ← 오착지 클래스(3차 기물증)
+FWPanelActivity: fullscreen 상태 감지 — 파트너 전용 액티비티이므로 종료      ← 낙착 실패
+```
+
+**원인 체인 [확정]:** ① 카드 잔존 시 런처 창 트리에 그 카드의 **0-bounds 유령 노드**가 가시 노드보다 DFS 앞에 출현
+② `findPanelPickerNode` 가 라벨 포함 매치만 하고 bounds 를 안 봄 → 유령 우선 매치 ③ gesture 는 `tapNodeCenter` 의
+`bounds.isEmpty` 가드로 무디스패치 false ④ a11y 폴백이 유령의 clickable 조상(icon_container)을 클릭 → 런처가
+**페인 배치가 아닌 일반 실행**으로 해석 → 패널 전체화면 낙착 → 자가 가드 종료 → 수렴 실패.
+
+**판별 실험 2종 [확정]:** (a) 베이스라인 `1965a72` 도 문자 단위 동일 실패 → **W0~W7 무관, 기존 결함**
+(07-25 MENU 6/6 성공 = 카드 부재의 우연) (b) 카드 스와이프 제거 후 동일 조작 **즉시 성공**
+(`cycle=0 mech=gesture dispatched=true → converged 340ms`) → 유령 소스 = 잔존 카드 확정.
+
+**#27 과의 관계:** 거울상. #27 = 카드 **부재** 시 step3 소환 불능(축 A 로 해소) / #29 = 카드 **존재** 시 MENU
+유령 매치. DRAG step3 는 카드 존재 상태에서도 정상(S1 실증 — 피커 창 구성이 다름). 17차 D-절 3전멸(node-not-found)
+과는 시그니처가 다르므로 별개 유지.
+
+**수정:** `findPanelPickerNode` 셀렉터 predicate 에 bounds 필터 추가 (라벨 매치여도 `getBoundsInScreen` 실패/빈
+rect 면 비매치 → 같은 폴링 주기 안에서 DFS 뒤쪽 가시 노드로 진행). 07-25 「유령 매치 — 재폴링 계속」(step2) ·
+`structural-clickable-label` predicate 내 bounds 검사와 동일 원칙의 누락 지점 보완. DoD: 테스트 322 무변경 통과 ·
+assembleDebug · lintDebug 신규 0 · domain diff 0.
+
+**수정 재검증 [확정]:** 카드=1 확인 상태에서 MENU 배치 → `cycle=0 mech=gesture dispatched=true → converged 333ms`
++ `fullscreen 감지` 0건 + 회전·완료. 카드-부재 경로도 재확인(동일 성공). DRAG step3(공유 find)도 수정 후 정상.
+
+### 신규 사실 (20차 부수 관측)
+
+- **넷플릭스는 재생 중 분할 진입 시 자체 팝업 플레이어(PiP)로 전환**하고, 재생 중 팝업(freeform) 전환 시에는
+  `am start -n …UIWebViewActivity`(추적된 진입 액티비티) 재실행으로 **재생 세션이 종료**된다(브라우즈로 복귀).
+  둘 다 앱 고유 동작 — 팝업 창 안에서 재생을 새로 시작하면 정상(A-2). MENU 세션의 `residual=122/30` 은 이
+  상태(페인에 브라우즈 UI)의 측정값이라 배치 판정과 무관. v1.5 후보: 팝업 대상 컴포넌트 선택 개선.
+- **Shizuku 기동 재확인:** `start.sh` 는 앱 실행 전 미생성이고 이 기기에선 앱 실행 후에도 외부 파일 미생성 —
+  17차 방식(`<apk-dir>/lib/arm64/libshizuku.so` 직접 실행)이 이번에도 유일하게 통했다. `app_process` 직접 기동
+  (`rikka.shizuku.starter.Starter`)은 SIGABRT. **재부팅 시 스타터 재실행 필요** 재확인.
+- **`am force-stop <shizuku pkg>` 는 서버를 못 죽인다** — 서버는 shell uid(1 부모)라 앱 프로세스 대상 force-stop
+  범위 밖. W2-6 유도는 `kill <pid>` 직접이 정답 (W2 절 유도 문구의 정정).
+- **`am kill dev.dj.foldwindow` 는 FGS 보유로 무시**된다(pid 생존 실증) — B-1/B-2 유도 후보에서 제외 확정.
+- **베이스라인 대조법 유효성 실증:** `1965a72` 재설치 대조가 #29 를 「W7 회귀」 오판에서 구했다(동일 실패 →
+  기존 결함 확정). 향후 구동부 회귀 의심 시 표준 판별 절차로 재사용 가치.
+- 버블 탭 트리거(`placementSource=LAST_SUCCESS`) 정상 동작 부수 확인 (브로드캐스트 외 실사용 경로).
+
+### 기기 잔여 상태
+
+프로파일 tolerance=8 원복 완료(`git diff` 빈 출력) · 정상 HEAD+#29 빌드 설치 · 접근성 2종 활성 ·
+Shizuku 서버 가동 중(재부팅 시 재실행 필요) · FW Panel 카드 잔존(정상 — #29 수정으로 무해).
