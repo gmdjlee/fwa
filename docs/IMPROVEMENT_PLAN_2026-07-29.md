@@ -619,7 +619,7 @@ W4 에서 Robolectric 배선이 생겼으므로 서비스 레이어 테스트 �
 **DoD:** 위 + 순수 기계적 변환임을 diff 로 확인(동작 변경 0줄)
 **규모:** Worker 1세션(집중) + 실기기 세션 1회
 
-### W7 — 성능 · 중복 정리 · **[완료 2026-07-30]**
+### W7 — 성능 · 중복 정리 · **[완료 2026-07-30 · `a8a3522`]**
 **항목:** P1(단일 순회 + 예산) · M3(`NodeActions`/`Polling` 추출) · P2(runBlocking 제거) · ~~P4(getPixels stride)~~ → P4 대체안
 **실기기:** 진입 레시피 직격 — **6항목으로 확장**(DRAG 1 + **UNRESIZEABLE 앱** MENU 1 + 부팅 후 버블 복귀 1 + 신규 상한 로그 부재 + PaneSwapper 스왑 1 + 경합 가드) → **[미검증]**, `docs/DEVICE_FACTS.md` W7 절
 **DoD:** 위 + `matched via selector [...]` 셀렉터 대조 → 로그 렌더 결과 문자 단위 무변경 확인(보간식만 치환)
