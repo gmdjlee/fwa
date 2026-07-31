@@ -1301,7 +1301,7 @@ ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군
 
 ### 한 줄 결론
 
-**W0 8항목 중 7 측정 완료(1 유도 불가) · W1 11항목 중 8 완료 · 신규 결함 #31 1건 · 잔여 2건.**
+**W0 8항목 중 7 측정 완료(1 유도 불가) · W1 11항목 중 9 완료 · 신규 결함 #31 1건 · 잔여 2건.**
 설계의 두 핵심 판단 — **긍정 술어**(D8)와 **패키지 단위 에피소드 래치**(D1·D2) — 는 실측으로
 정당성이 확인됐다. 반대로 **래치 해제 경로(W1-3)는 명세대로 동작하지 않는다**(#31).
 
@@ -1388,7 +1388,7 @@ ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군
 | W1-4 | 실패 복구 | △ 부분 | `arrange failed: reason=ENTRY_STEP_FAILED trigger=FULLSCREEN_AUTO` → `auto recovery: 2500ms 내 대상 앱 전면 복귀 미확인 — 추가 주입 없이 종료`. 사전 가드·BACK 주입·데드라인·무한주입 방지는 동작하나 **복귀 성공은 미관측**(유도 방법이 HOME 주입이라 BACK 으로 돌아갈 스택이 없다 — Recents 체류형 실패에서의 복귀는 여전히 [미검증]) |
 | W1-5 | 서킷브레이커 | ✅ | 2연속 실패 후 `reason=auto-disabled pkg=com.google.android.youtube streak=2`. **수동 버블 탭 1회로 스트릭이 풀려** 자동 발화가 복귀하는 것까지 확인 |
 | W1-6 | bubble-off | ✅ (문구 델타) | 버블 중지 상태에서 엣지 유도 → **로그 0줄·발화 0**. 명세가 기대한 `reason=bubble-off` 는 **나오지 않는다** — `onWindowsChangedEvent` 최전방 선차단이 게이트 3 보다 먼저 끊기 때문. 게이트 3 은 "무장 후 3s 디바운스 사이에 버블이 꺼진 경우"에만 도달 가능하다 |
-| W1-7 | 재부팅 후 유지 | ⏸ 미완 | 재부팅 후 USB 재열거 실패(메모리 함정 #3)로 중단. **접근성 서비스 재시작 기준으로는 유지 확인**(`fullscreen auto snapshot: lever=true userToggle=true enabled=true`) |
+| W1-7 | 재부팅 후 유지 | ✅ | 재부팅 후 `arranger service connected` + **`fullscreen auto snapshot: lever=true userToggle=true enabled=true`**(DataStore 유지) + `FloatingLauncherService` 자동 기동(BootReceiver). 콜드스타트 첫 신호는 홈 화면의 `UNKNOWN -> NOT_FULLSCREEN` 이고 **부팅~첫 조작 사이 발화 0**. 이어서 가로 몰입 진입 → `arrange done: verified=true residual=0 trigger=FULLSCREEN_AUTO` 로 **E2E 까지 재확인** |
 | W1-8 | 콜드스타트 | ✅ | 몰입 재생 중 접근성 서비스 off→on → `arranger service connected` + 스냅샷 로그만, **신호 전이·발화 0**(20s 관측). 「화면이 정적이면 창 이벤트가 아예 오지 않는다」는 설계 전제도 함께 확인 |
 | W1-9 | 세로 영상(직캠) | [미검증] | 미실시 |
 | W1-10 | 넷플릭스 술어 | ✅ | 재생 중 `signal … appFull=1 topBars=0`(FULLSCREEN) → `reason=not-auto-target pkg=com.netflix.mediaclient`. `usages=[1, 1]` 로 다중 활성 재생 관측도 확인 |
@@ -1447,4 +1447,5 @@ W1-3 명세(「홈 → 복귀 → 재발화 1회」)가 **성립하지 않는다
 - 회전: `wm user-rotation lock 0` + `settings system user_rotation 0`(세로 고정)으로 되돌림.
 - 미디어 볼륨: `STREAM_MUSIC` 을 7 로 복원(측정 중 0 으로 내렸다가 복구).
 - 유튜브 자동재생 = 켜짐(측정 편의로 켰음).
-- **재부팅 직후 USB 미연결 상태** — W1-7 완료를 위해 케이블 재연결 필요.
+- 재부팅 1회 수행(W1-7). 재부팅 직후 USB 재열거 실패 → 케이블 재연결로 복구(메모리 함정 #3 재현).
+  재연결 후 W1-7 측정 완료, 분할 해제 및 세로 회전 복원까지 마쳤다.
