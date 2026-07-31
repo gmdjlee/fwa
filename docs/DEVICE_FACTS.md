@@ -1285,3 +1285,166 @@ ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군
 `DEFAULT_EXIT_HOLD_MS`(1200) · `FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS`(5000) ·
 `AUTO_RECOVERY_TIMEOUT_MS`(2500) · `AutoTriggerLedger.DEFAULT_MAX_FAIL_STREAK`(2).
 전부 KDoc 에 `[미검증]` 표기. 근거는 설계서 §4 표.
+
+> **2026-08-01 갱신:** 위 W0·W1 항목은 **21차 캠페인(아래 절)에서 W0 7/8 · W1 8/11 이 측정 완료**됐다.
+> 상수 4종 중 3종이 실측 근거를 얻었고, **신규 결함 #31**(홈 경유 시 래치 미해제)이 발견됐다.
+
+---
+
+## 21차 — #30 전체화면 자동 트리거 실기기 캠페인 (2026-08-01, adb 주도)
+
+**환경.** SM-F966N(`R3CY8029XBF`) One UI 8 / Android 16, 내부 화면. HEAD `42860c6` 를 재설치
+(`installDebug` 05:08 — 직전 설치본은 07-31 01:54 판이라 #30 미포함이었다). 접근성 서비스
+재활성화(함정 #6), 버블 시작. 회전은 물리 조작 대신 `adb shell wm user-rotation lock 1`
+(가로 2184×1968) / `lock 0`(세로 1968×2184) 로 고정했다 — WM 관점에서 물리 회전과 동일하고
+재현성이 높다. 재생 소스 = 유튜브 `dQw4w9WgXcQ` + 자동재생 ON.
+
+### 한 줄 결론
+
+**W0 8항목 중 7 측정 완료(1 유도 불가) · W1 11항목 중 8 완료 · 신규 결함 #31 1건 · 잔여 2건.**
+설계의 두 핵심 판단 — **긍정 술어**(D8)와 **패키지 단위 에피소드 래치**(D1·D2) — 는 실측으로
+정당성이 확인됐다. 반대로 **래치 해제 경로(W1-3)는 명세대로 동작하지 않는다**(#31).
+
+### 신규 도구 사실 (이 캠페인에서 확정)
+
+- `performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)` 은 이 기기에서 **false 반환 + 무동작**이다.
+  따라서 `ProbeAccessibilityService.runProbe` 의 C절(분할 진입)이 **화면 상태를 훼손하지 않는다** —
+  프로브를 몰입 재생 중에 반복 실행해도 안전하다(창 덤프는 C절보다 먼저 수집된다).
+- `dumpsys accessibility` 에는 창 목록이 없다. a11y 창 목록을 얻는 수단은 프로브뿐이다.
+- 재생/일시정지 제어는 `input tap` 보다 `input keyevent 126/127`(MEDIA_PLAY/PAUSE)이 확실하다
+  (플레이어 위 탭 2회는 더블탭 = 10초 탐색으로 오인된다).
+- 미디어 볼륨은 `adb shell media volume` 이 아니라 `adb shell cmd media_session volume --stream 3 --set N`.
+- 밀리초 해상도 상태 전이(컨트롤·상태바 자동 숨김)는 **`adb exec-out screencap` 원시 버퍼의 픽셀
+  1점 샘플링**으로 측정했다(헤더 16B + RGBA). 왕복 1회 ≈ 1.05s 라 「고정 지연 후 1회 샘플」 스윕으로
+  ±0.1s 를 얻는다.
+
+### W0 — 판정 술어·상수 실측
+
+| # | 결과 | 판정 |
+|---|---|---|
+| W0-1 | 가로 몰입 재생 4창(아래 표) → `appFull=1 topBars=0` | **FULLSCREEN** ✅ |
+| W0-2 | 컨트롤 표시 중 창 목록 **동일** → 술어 불변. 자동 숨김 **탭 후 2.1s 가시 / 2.2s 소멸**(2회 재현) | ✅ |
+| W0-3 | 일시정지+컨트롤 표시 창 목록 **동일** → **FULLSCREEN 유지**. **D9 미성립** | ✅ |
+| W0-4 | 우리 분할 8창 → 전체 덮음 APP **0개** → (a)절에서 **NOT_FULLSCREEN** | ✅ |
+| W0-5 | 셰이드 개방 5창, APP 창 **0개** + systemui 전면 → `appFull=0 topBars=1` | **NOT_FULLSCREEN** ✅ |
+| W0-6 | 상단 스와이프 8창, `SYSTEM 0,0,2184,68 systemui` 전폭 상단 바 출현 → `topBars=1`. 자동 숨김 **1.5s 가시 / 2.2s 소멸** | **NOT_FULLSCREEN** ✅ |
+| W0-7 | 재생 `playing=true usages=[1]` / 일시정지 `playing=false usages=[]` / **스트림 볼륨 0** `playing=true usages=[1]` / 앱내 음소거 = **유도 불가**(유튜브에 표면 없음) | ✅ 3/4 |
+| W0-8 | Shorts 세로 8창에 `SYSTEM 0,0,1968,89` 전폭 상태바 존재 → **술어 단계에서 차단**. 추가로 세로 몰입 재생은 게이트 5 가 `reason=geometry-mismatch screen=1968x2184` 로 차단 — **이중 차단** | ✅ |
+
+**W0-1 창 목록 (screen 2184×1968)**
+
+| type | layer | bounds | package |
+|---|---|---|---|
+| UNKNOWN(-1) | 3 | `2117,507,2184,1530` | com.samsung.android.sidegesturepad |
+| UNKNOWN(-1) | 2 | `0,460,67,1530` | com.samsung.android.sidegesturepad |
+| SYSTEM | 1 | `1842,1607,1968,1733` | **dev.dj.foldwindow (자기 버블)** |
+| APPLICATION | 0 | `0,0,2184,1968` | com.google.android.youtube (active) |
+
+동결 표본(`probe_report_fullscreen.md`, 3창)에 없던 **자기 버블(TYPE_SYSTEM 126×126)** 이 실제
+목록에 있다. `TOP_BAR_MIN_WIDTH_FRACTION`(0.80) 필터가 이를 죽인다는 `FullscreenWindowJudge` KDoc
+주장이 **실측으로 확인**됐다(폭 126/2184 = 5.8%). 앱 자체 로그도 동일:
+`fullscreen signal: UNKNOWN -> FULLSCREEN screen=2184x1968 appFull=1 topBars=0`.
+
+**W0-4 창 목록 — D8 의 결정적 증거 (screen 2184×1968)**
+
+| type | layer | bounds | package |
+|---|---|---|---|
+| UNKNOWN(-1) | 7 | `2117,507,2184,1530` | sidegesturepad |
+| UNKNOWN(-1) | 6 | `0,460,67,1530` | sidegesturepad |
+| SYSTEM | 5 | `0,1934,2184,1968` | com.sec.android.app.launcher (제스처 바) |
+| SYSTEM | 4 | `1842,1607,1968,1733` | dev.dj.foldwindow (버블) |
+| SPLIT_SCREEN_DIVIDER | 3 | `981,1209,1202,1263` | com.android.systemui |
+| APPLICATION | 2 | `985,1254,1199,1310` | com.android.systemui (디바이더 팝업) |
+| APPLICATION | 1 | `0,1243,2184,1968` | dev.dj.foldwindow (하단 페인) |
+| APPLICATION | 0 | `0,0,2184,1229` | com.google.android.youtube (상단 페인) |
+
+**이 구성에 상단 전폭 시스템 바가 존재하지 않는다.** 초안의 부정 술어("상단 바 부재 = 몰입")였다면
+**우리가 만든 분할을 몰입으로 오판정**해 P-1 루프에 빠졌다. 긍정 술어는 (a)절(전체 덮음 APP 부재)
+에서 정확히 걸러낸다. 배치 직후 앱 로그도 같은 값이다:
+`fullscreen signal: FULLSCREEN -> NOT_FULLSCREEN appFull=0 topBars=0`.
+
+부수 실측: **가로 상하 분할의 디바이더 창은 전폭 바가 아니라 핸들만**이다
+(`981,1209,1202,1263` = 221×54, centerY 1236). 페인 간극 14px(1229↔1243).
+
+**상수 판정**
+
+- `DEFAULT_ENTRY_DEBOUNCE_MS`(3000) — **근거 확보.** 컨트롤 자동 숨김 ≈2.2s < 3.0s 이므로
+  pre-measure 는 항상 컨트롤이 사라진 뒤에 찍힌다.
+- `DEFAULT_EXIT_HOLD_MS`(1200) — **상향 불필요, 다만 의미가 확정됐다.** 셰이드(사용자 페이스)와
+  transient bar(≈2.2s)는 **둘 다 1200ms 를 넘겨** disarm→재무장을 일으킨다. 즉 **exit hold 로는
+  자가유발 재진입을 막을 수 없고 래치가 유일한 방어**라는 설계 판단이 실측으로 확인됐다.
+- `FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS`(5000) — **동작 확인.** 일시정지 상태로 진입하면 정확히
+  5.05s 후 `reason=trigger-poll-timeout`.
+- `AutoTriggerLedger.DEFAULT_MAX_FAIL_STREAK`(2) — **동작 확인**(W1-5).
+- `AUTO_RECOVERY_TIMEOUT_MS`(2500) — 경로는 실행되나 복귀 성공 사례 미관측(W1-4).
+
+### W1 — 구현 검증
+
+| # | 항목 | 판정 | 근거 |
+|---|---|---|---|
+| W1-1 | 자동 발화 E2E | ✅ | 엣지 → +3.007s `media probe playing=true usages=[1]` → `fullscreen auto-arrange trigger` → `startArrange … trigger=FULLSCREEN_AUTO` → 3.9s 후 `arrange done: verified=true residual=0 trigger=FULLSCREEN_AUTO` + `auto arrange result (토스트 억제)`(D19) |
+| W1-2 | **P-1 루프 부재** | ✅ | 분할 해제 직후 복귀 엣지 + 셰이드 3회 + 상단 스와이프 3회 = **진입 엣지 6회 전부 `reason=latched`, 발화 0**. 일시정지/재생 3회는 **창 목록이 안 바뀌어 신호 전이 자체가 없었다** |
+| W1-3 | 래치 해제(홈 왕복) | ❌ **결함 #31** | 아래 절 |
+| W1-4 | 실패 복구 | △ 부분 | `arrange failed: reason=ENTRY_STEP_FAILED trigger=FULLSCREEN_AUTO` → `auto recovery: 2500ms 내 대상 앱 전면 복귀 미확인 — 추가 주입 없이 종료`. 사전 가드·BACK 주입·데드라인·무한주입 방지는 동작하나 **복귀 성공은 미관측**(유도 방법이 HOME 주입이라 BACK 으로 돌아갈 스택이 없다 — Recents 체류형 실패에서의 복귀는 여전히 [미검증]) |
+| W1-5 | 서킷브레이커 | ✅ | 2연속 실패 후 `reason=auto-disabled pkg=com.google.android.youtube streak=2`. **수동 버블 탭 1회로 스트릭이 풀려** 자동 발화가 복귀하는 것까지 확인 |
+| W1-6 | bubble-off | ✅ (문구 델타) | 버블 중지 상태에서 엣지 유도 → **로그 0줄·발화 0**. 명세가 기대한 `reason=bubble-off` 는 **나오지 않는다** — `onWindowsChangedEvent` 최전방 선차단이 게이트 3 보다 먼저 끊기 때문. 게이트 3 은 "무장 후 3s 디바운스 사이에 버블이 꺼진 경우"에만 도달 가능하다 |
+| W1-7 | 재부팅 후 유지 | ⏸ 미완 | 재부팅 후 USB 재열거 실패(메모리 함정 #3)로 중단. **접근성 서비스 재시작 기준으로는 유지 확인**(`fullscreen auto snapshot: lever=true userToggle=true enabled=true`) |
+| W1-8 | 콜드스타트 | ✅ | 몰입 재생 중 접근성 서비스 off→on → `arranger service connected` + 스냅샷 로그만, **신호 전이·발화 0**(20s 관측). 「화면이 정적이면 창 이벤트가 아예 오지 않는다」는 설계 전제도 함께 확인 |
+| W1-9 | 세로 영상(직캠) | [미검증] | 미실시 |
+| W1-10 | 넷플릭스 술어 | ✅ | 재생 중 `signal … appFull=1 topBars=0`(FULLSCREEN) → `reason=not-auto-target pkg=com.netflix.mediaclient`. `usages=[1, 1]` 로 다중 활성 재생 관측도 확인 |
+| W1-11 | 메인 스레드 A/B | [미검증] | 미실시. 다만 이 캠페인에서 자동 ON 상태로 돌린 세션 8회 중 **인위적으로 방해한 2회를 제외하면 `ENTRY_STEP_FAILED` 0건** |
+
+### ⚠ 신규 결함 #31 — 홈 경유로는 자동 트리거 래치가 풀리지 않는다
+
+**증상.** 자동 배치 → 분할 해제 → **홈 → 유튜브 복귀 → 가로 몰입 재생**의 진입 엣지에서
+`fullscreen auto-arrange skipped: reason=latched pkg=com.google.android.youtube`. 설계서 §6 의
+W1-3 명세(「홈 → 복귀 → 재발화 1회」)가 **성립하지 않는다.**
+
+**원인(소스 확정).** `ArrangerAccessibilityService.onAccessibilityEvent` 는 포그라운드 추적을
+`pkg !in EXCLUDED_FOREGROUND_PACKAGES` 로 거른 뒤에야 `autoLedger.onForeground(pkg)` 를
+부른다(:338-346). 그런데 `EXCLUDED_FOREGROUND_PACKAGES` 에 **`com.sec.android.app.launcher` 가
+들어 있다**(:2675-2681). 홈 화면이 곧 런처이므로 **래치의 유일한 시간 무관 해제 조건이 홈 이동에서
+아예 호출되지 않는다.**
+
+**분리 실험(결정적).**
+
+| 경로 | 결과 |
+|---|---|
+| 배치 → 해제 → **홈** → 유튜브 복귀 → 가로 몰입 | `reason=latched` (재발화 0) |
+| 배치 → 해제 → **Chrome**(비-제외 패키지) → 유튜브 복귀 → 가로 몰입 | **재발화 1회** (`arrange done … trigger=FULLSCREEN_AUTO`) |
+
+같은 조건 2회 반복, 동일 결과. 캠페인 초반(05:42) 한 번은 홈 왕복 후에도 발화했는데, 이는 홈 화면
+위젯 등 **비-제외 패키지의 우발적 `TYPE_WINDOW_STATE_CHANGED`** 가 래치를 풀어 준 것으로 보인다 —
+즉 현재 동작은 **비결정적**이다.
+
+**영향.** fail-safe 방향이다(오발화가 아니라 미발화). 사용자 체감으로는 "한 번 자동 배치하고 나면
+다른 앱을 한 번 거치거나 버블을 직접 눌러야 다시 자동 배치된다"가 된다. 설계서 R7 이 명시한
+탈출구(버블 탭)는 살아 있으므로 기능 불능은 아니다.
+
+**수정 방향(미착수, Advisor 판단 필요).** `EXCLUDED_FOREGROUND_PACKAGES` 는 세션 중 Recents/런처
+전환이 `lastForegroundPkg` 를 오염시키는 것을 막으려고 도입된 목록이라 **그대로 제거하면 안 된다**
+(2026-07-25 실측 근거, 함정 #7). 래치용 포그라운드 신호를 `lastForegroundPkg` 추적과 **분리**하는
+것이 옳다 — 예: 배치 세션이 돌지 않는 동안(`machineState == Idle && !sessionInFlight`)에만 런처를
+포함한 전체 패키지를 `autoLedger.onForeground` 에 흘린다.
+
+### 부수 관측
+
+- **`verified=false residual=null` 로 끝난 자동 세션 3회.** 짧은 간격으로 세션을 연달아 돌린 구간에
+  몰려 있어 `takeScreenshot()` 레이트 리밋(함정 #3)으로 확증 측정이 실패한 것으로 보인다. 앱은
+  `Done(verified=false)` 로 정상 종료했고 배치 결과는 육안상 정상이었다.
+- **합치(consensus) 게이트가 오염된 pre-measure 를 실제로 구제한다.** 4:3 필러박스 프레임에서
+  `preMeasure conf=0.54, aspect=1.2013, dividerCenterY=1780` 으로 시작한 세션이 진입 후 재측정에서
+  `consensus: verdict=RAW_DISAGREE … → aspect=1.7777778 source=CACHED` 로 16:9 를 채택했고, 최종
+  상단 페인이 `0,0,2184,1229`(= 2184/1.7778) 로 정확히 떨어졌다. DESIGN_12 의 실동작 확인.
+- **유튜브 세로 전체화면이 존재한다.** 회전 잠금이 세로일 때 「전체화면」 버튼은 세로 몰입
+  (1968×2184, 상태바 없음)으로 들어간다. 이 상태의 술어는 FULLSCREEN 이며 게이트 5 가 막는다.
+- 넷플릭스는 로그인 상태에서 재생 진입 시 `PlayerActivity` 가 전면·몰입이 된다(술어 FULLSCREEN).
+
+### 기기 잔여 상태 (21차 종료 시점)
+
+- **사용자 토글 `전체화면 자동 배치` = 켜짐.** 원래 기본값은 꺼짐 — 필요하면 버블 롱프레스 메뉴에서
+  끌 것.
+- 회전: `wm user-rotation lock 0` + `settings system user_rotation 0`(세로 고정)으로 되돌림.
+- 미디어 볼륨: `STREAM_MUSIC` 을 7 로 복원(측정 중 0 으로 내렸다가 복구).
+- 유튜브 자동재생 = 켜짐(측정 편의로 켰음).
+- **재부팅 직후 USB 미연결 상태** — W1-7 완료를 위해 케이블 재연결 필요.
