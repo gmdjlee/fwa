@@ -177,6 +177,16 @@ class FloatingLauncherService : Service() {
     @Volatile
     private var menuView: View? = null
 
+    /**
+     * [#30] 메뉴 열기 시퀀스가 진행 중인가. 토글 항목의 표시 상태를 **메뉴 표시 직전**
+     * DataStore 스냅샷으로 읽어야 해서([showMenu] KDoc, 설계서 §2.3) 창 부착 전에 suspend 읽기가
+     * 한 번 끼는데, 그 사이 롱프레스가 한 번 더 들어오면 메뉴 창이 두 개 붙는다 —
+     * `menuView != null` 가드만으로는 그 창을 막지 못한다.
+     * 메인 스레드([serviceScope] = `Dispatchers.Main.immediate`, 터치 리스너도 메인)에서만
+     * 읽고 쓰므로 [bubblePositionUserAdjusted] 와 같은 이유로 `@Volatile` 이 불필요하다.
+     */
+    private var menuOpenInFlight = false
+
     /** window_profiles.json presets 캐시. null 이면 아직 로드 전이거나 파싱 실패(메뉴에서 프리셋 섹션 생략). */
     private var cachedPresets: List<AspectPreset>? = null
     private var presetsLoadStarted = false
@@ -622,13 +632,43 @@ class FloatingLauncherService : Service() {
      * 채 버블 재탭/재롱프레스" 라는 경합 클래스 자체가 구조적으로 사라진다. 메뉴 항목(TextView)은
      * `isClickable = true` 라 자기 터치를 소비하므로 그대로 동작하고, 스크림 자체를 탭하면
      * [dismissMenu] 가 불린다.
+     *
+     * [#30] 전체화면 자동 배치 토글 항목의 표시 상태는 **메뉴 표시 직전** DataStore 스냅샷이어야
+     * 한다(설계서 §2.3) — 캐시를 들고 있으면 다른 경로(온보딩 재설치, 값 초기화)로 바뀐 값을
+     * 스테일하게 보여주고, 사용자가 그걸 탭하면 의도와 반대로 토글된다. 그래서 이 함수는 읽기만
+     * 담당하고 실제 창 부착은 [attachMenu] 로 분리했다.
      */
     private fun showMenu() {
+        if (menuView != null || menuOpenInFlight) return
+        menuOpenInFlight = true
+        serviceScope.launch {
+            try {
+                attachMenu(fullscreenAutoEnabled = store.isFullscreenAutoEnabled())
+            } finally {
+                menuOpenInFlight = false
+            }
+        }
+    }
+
+    /**
+     * [showMenu] 의 실제 창 구성/부착부. 스냅샷 읽기가 끝난 뒤 메인 스레드에서 호출된다.
+     *
+     * [bubbleAttached] 를 다시 확인하는 이유(#30 으로 새로 생긴 창): [showMenu] 가 비동기가 되면서
+     * "롱프레스 → (DataStore 읽기) → 그 사이 배치 세션이 시작돼 [setBubbleHiddenForArrange] 가
+     * 버블/메뉴를 제거 → 뒤늦게 메뉴 부착" 순서가 가능해졌다. 세션 중 오버레이 창이 뜨면 함정 #22
+     * (피커發 파트너 창이 전체화면으로 낙착 → ENTRY_STEP_FAILED)를 그대로 밟는다.
+     * 종전 동기 구현에는 없던 실패 모드이므로 여기서 닫는다.
+     */
+    private fun attachMenu(fullscreenAutoEnabled: Boolean) {
         if (menuView != null) return
+        if (!bubbleAttached) {
+            Log.i(TAG, "attachMenu: 버블이 이미 분리됨(배치 세션 진행 등) — 메뉴 부착 생략")
+            return
+        }
         val bubble = bubbleView ?: return
         val bubbleParams = layoutParams ?: return
 
-        val content = buildMenuContent()
+        val content = buildMenuContent(fullscreenAutoEnabled)
         // WindowManager 에 얹기 전 예상 크기를 재서 클램프 계산에 쓴다. 실제 최종 렌더 크기와
         // 완전히 같지 않을 수 있지만, 화면 밖으로 크게 벗어나지 않게 하는 용도로는 충분하다.
         content.measure(
@@ -699,7 +739,11 @@ class FloatingLauncherService : Service() {
             .onFailure { e -> Log.w(TAG, "메뉴 뷰 제거 실패", e) }
     }
 
-    private fun buildMenuContent(): LinearLayout {
+    /**
+     * @param fullscreenAutoEnabled [#30] 토글 항목의 **현재 상태** 스냅샷([showMenu] 가 메뉴 표시
+     *   직전에 읽어 넘긴다). 항목 라벨은 현재 상태를 보여주고, 탭하면 반대 값으로 뒤집는다.
+     */
+    private fun buildMenuContent(fullscreenAutoEnabled: Boolean): LinearLayout {
         val density = resources.displayMetrics.density
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -742,6 +786,20 @@ class FloatingLauncherService : Service() {
         }
 
         container.addMenuDivider()
+        // [#30, 설계서 §2.3 / D14·D16·D22] 전체화면 자동 배치 사용자 토글. 기본 OFF 인 이 값이
+        // 자동 트리거의 실질 방어선이라(R9), 켜는 표면과 **끄는 표면**이 반드시 같은 자리에
+        // 있어야 한다 — 종전에는 되돌릴 표면이 없어 앱 삭제/접근성 OFF 가 유일한 탈출구였다.
+        container.addMenuItem(
+            getString(
+                if (fullscreenAutoEnabled) {
+                    R.string.bubble_menu_fullscreen_auto_on
+                } else {
+                    R.string.bubble_menu_fullscreen_auto_off
+                },
+            ),
+        ) {
+            dismissMenuThenToggleFullscreenAuto(fullscreenAutoEnabled)
+        }
         container.addMenuItem(getString(R.string.bubble_menu_settings)) {
             dismissMenu()
             launchOnboarding()
@@ -803,6 +861,40 @@ class FloatingLauncherService : Service() {
             return
         }
         service.dismissSplit()
+    }
+
+    /**
+     * [#30] 전체화면 자동 배치 토글을 뒤집는다.
+     *
+     * @param current 메뉴 표시 직전에 읽은 스냅샷([showMenu]). 저장 시점에 DataStore 를 다시 읽어
+     *   토글하지 않는 이유: 사용자가 화면에서 본 상태와 실제 결과가 어긋나면 "껐는데 켜졌다" 가
+     *   되기 때문이다. 메뉴가 떠 있는 짧은 구간에 다른 경로가 이 값을 바꿀 가능성은 없다
+     *   (이 토글의 유일한 쓰기 지점이 여기다).
+     *
+     * 저장 후 [ArrangerAccessibilityService.refreshFullscreenAutoSnapshot] 을 반드시 호출한다 —
+     * 접근성 서비스는 이벤트 최전방 선차단을 위해 이 값을 `@Volatile` 스냅샷으로 들고 있어서,
+     * 갱신을 빠뜨리면 "메뉴에서 켰는데 아무 일도 일어나지 않는" 상태가 된다(다음 서비스 재연결
+     * 까지 지속되므로 사용자가 원인을 찾을 방법이 없다).
+     */
+    private fun dismissMenuThenToggleFullscreenAuto(current: Boolean) {
+        dismissMenu()
+        val next = !current
+        serviceScope.launch {
+            store.setFullscreenAutoEnabled(next)
+            ArrangerAccessibilityService.instance?.refreshFullscreenAutoSnapshot()
+            Log.i(TAG, "fullscreen auto toggle: $current -> $next")
+            Toast.makeText(
+                this@FloatingLauncherService,
+                getString(
+                    if (next) {
+                        R.string.toast_fullscreen_auto_enabled
+                    } else {
+                        R.string.toast_fullscreen_auto_disabled
+                    },
+                ),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     /**

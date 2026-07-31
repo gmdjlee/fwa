@@ -31,6 +31,15 @@ object ProfileStoreMapping {
     const val KEY_PANEL_WIDGET_MODE = "panel_widget_mode"
     const val KEY_PANEL_MEMO = "panel_memo"
 
+    /**
+     * [DESIGN #30 §2.3] 전체화면 재생 자동 배치 **사용자 옵트인** 토글 저장 키. 미저장 시 기본값은
+     * `false` 이며([ProfileStore.isFullscreenAutoEnabled]), 이 값이 이 기능의 실질 방어선이다 —
+     * JSON 의 `defaults.fullscreenAutoArrange` 는 부재=true 인 개발자 킬스위치라 사용자를 보호하지
+     * 못한다(DESIGN #30 R9). 위 KEY_PANEL_* 과 동일하게 향후에도 이름 변경 금지(이미 배포된 빌드에
+     * 저장된 사용자 선택이 조용히 유실된다).
+     */
+    const val KEY_FULLSCREEN_AUTO = "fullscreen_auto_enabled"
+
     /** 앱별 "마지막 성공 placement" 저장 키를 만든다. 패키지명이 비어 있으면 저장 자체가 무의미하므로 거부한다 */
     fun placementKeyFor(packageName: String): String {
         require(packageName.isNotBlank()) { "packageName must not be blank" }

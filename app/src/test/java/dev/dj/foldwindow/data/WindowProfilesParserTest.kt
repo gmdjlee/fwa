@@ -279,6 +279,92 @@ class WindowProfilesParserTest {
         assertEquals(false, success.config.defaults.coverAutoDismiss)
     }
 
+    // ── fullscreenAutoArrange / autoArrange (DESIGN #30 §5 의 26~28) ──
+
+    @Test
+    fun `SSOT seed omits the fullscreenAutoArrange key so the kill switch stays true`() {
+        val result = WindowProfilesParser.parse(readSsotJson())
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        // 주의 — 이 레버는 나머지 레버와 의미가 반대로 보이지만 그렇지 않다: 이것은 **개발자
+        // 킬스위치**라 기존 4레버(requireMeasurementAgreement/cacheMeasuredAspect/
+        // flexAutoTopPlacement/coverAutoDismiss)와 똑같이 **부재=true** 다. 사용자를 보호하는
+        // 옵트인은 이 값이 아니라 ProfileStore 토글(isFullscreenAutoEnabled, 기본 false)이
+        // 담당한다 — 두 값이 모두 참이어야 자동 배치가 발화한다(DESIGN #30 §3.2 게이트 1·2).
+        assertEquals(true, success.config.defaults.fullscreenAutoArrange)
+    }
+
+    @Test
+    fun `SSOT seed marks only youtube as an auto-arrange target`() {
+        val result = WindowProfilesParser.parse(readSsotJson())
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        val config = success.config
+
+        assertEquals(
+            "youtube 는 v1 의 유일한 자동 트리거 대상이다",
+            true,
+            config.profiles.first { it.packageName == "com.google.android.youtube" }.autoArrange,
+        )
+        // 나머지 4개는 시드에 autoArrange 키가 없어야 한다(부재=false). 넷플릭스는 자사 온보딩이
+        // "재생 중 배치 금지"를 명시하고 실측이 재생 세션 파괴를 재현했으며(DESIGN #30 D11),
+        // 나머지 3개는 패키지명조차 실기기 미확인이다 — 실측 없이 자동 대상에 올리지 않는다.
+        listOf(
+            "com.netflix.mediaclient",
+            "net.cj.cjhv.gs.tving",
+            "com.frograms.wplay",
+            "com.wavve.wavve",
+        ).forEach { pkg ->
+            assertEquals(
+                "$pkg 는 자동 트리거 대상이 아니어야 한다",
+                false,
+                config.profiles.first { it.packageName == pkg }.autoArrange,
+            )
+        }
+    }
+
+    @Test
+    fun `profile autoArrange explicit true is honored`() {
+        val result = WindowProfilesParser.parse(fullscreenAutoJson(autoArrange = true))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(true, success.config.profiles.single().autoArrange)
+    }
+
+    @Test
+    fun `profile autoArrange explicit false is honored`() {
+        val result = WindowProfilesParser.parse(fullscreenAutoJson(autoArrange = false))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(false, success.config.profiles.single().autoArrange)
+    }
+
+    @Test
+    fun `profile autoArrange defaults to false when the key is omitted`() {
+        val result = WindowProfilesParser.parse(fullscreenAutoJson(autoArrange = null))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        // defaults 레버들과 달리 부재=false 다 — 자동 대상 지정은 앱마다 실측 근거를 요구하므로
+        // 기본값이 "대상 아님"이어야 한다(옵트인).
+        assertEquals(false, success.config.profiles.single().autoArrange)
+    }
+
+    @Test
+    fun `fullscreenAutoArrange defaults to true when the key is omitted`() {
+        val result = WindowProfilesParser.parse(fullscreenAutoJson(fullscreenAutoArrange = null))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(true, success.config.defaults.fullscreenAutoArrange)
+    }
+
+    @Test
+    fun `fullscreenAutoArrange explicit false is honored`() {
+        val result = WindowProfilesParser.parse(fullscreenAutoJson(fullscreenAutoArrange = false))
+        val success = result as? ProfilesParseResult.Success
+            ?: fail("expected Success but was $result").let { return }
+        assertEquals(false, success.config.defaults.fullscreenAutoArrange)
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────
 
     private fun assertFailure(result: ProfilesParseResult): ProfilesParseResult.Failure {
@@ -333,6 +419,48 @@ class WindowProfilesParserTest {
           },
           "presets": $presetsJson,
           "profiles": $profilesJson
+        }
+        """.trimIndent()
+    }
+
+    /**
+     * DESIGN #30 전용 JSON 빌더. 프로파일이 정확히 1개 있는 유효 JSON 을 만든다 — [validJson] 은
+     * 기본 프로파일이 비어 있어(`profilesJson = "[]"`) `autoArrange` 를 검증할 수 없고, 기존
+     * 헬퍼 시그니처를 넓히지 않기 위해 별도로 둔다.
+     *
+     * @param fullscreenAutoArrange null 이면 defaults 에서 키 자체를 생략한다(부재=true 검증용).
+     * @param autoArrange null 이면 프로파일에서 키 자체를 생략한다(부재=false 검증용).
+     */
+    private fun fullscreenAutoJson(
+        fullscreenAutoArrange: Boolean? = null,
+        autoArrange: Boolean? = null,
+    ): String {
+        val leverField = fullscreenAutoArrange
+            ?.let { ""","fullscreenAutoArrange": $it""" }
+            ?: ""
+        val autoArrangeField = autoArrange
+            ?.let { ""","autoArrange": $it""" }
+            ?: ""
+        return """
+        {
+          "schema": "fold-window-profiles/1",
+          "defaults": {
+            "aspect": 1.7778,
+            "placement": "TOP",
+            "partner": "BLACK",
+            "closedLoopCorrection": true,
+            "residualTolerancePx": 8$leverField
+          },
+          "presets": [ { "id": "16:9", "aspect": 1.7778, "label": "16:9" } ],
+          "profiles": [
+            {
+              "package": "com.example.a",
+              "label": "A",
+              "aspect": 1.7778,
+              "aspectSource": "PROFILE",
+              "placement": "TOP"$autoArrangeField
+            }
+          ]
         }
         """.trimIndent()
     }

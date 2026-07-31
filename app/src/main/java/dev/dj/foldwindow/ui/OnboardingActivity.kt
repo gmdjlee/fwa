@@ -308,6 +308,10 @@ private fun OnboardingScreen(
 
         Text(text = stringResource(R.string.onboarding_guide_title), style = MaterialTheme.typography.titleMedium)
         GuideCard(text = stringResource(R.string.onboarding_guide_usage))
+        // [#30 D20] 롱프레스 메뉴 안내. 자동 배치를 켜면 사용자가 요청하지 않은 배치가 일어날 수
+        // 있는데, 되돌리는 경로(분할 해제)와 끄는 경로(토글)가 둘 다 미공개 롱프레스 메뉴 안에만
+        // 있었다 — 카드 1장으로 그 발견성을 메운다(설정 화면 신설은 명시적 비목표, §7).
+        GuideCard(text = stringResource(R.string.onboarding_guide_longpress))
         GuideCard(
             title = stringResource(R.string.onboarding_guide_netflix_title),
             text = stringResource(R.string.onboarding_guide_netflix),

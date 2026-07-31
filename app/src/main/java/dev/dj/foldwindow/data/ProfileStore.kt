@@ -239,11 +239,29 @@ class ProfileStore(context: Context) {
         safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_PANEL_MEMO] = sanitized } }
     }
 
+    /**
+     * [DESIGN #30 §2.3] 전체화면 재생 자동 배치 사용자 옵트인 토글. **기본값 false** 다 —
+     * 사용자가 버블 롱프레스 메뉴에서 명시적으로 켜기 전까지 이 기능은 한 줄도 실행되지 않는다
+     * (게이트 2 가 이 값을 최우선 검사하고, 서비스는 이벤트 최전방에서 이 스냅샷으로 선차단한다).
+     * JSON 의 `defaults.fullscreenAutoArrange` 는 부재=true 인 개발자 킬스위치라 사용자 보호 역할을
+     * 하지 못하므로, 실질 방어선은 이 값 하나다(DESIGN #30 R9).
+     *
+     * 읽기 실패 시 폴백도 false 다 — DataStore 오류 상태에서 화면 배치를 자동으로 바꾸는 쪽으로
+     * 기우는 것은 정당화되지 않는다(게이트 9 의 `config == null` 처리와 같은 방향).
+     */
+    suspend fun isFullscreenAutoEnabled(): Boolean =
+        safeRead(false) { appContext.fwaDataStore.data.first()[KEY_FULLSCREEN_AUTO] ?: false }
+
+    suspend fun setFullscreenAutoEnabled(enabled: Boolean) {
+        safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_FULLSCREEN_AUTO] = enabled } }
+    }
+
     private companion object {
         val KEY_BUBBLE_ENABLED = booleanPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_ENABLED)
         val KEY_BUBBLE_X = intPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_X)
         val KEY_BUBBLE_Y = intPreferencesKey(ProfileStoreMapping.KEY_BUBBLE_Y)
         val KEY_PANEL_WIDGET_MODE = stringPreferencesKey(ProfileStoreMapping.KEY_PANEL_WIDGET_MODE)
         val KEY_PANEL_MEMO = stringPreferencesKey(ProfileStoreMapping.KEY_PANEL_MEMO)
+        val KEY_FULLSCREEN_AUTO = booleanPreferencesKey(ProfileStoreMapping.KEY_FULLSCREEN_AUTO)
     }
 }

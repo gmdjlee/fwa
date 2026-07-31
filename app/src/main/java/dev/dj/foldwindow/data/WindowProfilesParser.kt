@@ -90,6 +90,7 @@ object WindowProfilesParser {
             cacheMeasuredAspect = dto.cacheMeasuredAspect,
             flexAutoTopPlacement = dto.flexAutoTopPlacement,
             coverAutoDismiss = dto.coverAutoDismiss,
+            fullscreenAutoArrange = dto.fullscreenAutoArrange,
         )
     }
 
@@ -113,6 +114,7 @@ object WindowProfilesParser {
             aspectSource = aspectSource,
             placement = placement,
             note = dto.note,
+            autoArrange = dto.autoArrange,
         )
     }
 
@@ -171,6 +173,9 @@ private data class DefaultsDto(
     val flexAutoTopPlacement: Boolean = true,
     // P4-3: 키 부재 시 기본 true 로 동작해야 한다 — 기존 SSOT 시드에는 이 키가 없다(신규 레버 의미론).
     val coverAutoDismiss: Boolean = true,
+    // DESIGN #30: 키 부재 시 기본 true(개발자 킬스위치 — 위 4레버와 동일 의미론). SSOT 시드에도
+    // 이 키를 넣지 않는다. 사용자 옵트인은 ProfileStore 토글(기본 false)이 별도로 담당한다.
+    val fullscreenAutoArrange: Boolean = true,
 )
 
 @Serializable
@@ -188,4 +193,7 @@ private data class ProfileDto(
     val aspectSource: String,
     val placement: String? = null,
     val note: String? = null,
+    // DESIGN #30: 위 defaults 레버들과 달리 키 부재 시 **false**(옵트인) — 자동 대상 지정은
+    // 앱마다 실측 근거가 있어야 하므로 기본값이 "대상 아님"이어야 한다.
+    val autoArrange: Boolean = false,
 )

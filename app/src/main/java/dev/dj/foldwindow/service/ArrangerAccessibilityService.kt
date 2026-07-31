@@ -24,11 +24,13 @@ import dev.dj.foldwindow.domain.ArrangeStateMachine
 import dev.dj.foldwindow.domain.AspectMeasurement
 import dev.dj.foldwindow.domain.AspectResolver
 import dev.dj.foldwindow.domain.AspectSource
+import dev.dj.foldwindow.domain.AutoTriggerLedger
 import dev.dj.foldwindow.domain.ConfirmOutcome
 import dev.dj.foldwindow.domain.CoverDismissPolicy
 import dev.dj.foldwindow.domain.FailureReason
 import dev.dj.foldwindow.domain.FlexModePolicy
 import dev.dj.foldwindow.domain.FoldPosture
+import dev.dj.foldwindow.domain.FullscreenPlaybackPolicy
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
 import dev.dj.foldwindow.domain.MeasurementConsensus
@@ -42,6 +44,7 @@ import dev.dj.foldwindow.domain.ResolvedAspect
 import dev.dj.foldwindow.domain.SplitPlan
 import dev.dj.foldwindow.domain.SplitPlanner
 import dev.dj.foldwindow.domain.StackListParser
+import dev.dj.foldwindow.domain.TriggerSource
 import dev.dj.foldwindow.domain.WindowGeometry
 import dev.dj.foldwindow.domain.WindowProfilesConfig
 import dev.dj.foldwindow.platform.DividerDragger
@@ -52,7 +55,9 @@ import dev.dj.foldwindow.platform.DragStrategy
 import dev.dj.foldwindow.platform.EntryContext
 import dev.dj.foldwindow.platform.EntryRecipe
 import dev.dj.foldwindow.platform.FoldStateMonitor
+import dev.dj.foldwindow.platform.FullscreenSignalSampler
 import dev.dj.foldwindow.platform.HingeAngleMonitor
+import dev.dj.foldwindow.platform.MediaPlaybackProbe
 import dev.dj.foldwindow.platform.PaneSwapper
 import dev.dj.foldwindow.platform.ResizeModeDetector
 import dev.dj.foldwindow.platform.SplitEntry
@@ -163,6 +168,39 @@ class ArrangerAccessibilityService : AccessibilityService() {
     private val coverPolicy = CoverDismissPolicy()
     private var coverCheckJob: Job? = null
 
+    // ── #30 전체화면 재생 자동 트리거 (docs/DESIGN_30_FULLSCREEN_AUTO.md) ──
+    // 전부 서비스 수명 전체 유지다 — cleanupSession() 이 건드리지 않는다.
+    private val fullscreenPolicy = FullscreenPlaybackPolicy()
+
+    /**
+     * 자동 트리거의 패키지 단위 에피소드 래치 + 연속 실패 서킷브레이커(설계서 D1·D2·D3).
+     * [FlexModePolicy] 와 달리 **자세가 아니라 사건**으로 해제되므로, 서비스 수명 동안 상태를
+     * 유지해야 의미가 있다(부팅 세션 단위 서킷브레이커 포함).
+     */
+    private val autoLedger = AutoTriggerLedger()
+    private val fullscreenSampler = FullscreenSignalSampler()
+
+    /** DI 프레임워크 없음(CLAUDE.md) — 필요한 협력자는 by lazy 로 직접 만든다 */
+    private val mediaProbe by lazy { MediaPlaybackProbe(this) }
+
+    private var fullscreenCheckJob: Job? = null
+
+    /**
+     * 「개발자 킬스위치(`defaults.fullscreenAutoArrange`) ∧ 사용자 토글
+     * (`ProfileStore.isFullscreenAutoEnabled`)」 의 스냅샷. [onServiceConnected] 에서 1회 워밍하고,
+     * 사용자가 버블 롱프레스 메뉴에서 토글하면 [refreshFullscreenAutoSnapshot] 이 갱신한다.
+     *
+     * 왜 스냅샷인가: [onAccessibilityEvent] 는 메인 스레드 동기 콜백이라 suspend 인 자산 파싱/
+     * DataStore 읽기를 그 자리에서 할 수 없다. 이 값이 false 면 `windows` 를 **읽기도 전에**
+     * 이벤트를 되돌려보내므로(설계서 D12 의 N+1 IPC 방어), 기능이 꺼져 있는 평시에는 이 기능이
+     * 메인 스레드에 얹는 비용이 boolean 비교 한 번이다.
+     *
+     * 초기값 false = "확인되기 전에는 발화하지 않는다". 워밍 실패 시에도 false 로 남는다.
+     * [onAccessibilityEvent] 는 메인 스레드, 워밍은 [scope] 코루틴이라 `@Volatile` 을 붙인다.
+     */
+    @Volatile
+    private var fullscreenLeverSnapshot: Boolean = false
+
     /**
      * [M1 1단계] 배치 세션 1회분의 상태 전부. 종전엔 서비스의 개별 필드 17개였고
      * [cleanupSession] 이 그중 16개를 하나씩 손으로 리셋했다 — 필드를 추가하면서 리셋 한 줄을 잊으면
@@ -192,6 +230,14 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 값이 아니라 자세 자동 결정이므로 reportTerminal 의 last-success 저장에서 제외한다.
          */
         val placementSource: String,
+        /**
+         * [#30, 설계서 D4] 이 세션을 **누가** 시작했는가. [placementSource] 를 트리거 기원의
+         * 프록시로 재사용하던 옛 구조는 두 가지를 동시에 틀리게 했다: 수동 세션이 자세만 플렉스면
+         * posture-exit 로 오취소됐고("FLEX" 판정), 자동 세션이라도 placement 티어가 달리 낙착하면
+         * 취소되지 않았다. 배치 근거(placementSource)와 세션 기원(이 필드)은 직교하는 값이므로
+         * 분리한다 — 자동 세션의 토스트 억제(D19)와 last-success 저장 제외도 이 필드가 판정한다.
+         */
+        val triggerSource: TriggerSource,
         /** 합치 실패 시 폴백할 이번 세션의 PRESET 값(aspectOverride ?: config.defaults.aspect ?: DEFAULT_ASPECT) */
         val presetAspect: Float,
         /** window_profiles.json defaults.requireMeasurementAgreement 의 세션 스냅샷(#12 롤백 레버) */
@@ -268,6 +314,11 @@ class ArrangerAccessibilityService : AccessibilityService() {
             monitor.start(scope) { posture -> onFoldPosture(posture) }
         }
 
+        // [#30] 전체화면 자동 트리거 선차단 스냅샷 워밍. 도착 전까지는 false(발화 안 함)라
+        // 콜드스타트 구간에 오발화가 없다 — 어차피 FullscreenPlaybackPolicy 의 콜드스타트
+        // 가드(D5)가 첫 샘플을 베이스라인으로만 쓰므로 이중 방어다.
+        refreshFullscreenAutoSnapshot()
+
         Log.i(TAG, "arranger service connected")
     }
 
@@ -289,7 +340,16 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // ([Session.targetPackage])만 쓰므로 Recents 진입 중 런처가 잠깐 포그라운드가 돼도
                 // 세션이 오염되지 않는다.
                 lastForegroundPkg = pkg
+                // [#30, 설계서 D1] 자동 트리거 래치의 **유일한 시간 무관 해제 조건**. 래치 패키지를
+                // 실제로 떠났을 때만 풀린다(AutoTriggerLedger.onForeground 가 판정) — 여기서
+                // 이벤트를 흘려보내면 사용자가 다른 앱에 갔다 돌아와도 영영 자동 발화하지 않는다.
+                autoLedger.onForeground(pkg)
             }
+        }
+
+        // [#30] 전체화면 재생 진입/이탈 신호원. 최전방 선차단은 onWindowsChangedEvent 안에 있다.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            onWindowsChangedEvent()
         }
         // [#20 포렌식, 2026-07-25] `View.performClick()` 은 리스너 유무와 무관하게 이 이벤트를
         // 무조건 발화한다(AOSP 검증, docs/DESIGN_20_CLICK_CYCLE.md §2-4) — "잘못된/리스너 없는
@@ -314,21 +374,34 @@ class ArrangerAccessibilityService : AccessibilityService() {
      * 현재 포그라운드 앱을 대상으로 배치를 시작한다.
      * @param placementOverride 사용자가 명시적으로 고른 위치. null 이면 프로파일/기본값을 따른다
      * @param aspectOverride 사용자가 명시적으로 고른 종횡비(프리셋). null 이면 ADR-1 3단 폴백을 따른다
+     * @param triggerSource 이 세션을 시작한 주체(#30 D4). **기본값이 있어 기존 호출부는 무변경**이며,
+     *   자동 경로만 명시적으로 넘긴다(`evaluateFlexAutoTrigger` → FLEX_AUTO,
+     *   `evaluateFullscreenAutoTrigger` → FULLSCREEN_AUTO, `startArrangeWhenForeground` → SHORTCUT).
+     *   아래 가드 3개의 토스트는 자동 세션에서 억제된다(D19) — 사용자가 요청한 적 없는 동작의
+     *   진단 문구를 띄우는 것은 "조용한 실패 금지" 원칙의 대상이 아니라 방해다(evaluateFlexAutoTrigger
+     *   KDoc 의 동일 원칙 승계). 사유는 언제나 Log.w 로 남으므로 진단 가능성은 유지된다.
      */
-    fun startArrange(placementOverride: Placement?, aspectOverride: Float?) {
+    fun startArrange(
+        placementOverride: Placement?,
+        aspectOverride: Float?,
+        triggerSource: TriggerSource = TriggerSource.MANUAL,
+    ) {
         // F2 1단계 가드: 계산 기하가 실화면과 다르면 디바이더를 조용히 틀린 곳으로 옮기게 되므로,
         // 세션 상태(machineState/sessionInFlight)를 건드리기 전에 가장 먼저 명시적 미지원으로 떨어뜨린다.
         val screen = screenRect()
         if (!geometry.matchesScreen(screen)) {
             Log.w(TAG, "startArrange: 화면 기하 불일치 — screen=${screen.width}x${screen.height} " +
                        "expected=${geometry.usableWidth}x${geometry.usableHeight} (v1 미지원)")
-            toast("이 화면 방향/디스플레이는 아직 지원하지 않습니다")
+            if (!triggerSource.isAuto) toast("이 화면 방향/디스플레이는 아직 지원하지 않습니다")
             return
         }
 
-        if (machineState != ArrangeState.Idle || sessionInFlight) {
-            Log.w(TAG, "startArrange: 이미 배치 진행 중 (state=$machineState)")
-            toast("이미 배치 진행 중")
+        // [#30] busy 가드에 dismissInFlight 를 추가한다 — 분할 해제 폴링(최대 2초) 도중에 자동
+        // 트리거가 배치를 시작하면 사용자가 방금 되돌린 것을 즉시 되돌려 놓는 꼴이 된다.
+        // machineState 는 dismissSplit 경로에서 Idle 이라 종전 두 조건만으로는 잡히지 않는다.
+        if (machineState != ArrangeState.Idle || sessionInFlight || dismissInFlight) {
+            Log.w(TAG, "startArrange: 이미 배치 진행 중 (state=$machineState dismissInFlight=$dismissInFlight)")
+            if (!triggerSource.isAuto) toast("이미 배치 진행 중")
             return
         }
 
@@ -336,15 +409,24 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val target = activePkg ?: lastForegroundPkg
         if (target == null) {
             Log.w(TAG, "startArrange: 대상 앱(포그라운드 패키지)을 찾지 못함")
-            toast("대상 앱을 찾지 못했습니다")
+            if (!triggerSource.isAuto) toast("대상 앱을 찾지 못했습니다")
             return
         }
-        Log.i(TAG, "startArrange: target=$target source=${if (activePkg != null) "active-window" else "event-tracked"}")
+        Log.i(
+            TAG,
+            "startArrange: target=$target trigger=$triggerSource " +
+                "source=${if (activePkg != null) "active-window" else "event-tracked"}",
+        )
+
+        // [#30, 설계서 §2.1 래치 계약] 사용자가 **수동으로** 배치를 트리거한 것은 자동화에 대한
+        // 재신뢰 신호다 — 이 패키지의 래치와 연속 실패 스트릭을 함께 푼다. 래치 트레이드오프
+        // (같은 앱의 다음 영상에서 자동 재발화하지 않음, R7)의 유일한 탈출구가 이 경로다.
+        if (!triggerSource.isAuto) autoLedger.onManualTrigger(target)
 
         sessionInFlight = true
         scope.launch {
             try {
-                beginSession(target, placementOverride, aspectOverride)
+                beginSession(target, placementOverride, aspectOverride, triggerSource)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -763,7 +845,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
                 if (reached) {
                     Log.i(TAG, "startArrangeWhenForeground: 대상 전면 확인 — 배치 시작 (target=$targetPkg)")
-                    startArrange(placementOverride = null, aspectOverride = null)
+                    // 바로가기 탭은 사용자의 명시적 조작이다(TriggerSource.isAuto == false) —
+                    // 토스트도 그대로 나가고 자동 트리거 래치도 풀린다(#30 §2.1 래치 계약).
+                    startArrange(
+                        placementOverride = null,
+                        aspectOverride = null,
+                        triggerSource = TriggerSource.SHORTCUT,
+                    )
                 } else {
                     Log.w(
                         TAG,
@@ -828,12 +916,18 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // 시작된 세션이 진행 중인데 자세가 HALF_OPENED_HORIZONTAL 을 벗어나면(FLAT/UNKNOWN 등
             // 사용자가 이어서 완전히 펴거나 접었다는 뜻) "의도 번복"으로 보고 세션을 취소한다.
             // 세션 활성 판정은 startArrange 의 "이미 배치 진행 중" 체크와 동일한 관용구를 그대로
-            // 쓴다. placementSource == "FLEX" 조건 덕분에 수동 트리거(OVERRIDE/LAST_SUCCESS
-            // 등, 사용자가 시작한 행위)는 자세가 바뀌어도 취소되지 않고, 세션이 이미 Done/Failed 로
-            // 정리됐다면(cleanupSession 이 machineState 를 Idle 로 되돌리므로) 이 조건 자체가
-            // 거짓이 돼 배치 완료 후 기기를 펴서 시청하는 정상 사용례를 건드리지 않는다.
+            // 쓴다. 세션이 이미 Done/Failed 로 정리됐다면(cleanupSession 이 machineState 를 Idle 로
+            // 되돌리므로) 이 조건 자체가 거짓이 돼 배치 완료 후 기기를 펴서 시청하는 정상 사용례를
+            // 건드리지 않는다.
+            //
+            // [#30, 설계서 D4] 판정 기준을 `placementSource == "FLEX"` 에서
+            // [Session.triggerSource] 로 교체했다. placementSource 는 "어느 쪽에 붙일지를 자세로
+            // 정했다"는 배치 근거일 뿐 "자세가 세션을 시작했다"는 뜻이 아니다 — 노트북 자세로
+            // 거치한 채 사용자가 버블을 탭한 수동 세션도 FLEX 티어를 타므로, 옛 조건은 그 수동
+            // 세션을 자세 변화만으로 오취소했다. 반대로 FULLSCREEN_AUTO 세션은 자세와 무관하므로
+            // 이 취소 대상이 아니어야 한다 — 두 오류를 이 한 줄이 동시에 닫는다.
             if ((machineState != ArrangeState.Idle || sessionInFlight) &&
-                (session?.placementSource ?: "FALLBACK") == "FLEX"
+                session?.triggerSource == TriggerSource.FLEX_AUTO
             ) {
                 Log.i(TAG, "flex session cancelled: posture-exit")
                 cancelArrange()
@@ -949,7 +1043,12 @@ class ArrangerAccessibilityService : AccessibilityService() {
         Log.i(TAG, "flex auto-arrange trigger: target=$foregroundPkg")
         // placement 는 여기서 넘기지 않는다 — beginSession 의 placement 체인(FLEX 티어)이
         // flexPolicy.posture 를 직접 참조해 TOP 을 강제한다(자동·수동 단일 메커니즘, 브리프 근거).
-        startArrange(placementOverride = null, aspectOverride = null)
+        // [#30 D4] 세션 기원을 명시한다 — posture-exit 오취소 판정과 토스트 억제가 이 값을 본다.
+        startArrange(
+            placementOverride = null,
+            aspectOverride = null,
+            triggerSource = TriggerSource.FLEX_AUTO,
+        )
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1005,10 +1104,345 @@ class ArrangerAccessibilityService : AccessibilityService() {
     }
 
     // ══════════════════════════════════════════════════════════
+    // #30: 전체화면 재생 자동 트리거 (docs/DESIGN_30_FULLSCREEN_AUTO.md)
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * [fullscreenLeverSnapshot] 을 다시 읽는다. [onServiceConnected] 워밍과 사용자 토글 변경
+     * ([FloatingLauncherService] 롱프레스 메뉴) 양쪽이 이 함수 하나를 쓴다 — 갱신 경로가 둘로
+     * 갈라지면 "메뉴에서 켰는데 발화하지 않는다" 는 진단 불가능한 상태가 생긴다(설계서 D14·D22).
+     *
+     * 실패는 전부 false 방향이다: 자산 파싱 실패 시 킬스위치는 관례대로 `?: true` 지만
+     * ([ProfileDefaults.fullscreenAutoArrange] 는 부재=true 인 개발자 킬스위치), DataStore 읽기
+     * 실패는 [ProfileStore.isFullscreenAutoEnabled] 가 false 로 폴백하므로 곱이 false 가 된다.
+     */
+    fun refreshFullscreenAutoSnapshot() {
+        scope.launch {
+            val lever = loadProfilesConfig()?.defaults?.fullscreenAutoArrange ?: true
+            val userOptIn = store.isFullscreenAutoEnabled()
+            val enabled = lever && userOptIn
+            fullscreenLeverSnapshot = enabled
+            Log.i(TAG, "fullscreen auto snapshot: lever=$lever userToggle=$userOptIn enabled=$enabled")
+        }
+    }
+
+    /**
+     * `PanelActivity.onDestroy` 훅 — 우리 분할이 해제됐다는 신호를 자동 트리거 장부에 전달한다.
+     *
+     * 이 지점이 (a) 메뉴 "분할 해제" (b) 커버 화면 자동 해제 (c) 패널 자가 가드 finish
+     * (d) 사용자의 BACK / 디바이더 드래그 — **네 경로를 모두 포착하는 유일한 지점**이다(설계서
+     * §2.3). 해제 직후 대상 앱은 대개 전체화면 재생으로 자동 복귀하는데, 그 복귀가 그대로 새 진입
+     * 엣지가 되어 방금 사용자가 되돌린 배치를 다시 실행하는 P-1 루프가 된다 — 재래치가 그 엣지를
+     * 게이트 10 에서 조용히 죽인다(D1·D2).
+     */
+    fun onPanelDestroyed() {
+        autoLedger.onSplitDismissed()
+        Log.i(TAG, "panel destroyed — 자동 트리거 재래치(P-1 루프 차단)")
+    }
+
+    /**
+     * `TYPE_WINDOWS_CHANGED` 이벤트 진입점. **메인 스레드 동기 콜백**이다.
+     *
+     * 최전방 선차단(설계서 D12·R6): 아래 5개 조건 중 하나라도 걸리면 `windows` 를 **읽기 전에**
+     * 반환한다. 이 이벤트는 창 구성이 바뀔 때마다(최대 10Hz 급) 오므로, 통과분마다 바인더 왕복
+     * 1회(`windows`)가 메인 스레드에 얹힌다 — 기능이 꺼져 있거나(기본값) 세션이 도는 동안에는
+     * boolean 비교 몇 번으로 끝나야 기존 세션의 시간 예산(ENTRY_STEP_FAILED 여유)을 잠식하지 않는다.
+     *
+     * 통과 후에는 `windows` 를 **한 번만** 읽어 신호 판정과 §9 전이 로깅에 공유한다 —
+     * [FullscreenSignalSampler] 가 `root?.packageName` 을 조회하지 않으므로 창 개수와 무관하게
+     * 바인더 왕복은 그 1회뿐이다.
+     */
+    private fun onWindowsChangedEvent() {
+        // ① 기능 자체가 꺼져 있음(킬스위치 ∧ 사용자 토글의 스냅샷). 기본값 false 라 평시 여기서 끝난다.
+        if (!fullscreenLeverSnapshot) return
+        // ② 배치 세션/분할 해제가 진행 중 — 그 상태에서 관측되는 창 변화는 전부 우리가 만든 것이다.
+        if (machineState != ArrangeState.Idle || sessionInFlight || dismissInFlight) return
+        // ③ 버블이 꺼져 있으면 사용자가 되돌릴 표면 자체가 없다(D16) — 화면을 바꾸지 않는다.
+        if (!FloatingLauncherService.isRunning) return
+
+        val screen = screenRect()
+        val windowList = safeWindows()
+        val signal = fullscreenSampler.sample(windowList, screen)
+
+        val prev = fullscreenPolicy.lastSignal
+        val checkAtMs = fullscreenPolicy.onSignal(signal, SystemClock.uptimeMillis())
+        val next = fullscreenPolicy.lastSignal
+
+        // [설계서 §9 Advisor 추가 1] 전이에서만 남긴다 — 매 샘플 로깅은 최대 10Hz 스팸이다.
+        // appFull/topBars 는 판정 근거 개수로, W0-1~W0-6 의 창 목록 판정을 별도 프로브 빌드 없이
+        // logcat 만으로 재구성하게 해 준다(어느 절이 판정을 갈랐는지 3값만으로는 알 수 없다).
+        if (next != prev) {
+            val evidence = fullscreenSampler.evidence(windowList, screen)
+            Log.i(
+                TAG,
+                "fullscreen signal: $prev -> $next screen=${screen.width}x${screen.height} " +
+                    "appFull=${evidence.appFullCount} topBars=${evidence.topBarCount}",
+            )
+        }
+
+        // 진입 엣지가 확정된 경우에만 재검증을 예약한다. 동일 상태 중복 보고는 null 이므로
+        // 진행 중인 폴링을 방해하지 않는다(onFoldPosture 의 flex/cover 예약과 동일 관례).
+        if (checkAtMs == null) return
+        fullscreenCheckJob?.cancel()
+        fullscreenCheckJob = scope.launch { awaitFullscreenTrigger(checkAtMs) }
+    }
+
+    /**
+     * 전체화면 자동 발화 대기 루프.
+     *
+     * ADR-2: 첫 delay 는 [FullscreenPlaybackPolicy.onSignal] 이 발급한 진입 디바운스 시각에
+     * "도달"하기 위한 수단일 뿐 성공을 가정하지 않는다 — 도달 후에도 매 틱마다 라이브 창 목록을
+     * 다시 샘플링해 정책에 먹이고([onSignal]), [FullscreenPlaybackPolicy.shouldTriggerNow] 로
+     * 조건을 재검증한다. [awaitFlexTrigger] 와 동일한 형태다.
+     *
+     * **미디어 게이트가 게이트 체인이 아니라 이 루프 안에 있는 이유(설계서 §3.1 하단)**:
+     * [MediaPlaybackProbe.isMediaPlaying] 은 광고 전환·seek·버퍼 언더런에서 순간적으로 요동치는
+     * 상태다. 기하·포그라운드 같은 다른 게이트처럼 첫 실패에서 즉시 disarm 하면 정당한 발화를
+     * 잃는다(진입 1회당 재무장 경로는 "이탈 후 재진입" 뿐이다). 그렇다고
+     * [evaluateFullscreenAutoTrigger] 안에 두면 `busy`~`startArrange` 원자 구간이 깨진다(D7 — 그
+     * 구간에 suspend 호출이 들어가면 다른 트리거와 경합한다). 두 요구를 동시에 만족하는 위치는
+     * 이 루프뿐이다: **실패해도 disarm 하지 않고 다음 틱에 다시 묻는다.**
+     *
+     * 절대 데드라인([FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS])이 반드시 있어야 한다. 힌지 각도와 달리
+     * 창 이벤트는 **화면이 정적이면 아예 오지 않으므로**, 이탈이 영영 관측되지 않아
+     * [FullscreenPlaybackPolicy.isArmed] 가 참인 채로 루프가 남을 수 있다. 이 데드라인이 폴링의
+     * 무조건 종료를 보장한다.
+     */
+    private suspend fun awaitFullscreenTrigger(checkAtMs: Long) {
+        delay((checkAtMs - SystemClock.uptimeMillis()).coerceAtLeast(0))
+
+        val deadlineMs = SystemClock.uptimeMillis() + FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS
+        // [설계서 §9 Advisor 추가 2] 미디어 관측 usage 목록은 W0-7(재생/일시정지/볼륨0/앱내 음소거
+        // 4상태 확인 + One UI 변형 확인)을 logcat 만으로 수행하기 위한 것이다. 매 틱 로깅은
+        // 4Hz 스팸이므로 **판정이 바뀐 틱에서만** 남긴다(전이 로깅 관례를 그대로 따른다).
+        var lastMediaPlaying: Boolean? = null
+
+        while (fullscreenPolicy.isArmed && SystemClock.uptimeMillis() < deadlineMs) {
+            val now = SystemClock.uptimeMillis()
+            fullscreenPolicy.onSignal(fullscreenSampler.sample(safeWindows(), screenRect()), now)
+
+            if (fullscreenPolicy.isTriggerReady(now)) {
+                val playing = mediaProbe.isMediaPlaying()
+                if (playing != lastMediaPlaying) {
+                    lastMediaPlaying = playing
+                    Log.i(TAG, "fullscreen media probe: playing=$playing usages=${mediaProbe.activeUsages()}")
+                }
+                if (!playing) {
+                    // disarm 하지 않는다 — 위 KDoc 참고. 다음 틱에 다시 묻는다.
+                    delay(FULLSCREEN_POLL_INTERVAL_MS)
+                    continue
+                }
+                if (fullscreenPolicy.shouldTriggerNow(now)) {
+                    evaluateFullscreenAutoTrigger()
+                    return
+                }
+            }
+            delay(FULLSCREEN_POLL_INTERVAL_MS)
+        }
+
+        // 데드라인 도달(이탈이 관측되지 않은 채 시간이 다 됨) — 조용히 남겨두지 않고 명시적으로
+        // 이번 진입 구간을 닫는다. 재무장은 이탈 확정 후 재진입만이 경로다.
+        if (fullscreenPolicy.isArmed) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=trigger-poll-timeout")
+        }
+    }
+
+    /**
+     * 전체화면 자동 발화 게이트 체인(설계서 §3.2, 11개). 순서대로 검사하고 첫 실패에서
+     * [FullscreenPlaybackPolicy.disarm] + 사유 로그 후 반환한다 — 이번 전체화면 진입 구간에서는
+     * 재발화하지 않는다(이탈 후 재진입만이 재무장 경로).
+     *
+     * **토스트 없음**: [evaluateFlexAutoTrigger] KDoc 의 원칙을 그대로 승계한다 — "조용한 실패
+     * 금지"는 *사용자가 시작한 행위*의 실패를 사용자가 알게 하자는 것인데, 이 트리거는 창 이벤트로
+     * 자동 발화되므로 매 스킵마다 토스트를 띄우면 오히려 방해다. 사유는 항상 Log.i 로 남는다.
+     *
+     * **⚠ 원자 구간 계약(설계서 D7)**: 게이트 3(bubble-off)부터 [startArrange] 호출까지 **suspend
+     * 호출을 넣지 마라.** 그 사이에 중단점이 생기면 게이트 4(busy)가 참으로 통과한 뒤 다른 트리거
+     * (FLEX_AUTO·수동 탭)가 먼저 세션을 시작해, 이 경로가 이미 진행 중인 세션 위에 두 번째
+     * 세션을 요청하게 된다(R8). 게이트 1·2 만이 suspend 이며, 그 결과([config])는 원자 구간에서
+     * 재조회 없이 그대로 쓴다.
+     */
+    private suspend fun evaluateFullscreenAutoTrigger() {
+        // ── 게이트 1: lever-off (개발자 킬스위치, 부재=true) ──
+        val config = loadProfilesConfig()
+        if (!(config?.defaults?.fullscreenAutoArrange ?: true)) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=lever-off")
+            return
+        }
+
+        // ── 게이트 2: user-toggle-off (사용자 옵트인, 기본 false — 실질 방어선, R9) ──
+        if (!store.isFullscreenAutoEnabled()) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=user-toggle-off")
+            return
+        }
+
+        // ══ 이하 startArrange 까지 원자 구간 — suspend 호출 금지 (위 KDoc D7 계약) ══
+
+        // ── 게이트 3: bubble-off (되돌리기 표면 부재, D16) ──
+        if (!FloatingLauncherService.isRunning) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=bubble-off")
+            return
+        }
+
+        // ── 게이트 4: busy ──
+        if (machineState != ArrangeState.Idle || sessionInFlight || dismissInFlight) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=busy")
+            return
+        }
+
+        // ── 게이트 5: geometry-mismatch (세로 화면 = Shorts 등을 여기서 차단한다) ──
+        val screen = screenRect()
+        if (!geometry.matchesScreen(screen)) {
+            fullscreenPolicy.disarm()
+            Log.i(
+                TAG,
+                "fullscreen auto-arrange skipped: reason=geometry-mismatch " +
+                    "screen=${screen.width}x${screen.height}",
+            )
+            return
+        }
+
+        // ── 게이트 6: split-already-active (기존 분할 재배치는 명시적 비목표) ──
+        if (dividerLocator.isSplitActive(safeWindows(), screen)) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=split-already-active")
+            return
+        }
+
+        // ── 게이트 7: display-off ──
+        val displayManager = getSystemService(DISPLAY_SERVICE) as? DisplayManager
+        if (displayManager?.getDisplay(Display.DEFAULT_DISPLAY)?.state != Display.STATE_ON) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=display-off")
+            return
+        }
+
+        // ── 게이트 8: foreground-unsuitable ──
+        // 조건을 val 로 빼지 않고 if 에 직접 쓴다 — 그래야 이후 targetPkg 가 non-null 로 스마트
+        // 캐스트되어 `!!` 없이 진행할 수 있다(evaluateFlexAutoTrigger 는 대상 패키지를 이후에
+        // 쓰지 않아 val 로 뺄 수 있었지만, 여기는 게이트 9~11 이 전부 패키지명을 쓴다).
+        val targetPkg = activeAppPackage() ?: lastForegroundPkg
+        if (targetPkg == null ||
+            targetPkg == packageName ||
+            targetPkg == homePackage ||
+            targetPkg in EXCLUDED_FOREGROUND_PACKAGES
+        ) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=foreground-unsuitable pkg=$targetPkg")
+            return
+        }
+
+        // ── 게이트 9: not-auto-target (프로파일 보유와 자동 대상은 별개 — 시드에서 유튜브 1개, D11·D13) ──
+        // config == null(자산 파싱 실패) 은 레버 게이트의 `?: true` 관용구를 따르지 않고 **실패**
+        // 처리한다 — 설정을 못 읽는 상태에서 자동으로 화면을 바꾸는 것은 정당화되지 않는다.
+        // 로그에 실제 관측 패키지명을 반드시 넣는다: 시드 JSON 의 [미확인] 패키지명을 사용자 로그
+        // 한 줄로 진단할 수 있게 하는 유일한 수단이다(D13).
+        if (config?.profiles?.firstOrNull { it.packageName == targetPkg }?.autoArrange != true) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=not-auto-target pkg=$targetPkg")
+            return
+        }
+
+        // ── 게이트 10: latched (D1·D2 의 실질 해법) ──
+        if (autoLedger.isLatched(targetPkg)) {
+            fullscreenPolicy.disarm()
+            Log.i(TAG, "fullscreen auto-arrange skipped: reason=latched pkg=$targetPkg")
+            return
+        }
+
+        // ── 게이트 11: auto-disabled (연속 실패 서킷브레이커, D3) ──
+        if (autoLedger.isDisabled(targetPkg)) {
+            fullscreenPolicy.disarm()
+            Log.i(
+                TAG,
+                "fullscreen auto-arrange skipped: reason=auto-disabled pkg=$targetPkg " +
+                    "streak=${autoLedger.failStreak(targetPkg)}",
+            )
+            return
+        }
+
+        // 성공·실패와 무관하게 발화 **직전**에 래치한다(D3) — 실패한 자동 세션이 스스로 재무장
+        // 엣지를 생산해 같은 실패를 반복하는 것을 막는다.
+        autoLedger.onAutoFired(targetPkg)
+        Log.i(TAG, "fullscreen auto-arrange trigger: target=$targetPkg")
+        startArrange(
+            placementOverride = null,
+            aspectOverride = null,
+            triggerSource = TriggerSource.FULLSCREEN_AUTO,
+        )
+    }
+
+    /**
+     * 자동 세션이 실패했을 때의 복구(설계서 D15). 자동 배치는 사용자가 요청한 적이 없으므로,
+     * 실패로 Recents/분할 파트너 피커에 사용자를 유기하면 "가만히 있었는데 화면이 바뀌었고 되돌릴
+     * 방법도 없다" 가 된다.
+     *
+     * [#30 D15 사전 가드] 이 복구가 의미를 갖는 전제는 단 하나 — **우리가 사용자를 대상 앱 밖으로
+     * 데려간 경우**다. 그런데 실패 사유 중에는 그 이전 단계에서 끝나는 것들이 있다: 예컨대
+     * [FailureReason.SPLIT_CHECK_TIMEOUT] 은 분할 **상태 확인** 단계라 아직 Recents 를 열지도
+     * 않았고, 대상 앱은 여전히 전면에 있다. 사전 가드 없이 BACK 을 주입하면 사용자가 보던 영상
+     * 앱을 뒤로 밀어낸다(전체화면 재생 중이면 전체화면을 빠져나가거나 앱 자체가 뒤로 간다).
+     * 사용자가 요청한 적조차 없는 자동화가 **요청하지 않은 입력을 주입**하는 것이므로 순수한
+     * 해악이다. 따라서 주입 **직전**에 `activeAppPackage() == targetPackage` 를 확인하고, 이미
+     * 전면이면 아무것도 하지 않고 반환한다(생략 사실은 로그로 드러낸다 — 조용한 실패 금지).
+     *
+     * `activeAppPackage() == null` 이면 주입을 **진행**한다. null 은 "대상 앱이 전면이다" 가 아니라
+     * "전면 앱을 식별하지 못했다" 이며, 그 대표적 형태가 활성 APPLICATION 창이 런처/SystemUI 등
+     * 제외 패키지인 경우 — 이는 정확히 "유기됨" 의 모습이다. 전면임을 **확인하지 못했다**는 것은
+     * 곧 유기됐을 수 있다는 뜻이므로 복구를 시도하는 쪽이 옳다.
+     *
+     * ADR-2 준수 계약: `GLOBAL_ACTION_BACK` 을 **1회만** 주입하고, 성공을 가정하지 않고
+     * `activeAppPackage() == targetPackage` 를 [AUTO_RECOVERY_POLL_INTERVAL_MS] 간격으로 조건
+     * 폴링한다([AUTO_RECOVERY_TIMEOUT_MS] 데드라인). 타임아웃 시 **추가 주입 없이** 로그만 남긴다 —
+     * BACK 을 반복 주입하면 사용자가 보던 화면을 계속 뒤로 밀어내는 더 나쁜 결과가 된다.
+     * 복구가 무효여도 사용자는 오늘의 수동 실패와 동일한 상태에 있을 뿐이다(회귀 아님, R4).
+     */
+    private suspend fun recoverAfterAutoFailure(targetPackage: String) {
+        // [#30 D15 사전 가드] 대상 앱이 이미 전면 = 우리가 밖으로 데려간 적이 없다 → 주입 금지.
+        if (activeAppPackage() == targetPackage) {
+            Log.i(TAG, "auto recovery: 대상 앱이 이미 전면 — BACK 주입 생략 (target=$targetPackage)")
+            return
+        }
+
+        val injected = runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }.getOrDefault(false)
+        if (!injected) {
+            Log.w(TAG, "auto recovery: GLOBAL_ACTION_BACK 주입 실패 (target=$targetPackage)")
+            return
+        }
+
+        val recovered = withTimeoutOrNull(AUTO_RECOVERY_TIMEOUT_MS) {
+            while (activeAppPackage() != targetPackage) {
+                delay(AUTO_RECOVERY_POLL_INTERVAL_MS)
+            }
+            true
+        } ?: false
+
+        if (recovered) {
+            Log.i(TAG, "auto recovery: 대상 앱 전면 복귀 확인 (target=$targetPackage)")
+        } else {
+            Log.i(
+                TAG,
+                "auto recovery: ${AUTO_RECOVERY_TIMEOUT_MS}ms 내 대상 앱 전면 복귀 미확인 " +
+                    "(target=$targetPackage) — 추가 주입 없이 종료",
+            )
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
     // 세션 시작 (ADR-1 3단 폴백 결정 + Start 디스패치)
     // ══════════════════════════════════════════════════════════
 
-    private suspend fun beginSession(target: String, placementOverride: Placement?, aspectOverride: Float?) {
+    private suspend fun beginSession(
+        target: String,
+        placementOverride: Placement?,
+        aspectOverride: Float?,
+        triggerSource: TriggerSource,
+    ) {
         // [실측 2026-07-25, 추가 결함] 메뉴 경유 트리거([FloatingLauncherService.dismissMenuThenArrange])
         // 직후에는 방금 제거된 풀스크린 스크림 탓에 접근성 창 목록 스냅샷이 잠시 불완전할 수 있다
         // (위 [awaitWindowsSettled] KDoc 실측 근거 참고). 세션이 windows 를 쓰기 시작하기 전
@@ -1166,6 +1600,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
             targetLabel = targetLabel,
             desiredPlacement = placement,
             placementSource = placementSource,
+            // [#30 D4] 세션 기원은 호출자가 확정해 넘긴다 — placementSource 체인과 달리 여기서
+            // 재추론할 여지가 없어야 한다(추론하는 순간 그것이 D4 의 프록시 재사용 결함이다).
+            triggerSource = triggerSource,
             presetAspect = presetAspect,
             requireAgreement = requireAgreement,
             cacheAspectEnabled = cacheAspectEnabled,
@@ -1845,6 +2282,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val arrangeConfig = s?.config ?: ArrangeConfig()
         val desiredPlacement = s?.desiredPlacement ?: Placement.TOP
         val effectivePlacement = s?.effectivePlacement ?: Placement.TOP
+        // [#30 D19] 세션 밖 폴백은 MANUAL — 종전 동작(항상 토스트)과 정확히 같다.
+        val triggerSource = s?.triggerSource ?: TriggerSource.MANUAL
 
         when (state) {
             is ArrangeState.Done -> {
@@ -1870,9 +2309,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     TAG,
                     "arrange done: verified=${state.verified} residual=${state.finalResidualPx} " +
                         "adjusted=${state.adjusted} desired=$desiredPlacement effective=$effectivePlacement " +
-                        "tolerance=${arrangeConfig.residualTolerancePx}",
+                        "tolerance=${arrangeConfig.residualTolerancePx} trigger=$triggerSource",
                 )
-                toast(message)
+                // [#30 D19] 자동 세션은 사용자가 요청한 적이 없는 동작이라 진단 문구를 LENGTH_LONG
+                // 토스트로 띄우면 방해다 — 같은 내용을 Log.i 로만 남긴다.
+                if (!triggerSource.isAuto) {
+                    toast(message)
+                } else {
+                    Log.i(TAG, "auto arrange result (토스트 억제): $message")
+                }
 
                 // 앱별 "마지막 성공 placement" 저장(P3-3). 사용자가 의도한 위치(desiredPlacement)로
                 // 실제로 낙착된 세션만 저장한다 — 스왑/회전 폴백이 모두 실패해 다른 위치로 낙착된
@@ -1885,8 +2330,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // 값이 아닌 자동화 결과가 last-success 를 조용히 오염시키면 안 된다.
                 val pkg = s?.targetPackage
                 val placementToPersist = effectivePlacement
+                // [#30 D3] 자동 세션의 터미널 보고 — 성공은 연속 실패 스트릭을 0으로 되돌린다.
+                if (pkg != null && triggerSource.isAuto) autoLedger.onAutoResult(pkg, success = true)
+                // [#30 D4] 자동 세션(FLEX_AUTO/FULLSCREEN_AUTO)은 last-success 저장에서 제외한다 —
+                // 종전에는 placementSource=="FLEX" 로 걸렀는데 그건 배치 근거일 뿐 세션 기원이
+                // 아니어서, 자동 세션이 다른 placement 티어로 낙착하면 그대로 저장돼 사용자가
+                // 고르지 않은 값이 다음 수동 탭의 기본값을 오염시켰다.
                 if (pkg != null &&
                     effectivePlacement == desiredPlacement &&
+                    !triggerSource.isAuto &&
                     (s?.placementSource ?: "FALLBACK") != "FLEX"
                 ) {
                     // fire-and-forget — ProfileStore.saveLastSuccessfulPlacement 이 내부에서
@@ -1911,8 +2363,46 @@ class ArrangerAccessibilityService : AccessibilityService() {
             }
 
             is ArrangeState.Failed -> {
-                Log.i(TAG, "arrange failed: reason=${state.reason}")
-                toast("배치 실패: ${failureReasonKo(state.reason)}")
+                Log.i(TAG, "arrange failed: reason=${state.reason} trigger=$triggerSource")
+                if (!triggerSource.isAuto) {
+                    toast("배치 실패: ${failureReasonKo(state.reason)}")
+                    return
+                }
+
+                // [#30 D3/D15 보정] CANCELLED 는 자동화의 실패가 아니라 "누군가 의도적으로 멈췄다"는
+                // 뜻이므로 아래 실패 처리(스트릭 +1, BACK 복구)에서 제외한다. 프로덕션에서 이 사유를
+                // 만드는 유일한 경로는 같은 파일 933행 근처의 posture-exit 취소 — FLEX_AUTO 세션이
+                // 도는 중 사용자가 자세를 바꾸면 "의도 번복"으로 보고 cancelArrange() 하는 기존
+                // 로직이다(ArrangeTriggerReceiver 의 취소는 debug 전용 매니페스트라 릴리스에 없다).
+                // 실패로 취급하면 두 가지 신규 부작용이 FLEX 경로에 생긴다:
+                //   ① recoverAfterAutoFailure 의 GLOBAL_ACTION_BACK 주입 — 사용자가 방금 스스로
+                //      멈춘 화면을 한 번 더 뒤로 민다. 세션이 Recents 도달 **전에** 취소됐다면 BACK 이
+                //      대상 앱 자체를 뒤로 보낸다. 요청하지 않은 입력 주입이다.
+                //   ② autoLedger.onAutoResult(success=false) 의 실패 스트릭 +1 — 기기를 두 번
+                //      접었다 펴는 것만으로 maxFailStreak(2)에 도달해, 게이트 11 이 이 부팅 세션 동안
+                //      해당 패키지의 자동 트리거를 영구 비활성화한다.
+                // 실패 취급을 빼도 재발화 루프(P-1) 위험은 없다 — 래치는 이미 발화 **직전**
+                // (autoLedger.onAutoFired, 1371행)에 걸렸고 결과와 무관하게 유지되므로, 취소된
+                // 세션이 스스로 재무장 엣지를 만들 수 없다.
+                if (state.reason == FailureReason.CANCELLED) {
+                    // 무고지는 안 된다(화면이 실제로 바뀌었다 되돌아가는 중이다) — "실패"가 아닌
+                    // 사실만 짧게 알린다.
+                    Toast.makeText(this, "자동 배치를 취소했습니다", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                // [#30 D19] 자동 세션은 사용자가 요청한 적이 없으므로 진단 문구 대신 짧은 사실
+                // 통보만 한다 — 그래도 무고지는 안 된다(화면이 실제로 바뀌었다 되돌아가는 중이다).
+                Toast.makeText(this, "자동 배치에 실패했습니다", Toast.LENGTH_SHORT).show()
+
+                val pkg = s?.targetPackage ?: return
+                // [#30 D3] 연속 실패 서킷브레이커 — maxFailStreak 도달 시 게이트 11 이 이 부팅
+                // 세션 동안 이 패키지의 자동 트리거를 막는다.
+                autoLedger.onAutoResult(pkg, success = false)
+                // [#30 D15] 실패한 자동 세션이 사용자를 Recents/분할 피커에 유기하지 않도록
+                // 복구를 시도한다. reportTerminal 본문에는 중단점이 없어야 하므로(Session 읽기 규약
+                // 의 유일한 예외 조건) 별도 코루틴으로 내보낸다.
+                scope.launch { recoverAfterAutoFailure(pkg) }
             }
 
             else -> Unit
@@ -2125,6 +2615,31 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 파일 내 다른 조건 폴링(150~200ms 관례)과 같은 부류이며 고정 지연이 아니다(ADR-2).
          */
         private const val FLEX_ANGLE_POLL_INTERVAL_MS = 250L
+
+        /**
+         * [#30] [awaitFullscreenTrigger] 조건 폴링 간격. [FLEX_ANGLE_POLL_INTERVAL_MS] 와 동일한
+         * 관례다. 틱당 작업 = 바인더 1회(`windows`) + 산술 + (준비된 경우) 미디어 질의 1회.
+         * ADR-2 의 조건 폴링이지 타이밍을 맞추기 위한 고정 지연이 아니다.
+         */
+        private const val FULLSCREEN_POLL_INTERVAL_MS = 250L
+
+        /**
+         * [#30] [awaitFullscreenTrigger] 의 **절대 데드라인**. **[미검증]** — 힌지 각도(센서)와
+         * 달리 창 이벤트는 화면이 정적이면 아예 오지 않으므로, 전체화면 이탈이 영영 관측되지 않아
+         * 무장이 풀리지 않을 수 있다. 이 데드라인이 폴링의 무조건 종료를 보장한다.
+         * 진입 디바운스(3000ms)가 지난 시점부터 재는 값이라 여유는 충분하다.
+         */
+        private const val FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS = 5_000L
+
+        /** [#30] [recoverAfterAutoFailure] 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
+        private const val AUTO_RECOVERY_POLL_INTERVAL_MS = 150L
+
+        /**
+         * [#30] [recoverAfterAutoFailure] 데드라인. **[미검증]** — BACK 주입 후 대상 앱이 전면으로
+         * 복귀할 때까지의 대기. 실측 E2E 전환 시간(세션 전체 4.2~4.7s 중 1스텝) 대비 여유값이다.
+         * 타임아웃돼도 추가 주입은 없다(위 KDoc 계약).
+         */
+        private const val AUTO_RECOVERY_TIMEOUT_MS = 2_500L
 
         /** [P4-4] [startArrangeWhenForeground] 조건 폴링 간격. 파일 내 다른 150ms 폴링 관례와 동일. */
         private const val SHORTCUT_FOREGROUND_POLL_INTERVAL_MS = 150L

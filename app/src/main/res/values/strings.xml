@@ -26,6 +26,13 @@
     <string name="bubble_menu_dismiss_split">분할 해제</string>
     <string name="bubble_menu_settings">설정</string>
 
+    <!-- #30: 전체화면 재생 자동 배치 사용자 토글(기본 OFF). 라벨은 "현재 상태"를 보여주고
+         탭하면 반대 값으로 뒤집는다 — 켜는 표면과 끄는 표면이 같은 자리에 있어야 한다(D16). -->
+    <string name="bubble_menu_fullscreen_auto_on">전체화면 자동 배치: 켜짐</string>
+    <string name="bubble_menu_fullscreen_auto_off">전체화면 자동 배치: 꺼짐</string>
+    <string name="toast_fullscreen_auto_enabled">전체화면 자동 배치를 켰습니다</string>
+    <string name="toast_fullscreen_auto_disabled">전체화면 자동 배치를 껐습니다</string>
+
     <!-- P4-1: 팝업(freeform) 모드. Shizuku 가용 시에만 메뉴에 노출된다 -->
     <string name="bubble_menu_open_popup">팝업으로 열기</string>
 
@@ -57,6 +64,8 @@
     <string name="onboarding_bubble_stopped">버블 꺼짐</string>
     <string name="onboarding_guide_title">사용 방법</string>
     <string name="onboarding_guide_usage">영상 앱에서 전체화면 재생 중 버블을 탭하면 화면이 영상 비율에 맞게 재배치됩니다.</string>
+    <!-- #30 D20: 되돌리기 경로(분할 해제)가 미공개 롱프레스 2스텝이라 발견성이 0이었다. -->
+    <string name="onboarding_guide_longpress">버블을 길게 누르면 위/아래 배치, 분할 해제, 영상 비율 선택, 전체화면 자동 배치 켜기/끄기 메뉴가 열립니다. 배치를 되돌리려면 이 메뉴에서 「분할 해제」를 누르세요.</string>
     <string name="onboarding_guide_netflix_title">넷플릭스 주의</string>
     <string name="onboarding_guide_netflix">넷플릭스 등 일부 앱은 먼저 버블로 배치한 뒤 페인 안에서 재생을 시작하세요. 재생 중에 배치하면 영상이 별도 팝업으로 분리됩니다.</string>
     <string name="onboarding_guide_reenable">앱을 업데이트하면 접근성 서비스가 꺼집니다. 이 화면에서 다시 켜 주세요.</string>

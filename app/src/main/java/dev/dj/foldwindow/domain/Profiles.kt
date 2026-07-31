@@ -51,6 +51,17 @@ data class ProfileDefaults(
      * 분할이 그대로 유지되며 수동 해제만 가능)으로 되돌아간다.
      */
     val coverAutoDismiss: Boolean = true,
+    /**
+     * DESIGN #30 §2.3 개발자 킬스위치. 기존 4레버(requireMeasurementAgreement/cacheMeasuredAspect/
+     * flexAutoTopPlacement/coverAutoDismiss)와 동일하게 **부재=true** 다 — 시드 JSON 에 키를 넣지
+     * 않으며, 원격 회수가 불가능한 사이드로드 배포에서 다음 릴리스로 이 기능을 즉시 무력화하기 위한
+     * 수단으로만 존재한다(DESIGN #30 R9).
+     *
+     * 주의: 이 레버가 true 라고 해서 전체화면 자동 배치가 켜지는 것이 아니다. **사용자 옵트인은
+     * `data.ProfileStore.isFullscreenAutoEnabled()` 토글(기본값 false)이 담당**하며 게이트 체인에서
+     * 이 레버 바로 다음(게이트 2)에 검사된다. 두 값이 모두 참이어야 발화한다.
+     */
+    val fullscreenAutoArrange: Boolean = true,
 )
 
 /** 사용자가 수동으로 고를 수 있는 종횡비 프리셋. aspect == null 이면 "자동 감지" 항목이다 */
@@ -71,6 +82,17 @@ data class AppProfile(
     val aspectSource: AspectSource,
     val placement: Placement,
     val note: String? = null,
+    /**
+     * DESIGN #30 §2.3: 이 앱이 **전체화면 재생 자동 배치의 대상인가**. **부재=false(옵트인)** 다 —
+     * "프로파일을 갖고 있다"와 "자동 트리거 대상이다"는 서로 다른 개념이기 때문이다. 프로파일은
+     * 종횡비/배치 위치를 아는 앱 전부에 존재하지만, 사용자가 명시적으로 조작하지 않았는데 화면
+     * 배치를 바꿔도 되는 앱은 그중 일부뿐이다(넷플릭스는 자사 온보딩이 "재생 중 배치 금지"를
+     * 명시하고 실측이 재생 세션 파괴를 재현했다 — DESIGN #30 D11).
+     *
+     * 시드에서 true 인 것은 `com.google.android.youtube` 하나이며, 게이트 9(not-auto-target)가
+     * 이 값을 검사한다. 새 앱을 자동 대상으로 올리려면 실기기 실측 근거를 먼저 남길 것.
+     */
+    val autoArrange: Boolean = false,
 )
 
 /** window_profiles.json 전체를 반영한 도메인 모델 */

@@ -23,7 +23,8 @@
       "aspect": null,
       "aspectSource": "MEASURED",
       "placement": "TOP",
-      "note": "콘텐츠 비율이 영상마다 다르므로 실측 우선"
+      "autoArrange": true,
+      "note": "콘텐츠 비율이 영상마다 다르므로 실측 우선. autoArrange: DESIGN #30 자동 트리거 대상은 v1 에서 이 앱 하나뿐이다(나머지는 키 부재=false)"
     },
     {
       "package": "com.netflix.mediaclient",

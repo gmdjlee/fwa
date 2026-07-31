@@ -1221,3 +1221,67 @@ assembleDebug · lintDebug 신규 0 · domain diff 0.
 
 프로파일 tolerance=8 원복 완료(`git diff` 빈 출력) · 정상 HEAD+#29 빌드 설치 · 접근성 2종 활성 ·
 Shizuku 서버 가동 중(재부팅 시 재실행 필요) · FW Panel 카드 잔존(정상 — #29 수정으로 무해).
+
+---
+
+## #30 전체화면 재생 자동 트리거 — 미검증 항목 (2026-07-31 구현, 실기기 0회)
+
+구현 근거·설계 = `docs/DESIGN_30_FULLSCREEN_AUTO.md`. **실기기가 연결되지 않은 상태에서 구현했으므로
+아래 전 항목이 `[미검증]`이다.** 기능은 사용자 토글 기본 OFF(`ProfileStore.isFullscreenAutoEnabled`)
+이며, 토글이 켜지기 전에는 `onWindowsChangedEvent` 최전방 선차단에서 끝나 코드가 한 줄도 실행되지
+않는다 — 그래서 미검증 상태로 병합해도 기존 동작 회귀가 0 이다.
+
+### 이 기능이 서 있는 실측 앵커 (기존 측정, 신규 아님)
+
+판정 술어(`FullscreenWindowJudge`)는 기존 프로브 3표본으로만 검증됐다. JVM 테스트 14~17번이 이
+표들의 bounds 를 리터럴로 동결한다.
+
+| 표본 | 파일 | 화면 | 판정 |
+|---|---|---|---|
+| 가로 몰입 재생(유튜브) | `probe_report_fullscreen.md` B절 | 2184×1968 | FULLSCREEN |
+| 세로 비몰입(엣지투엣지) | `probe_report.md` B절 | 1968×2184 | NOT_FULLSCREEN |
+| 분할 활성(세로 좌우) | `probe_report_split.md` B절 | 1968×2184 | NOT_FULLSCREEN |
+
+**주의 — 설계서 §2.1 표의 서술 정정:** `probe_report_split.md:49` 의
+`381,89,595,145 com.android.systemui` 는 type 열이 **APPLICATION** 이다. 설계서는 이 창이 (b)절
+(비-APP 상단 전폭)에서 폭 미달로 배제된다고 썼으나 실제로는 (a)절("전체 덮음 아님")에서 걸린다.
+최종 판정값과 D10 결론은 양쪽 모두 동일해 설계 변경은 불필요하며, 근거는 `FullscreenWindowJudgeTest`
+17번 KDoc 에 남겼다.
+
+### W0 — 사용자 토글을 켜기 전에 먼저 측정할 것 (강한 권고)
+
+logcat 만으로 수행 가능하다. 별도 프로브 빌드가 필요 없도록 신호 전이 로깅을 넣었다(설계서 §9):
+- `FWArranger` 태그의 `fullscreen signal: <prev> -> <next> screen=WxH appFull=n topBars=m`
+  — 전이에서만 발생. `appFull`/`topBars` 로 어느 절이 판정을 갈랐는지 재구성할 수 있다.
+- `FWArranger` 태그의 `fullscreen media probe: playing=<bool> usages=[...]`
+  — 미디어 판정이 바뀐 틱에서만 발생.
+두 로그 모두 토글 ON 상태에서만 나온다.
+
+| # | 항목 | 절차 | 결정하는 것 |
+|---|---|---|---|
+| W0-1 | 가로 몰입 재생(컨트롤 숨김) | 유튜브 가로 전체화면 → 컨트롤 사라진 뒤 logcat | 술어 성립 여부 |
+| W0-2 | 컨트롤 표시 상태 + 자동 숨김 소요 시간 | 화면 1탭 → 전이 로그 + 스톱워치 | `DEFAULT_ENTRY_DEBOUNCE_MS`(3000) 근거 |
+| W0-3 | 일시정지 + 컨트롤 표시 | 일시정지 후 전이 로그 | **D9** — `NOT_FULLSCREEN` 이면 `DEFAULT_EXIT_HOLD_MS` 를 컨트롤 표시 지속시간 이상으로 상향 |
+| W0-4 | **우리가 만든 가로 상하 분할** | 버블로 수동 배치 후 프로브 | **D8** — 이 구성의 창 목록은 한 번도 측정된 적이 없다 |
+| W0-5 | 알림 셰이드 개방 | 셰이드 내린 채 프로브 | 전폭 상단 비-APP 창 존재 확인 |
+| W0-6 | 상단 스와이프 transient bar | 몰입 중 상단 스와이프 → 전이 로그 + 자동 숨김 시간 | `DEFAULT_EXIT_HOLD_MS` 근거 |
+| W0-7 | `getActivePlaybackConfigurations()` 4상태 | 재생 / 일시정지 / 스트림 볼륨 0 / 앱내 음소거 각각의 `usages=` 로그 | **R5** — One UI 변형 + Android 14+ 뮤트 인지 필터. 항상 빈 목록이면 기능이 조용히 죽는다 |
+| W0-8 | Shorts 진입 시 `screenRect()` | Shorts 전체화면에서 `screen=` 로그 | 세로(1968×2184)면 게이트 5 가 자동 차단함을 확정 |
+
+### W1 — 구현 후 검증 (전량 미실시)
+
+W1-1 자동 발화 E2E · W1-2 **P-1 루프 부재**(배치→해제→복귀→5분 방치 + 셰이드 3회 개폐 + 일시정지/재생
+3회 → 재발화 0, `reason=latched` 확인) · W1-3 래치 해제(홈 이탈 후 복귀 시 1회 재발화) · W1-4 실패
+복구(BACK 주입으로 대상 앱 전면 복귀) · W1-5 서킷브레이커(2연속 실패 후 `reason=auto-disabled`) ·
+W1-6 `reason=bubble-off` · W1-7 사용자 토글 + 재부팅 후 유지 · W1-8 콜드스타트(몰입 재생 중 접근성
+서비스 재시작 → 즉시 발화 0) · W1-9 세로 영상(직캠) 발화 결과 육안(**D17** v1.5 입력) · W1-10 넷플릭스
+술어 값(발화는 `autoArrange=false` 로 차단됨을 로그로 확인) · W1-11 메인 스레드 부담 A/B(자동 트리거
+ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군 대비 미증가).
+
+절차 상세 = `docs/DESIGN_30_FULLSCREEN_AUTO.md` §6.
+
+### 미검증 상수
+
+`DEFAULT_EXIT_HOLD_MS`(1200) · `FULLSCREEN_TRIGGER_POLL_TIMEOUT_MS`(5000) ·
+`AUTO_RECOVERY_TIMEOUT_MS`(2500) · `AutoTriggerLedger.DEFAULT_MAX_FAIL_STREAK`(2).
+전부 KDoc 에 `[미검증]` 표기. 근거는 설계서 §4 표.

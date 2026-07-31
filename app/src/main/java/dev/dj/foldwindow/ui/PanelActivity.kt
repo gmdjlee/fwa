@@ -41,6 +41,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import dev.dj.foldwindow.data.ProfileStore
+import dev.dj.foldwindow.service.ArrangerAccessibilityService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -144,6 +145,12 @@ class PanelActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        // [#30, DESIGN_30_FULLSCREEN_AUTO.md §2.3] 우리 분할이 해제됐다는 신호. 이 지점이
+        // (a) 메뉴 "분할 해제" (b) 커버 화면 자동 해제 (c) 위 자가 가드 finish (d) 사용자의 BACK/
+        // 디바이더 드래그 네 경로를 **모두** 포착하는 유일한 지점이다 — 해제 직후 대상 앱이
+        // 전체화면으로 자동 복귀하며 만드는 진입 엣지가 곧바로 재발화로 이어지는 P-1 루프를
+        // 자동 트리거 장부(AutoTriggerLedger)의 재래치로 끊는다.
+        ArrangerAccessibilityService.instance?.onPanelDestroyed()
         super.onDestroy()
     }
 
