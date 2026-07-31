@@ -815,7 +815,7 @@ Task{6e775d5 #5025 A=1000:com.android.settings.root} mode=multi-window stage=mai
 
 ## 19차 — #27 v1 실기기 캠페인 (2026-07-28 밤)
 
-> 대상 빌드 `c252a01` (축 A + 축 B + #28). 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`
+> 대상 빌드 `c252a01` (축 A + 축 B + #28). 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`(캠페인 종결로 2026-07-31 제거 — git 이력에서 복원 가능)
 > 기기 SM-F966N(R3CY8029XBF), 내부 화면 1968×2184, 회전 free(잠금 미사용)
 
 ### 한 줄 결론

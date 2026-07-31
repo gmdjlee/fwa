@@ -33,13 +33,8 @@
 
 ## 시작하기
 
-```bash
-git init && git add -A && git commit -m "chore: scaffold"
-claude
-```
-
-첫 메시지로 `PROMPTS/PROMPT_00_bootstrap.md` 내용을 붙여넣는다.
-자세한 순서는 `docs/PHASE_RUNBOOK.md`.
+프로젝트 루트에서 `claude` 실행. 세션 간 상태는 `PROGRESS.md` 가 단일 출처다.
+빌드·검증 명령과 알려진 함정은 `CLAUDE.md`, 실기기 검증 절차는 `docs/DEVICE_VERIFICATION_RUNBOOK.md`.
 
 ## 구조
 
@@ -49,14 +44,13 @@ TASK.md                Phase별 작업과 완료 기준
 PROGRESS.md            현재 상태 — 세션 간 단일 출처
 docs/ADR.md            설계 결정 6건
 docs/DEVICE_FACTS.md   실기기 측정값
-docs/PHASE_RUNBOOK.md  실행 순서와 디버깅 체크리스트
+docs/DEVICE_VERIFICATION_RUNBOOK.md  실기기 검증 절차
 .claude/agents/        Worker 정의 4종
-PROMPTS/               번호순 프롬프트 시퀀스
 config/                앱별 프로파일 SSOT
 app/src/main/.../domain/    순수 Kotlin. android import 금지
 app/src/main/.../platform/  Android SDK 경계
-app/src/main/.../probe/     Phase 0 진단 (제거 가능하도록 격리)
-app/src/test/               JVM 단위 테스트 30개
+app/src/main/.../probe/     Phase 0 진단 (debug 빌드 전용으로 격리)
+app/src/test/               JVM 단위 테스트 322개
 ```
 
 ## 라이선스 / 배포
