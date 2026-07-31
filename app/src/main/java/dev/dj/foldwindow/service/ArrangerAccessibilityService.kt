@@ -30,6 +30,7 @@ import dev.dj.foldwindow.domain.CoverDismissPolicy
 import dev.dj.foldwindow.domain.FailureReason
 import dev.dj.foldwindow.domain.FlexModePolicy
 import dev.dj.foldwindow.domain.FoldPosture
+import dev.dj.foldwindow.domain.ForegroundSignalPolicy
 import dev.dj.foldwindow.domain.FullscreenPlaybackPolicy
 import dev.dj.foldwindow.domain.IntRect
 import dev.dj.foldwindow.domain.LetterboxDetector
@@ -149,6 +150,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
     @Volatile
     private var popupInFlight = false
 
+    /**
+     * [#31] [recoverAfterAutoFailure] 의 BACK 주입 + 조건 폴링 구간 표시.
+     * [ForegroundSignalPolicy.releasesLatch] 의 `sessionActive` 입력으로만 쓰인다.
+     *
+     * 왜 별개 플래그가 필요한가: 자동 세션이 실패하면 [dispatch] 가 [reportTerminal] 직후
+     * [cleanupSession] 으로 [machineState] 를 Idle 로 되돌리고, [sessionInFlight] 는 그보다도
+     * 훨씬 앞선 [beginSession] 반환 시점에 이미 false 다. 즉 복구 폴링이 도는
+     * [AUTO_RECOVERY_TIMEOUT_MS] 창 동안 기존 3개 플래그는 전부 "한가함"을 가리킨다 — 그 창에
+     * 도착하는 런처(Recents) 이벤트가 래치를 풀어버리면, 실패한 자동 세션이 스스로 재무장 엣지를
+     * 만들어 같은 실패를 반복하게 된다(설계서 D3 이 막으려던 시나리오).
+     */
+    @Volatile
+    private var autoRecoveryInFlight = false
+
     // ── P3-5 FoldingFeature 연동 (서비스 수명 전체 유지 — cleanupSession() 이 건드리지 않는다.
     // placement 결정 소스 스냅샷([Session.placementSource]) 만 예외로 세션 상태다, 아래 [Session] 참고) ──
     private val flexPolicy = FlexModePolicy()
@@ -161,7 +176,18 @@ class ArrangerAccessibilityService : AccessibilityService() {
      */
     private var hingeMonitor: HingeAngleMonitor? = null
 
-    /** 기본 런처 패키지. onServiceConnected() 에서 1회 해석 — 자동 트리거 게이트 5(포그라운드 부적합)의 제외 대상 */
+    /**
+     * 기본 런처 패키지. onServiceConnected() 에서 1회 해석 — 자동 트리거 게이트 5(포그라운드 부적합)의 제외 대상
+     *
+     * [#31] [onAccessibilityEvent] 의 래치 해제 판정([ForegroundSignalPolicy.releasesLatch])도
+     * **이 값을 그대로 재사용**한다. 그 이벤트는 최대 10Hz 급으로 들어오므로 거기서
+     * `PackageManager.resolveActivity` 를 다시 부르면 설계서 D12(메인 스레드 IPC 부담)를 정면으로
+     * 위반한다 — 새 캐시를 만들지 않고 기존 1회 해석 결과를 공유하는 이유다(게이트 5/8 의 동작은
+     * 그대로다). 해석 실패 시 null 이며, 그 경우 래치 재허용도 적용되지 않는다(fail-safe = 구 동작).
+     *
+     * 스레딩: 쓰기는 [onServiceConnected], 읽기는 [onAccessibilityEvent]·자동 트리거 평가·
+     * [foregroundPackageForExport] 로 전부 메인 스레드다.
+     */
     private var homePackage: String? = null
 
     // ── P4-3 커버 화면 전환 자동 분할 해제 (서비스 수명 전체 유지, flexPolicy 와 별개 정책 인스턴스) ──
@@ -334,16 +360,47 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString() ?: return
-            if (pkg != packageName && pkg !in EXCLUDED_FOREGROUND_PACKAGES) {
+            // [#31] 종전의 `?: return` 을 제거했다. 아래 두 판정을 **모두** 통과시켜야 하므로
+            // null 은 정책([ForegroundSignalPolicy])이 처리한다. 이 return 은 같은 이벤트 타입
+            // 안에서만 의미가 있었다 — 아래 TYPE_WINDOWS_CHANGED / TYPE_VIEW_CLICKED 분기는
+            // 동일한 `event.eventType` 을 서로 다른 상수와 `==` 로 비교하는 배타적 분기라,
+            // 이 분기에 들어온 이벤트는 애초에 그 둘을 만족할 수 없다(동작 변화 0).
+            val pkg = event.packageName?.toString()
+
+            if (ForegroundSignalPolicy.tracksAsForeground(pkg, packageName, EXCLUDED_FOREGROUND_PACKAGES)) {
                 // 포그라운드 추적은 배치 진행 중에도 계속 돈다. 세션은 시작 시점의 스냅샷
                 // ([Session.targetPackage])만 쓰므로 Recents 진입 중 런처가 잠깐 포그라운드가 돼도
                 // 세션이 오염되지 않는다.
                 lastForegroundPkg = pkg
-                // [#30, 설계서 D1] 자동 트리거 래치의 **유일한 시간 무관 해제 조건**. 래치 패키지를
-                // 실제로 떠났을 때만 풀린다(AutoTriggerLedger.onForeground 가 판정) — 여기서
-                // 이벤트를 흘려보내면 사용자가 다른 앱에 갔다 돌아와도 영영 자동 발화하지 않는다.
-                autoLedger.onForeground(pkg)
+            }
+
+            // [#30, 설계서 D1] 자동 트리거 래치의 **유일한 시간 무관 해제 조건**. 래치 패키지를
+            // 실제로 떠났을 때만 풀린다(AutoTriggerLedger.onForeground 가 판정) — 여기서
+            // 이벤트를 흘려보내면 사용자가 다른 앱에 갔다 돌아와도 영영 자동 발화하지 않는다.
+            //
+            // [#31, 21차 실측] 그 "흘려보냄"이 실제로 일어나고 있었다 — 추적용 제외 목록에
+            // 홈 런처가 들어 있어 「홈 → 복귀」 경로에서 이 호출 자체가 없었다(W1-3 불성립).
+            // 그래서 추적 신호와 해제 신호를 분리한다. sessionActive 는 우리 진입 경로가 지나는
+            // Recents(= 런처) 이벤트로 자동 세션이 스스로 래치를 푸는 것을 막는다(설계서 D3).
+            val sessionActive = machineState != ArrangeState.Idle ||
+                sessionInFlight || dismissInFlight || autoRecoveryInFlight
+            if (ForegroundSignalPolicy.releasesLatch(
+                    pkg,
+                    packageName,
+                    homePackage,
+                    EXCLUDED_FOREGROUND_PACKAGES,
+                    sessionActive,
+                )
+            ) {
+                // 조용한 실패 금지(CLAUDE.md): 래치 해제는 자동 재발화의 전제 조건인데 종전에는
+                // logcat 에 아무 흔적도 남지 않아, #31 의 원인 규명에 실기기 분리 실험이 필요했다.
+                //
+                // [#31 2차] 홈 여부를 장부에 그대로 넘긴다 — 이 이벤트가 **실제로** 래치를 푸는지는
+                // 래치의 기원(sticky = 분할 해제발)이 정하며, 그 판정은 순수 도메인
+                // ([AutoTriggerLedger.onForeground])에 있다. 서비스는 사실만 전달한다.
+                if (autoLedger.onForeground(pkg, isHome = pkg != null && pkg == homePackage)) {
+                    Log.i(TAG, "auto latch released: foreground=$pkg")
+                }
             }
         }
 
@@ -2402,7 +2459,19 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 // [#30 D15] 실패한 자동 세션이 사용자를 Recents/분할 피커에 유기하지 않도록
                 // 복구를 시도한다. reportTerminal 본문에는 중단점이 없어야 하므로(Session 읽기 규약
                 // 의 유일한 예외 조건) 별도 코루틴으로 내보낸다.
-                scope.launch { recoverAfterAutoFailure(pkg) }
+                //
+                // [#31] 플래그는 launch **밖에서** 세운다 — 안에서 세우면 코루틴 본문이 실제로
+                // 시작되기 전에 도착한 이벤트가 이 구간을 "한가함"으로 오인할 수 있다.
+                // 해제는 반드시 finally 로 — 예외/취소로 이탈해도 플래그가 영구히 남으면
+                // 이후 모든 래치 해제가 조용히 막힌다.
+                autoRecoveryInFlight = true
+                scope.launch {
+                    try {
+                        recoverAfterAutoFailure(pkg)
+                    } finally {
+                        autoRecoveryInFlight = false
+                    }
+                }
             }
 
             else -> Unit

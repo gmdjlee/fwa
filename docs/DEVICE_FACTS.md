@@ -1384,7 +1384,7 @@ ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군
 |---|---|---|---|
 | W1-1 | 자동 발화 E2E | ✅ | 엣지 → +3.007s `media probe playing=true usages=[1]` → `fullscreen auto-arrange trigger` → `startArrange … trigger=FULLSCREEN_AUTO` → 3.9s 후 `arrange done: verified=true residual=0 trigger=FULLSCREEN_AUTO` + `auto arrange result (토스트 억제)`(D19) |
 | W1-2 | **P-1 루프 부재** | ✅ | 분할 해제 직후 복귀 엣지 + 셰이드 3회 + 상단 스와이프 3회 = **진입 엣지 6회 전부 `reason=latched`, 발화 0**. 일시정지/재생 3회는 **창 목록이 안 바뀌어 신호 전이 자체가 없었다** |
-| W1-3 | 래치 해제(홈 왕복) | ❌ **결함 #31** | 아래 절 |
+| W1-3 | 래치 해제(홈 왕복) | ❌ **결함 #31** → 22차에서 수정·재검증 ✅ | 아래 절 + 「22차」 절 |
 | W1-4 | 실패 복구 | △ 부분 | `arrange failed: reason=ENTRY_STEP_FAILED trigger=FULLSCREEN_AUTO` → `auto recovery: 2500ms 내 대상 앱 전면 복귀 미확인 — 추가 주입 없이 종료`. 사전 가드·BACK 주입·데드라인·무한주입 방지는 동작하나 **복귀 성공은 미관측**(유도 방법이 HOME 주입이라 BACK 으로 돌아갈 스택이 없다 — Recents 체류형 실패에서의 복귀는 여전히 [미검증]) |
 | W1-5 | 서킷브레이커 | ✅ | 2연속 실패 후 `reason=auto-disabled pkg=com.google.android.youtube streak=2`. **수동 버블 탭 1회로 스트릭이 풀려** 자동 발화가 복귀하는 것까지 확인 |
 | W1-6 | bubble-off | ✅ (문구 델타) | 버블 중지 상태에서 엣지 유도 → **로그 0줄·발화 0**. 명세가 기대한 `reason=bubble-off` 는 **나오지 않는다** — `onWindowsChangedEvent` 최전방 선차단이 게이트 3 보다 먼저 끊기 때문. 게이트 3 은 "무장 후 3s 디바운스 사이에 버블이 꺼진 경우"에만 도달 가능하다 |
@@ -1426,6 +1426,76 @@ W1-3 명세(「홈 → 복귀 → 재발화 1회」)가 **성립하지 않는다
 (2026-07-25 실측 근거, 함정 #7). 래치용 포그라운드 신호를 `lastForegroundPkg` 추적과 **분리**하는
 것이 옳다 — 예: 배치 세션이 돌지 않는 동안(`machineState == Idle && !sessionInFlight`)에만 런처를
 포함한 전체 패키지를 `autoLedger.onForeground` 에 흘린다.
+
+> **→ 22차(같은 날)에서 수정 완료.** 위 방향의 1차 구현이 **P-1 루프를 회귀시켰고**(분할 해제
+> 전환 중 One UI 가 노출하는 런처가 재래치를 즉시 풀었다), 최종 해법은 **래치를 두 종류로 나누는
+> 것**이었다. 아래 「22차」 절 참조.
+
+---
+
+## 22차 — 결함 #31 수정 + P-1 회귀 발견·재수정 (2026-08-01, 같은 세션)
+
+### 한 줄 결론
+
+**#31 은 「런처를 래치 해제 신호로 재허용」 하나로는 못 고친다.** 1차 수정이 곧바로 P-1 루프를
+회귀시켰고, 실측이 그것을 잡았다. 최종 해법 = **래치의 종류를 구분**(`AutoTriggerLedger.latchSticky`).
+시간창은 쓰지 않았다(D2 가 이미 기각한 접근).
+
+### 1차 수정과 그 회귀 (실측)
+
+1차 = `ForegroundSignalPolicy` 신설(추적 신호 / 해제 신호 분리) + 홈 런처를 해제 신호로 재허용 +
+세션 가드(`machineState != Idle || sessionInFlight || dismissInFlight || autoRecoveryInFlight`).
+`#31` 자체는 고쳐졌다(`auto latch released: foreground=com.sec.android.app.launcher` → 재발화 1회).
+
+**그런데 분할 해제에서 P-1 루프가 되살아났다:**
+
+```
+07:02:56.698 fullscreen signal: FULLSCREEN -> NOT_FULLSCREEN appFull=1 topBars=1
+07:02:57.004 auto latch released: foreground=com.sec.android.app.launcher   ← 방금 건 재래치가 풀림
+07:02:59.662 fullscreen signal: NOT_FULLSCREEN -> FULLSCREEN appFull=1 topBars=0
+07:03:02.675 fullscreen auto-arrange trigger: target=com.google.android.youtube   ← 즉시 재발화
+```
+
+원인: **분할 해제 시 One UI 가 전환 중 홈 런처를 잠깐 노출한다.** `PanelActivity.onDestroy` →
+`onSplitDismissed()` 가 재래치를 건 **0.3초 뒤** 그 런처 이벤트가 도착해 재래치를 푼다.
+`dismissInFlight` 는 그 시점에 이미 false 라 세션 가드가 덮지 못한다.
+
+**시간창(grace period)은 해법이 될 수 없다** — 설계서 D2 가 「해제→재진입 간격은 사용자 페이스라
+창 크기를 정할 근거가 원리상 없다」로 이미 기각했고 ADR-2 위반이다.
+
+### 최종 해법 — 래치 2종 (`AutoTriggerLedger.latchSticky`, 순수 도메인)
+
+`onSplitDismissed()` 가 거는 래치는 **sticky** 라 **홈 런처로는 풀리지 않는다**.
+`onAutoFired()` 가 거는 래치는 non-sticky 라 홈으로 풀린다. 판정 전부가 도메인 안에 있어
+JVM 테스트로 동결된다(서비스에 새 상태 플래그 0개 추가).
+
+### 실기기 재검증 — 4행 전부 통과
+
+| # | 경로 | 래치 | 기대 | 실측 |
+|---|---|---|---|---|
+| 1 | 자동 배치 → **홈** → 복귀 → 몰입 | non-sticky | 재발화 1회 | ✅ `auto latch released: foreground=com.sec.android.app.launcher` → `arrange done … trigger=FULLSCREEN_AUTO` |
+| 2 | 자동 배치 → **분할 해제** → 전환 중 런처 블립 | sticky | 재발화 0 | ✅ `panel destroyed — 재래치` 후 `latch released` **0건**, 재진입 엣지에서 `reason=latched`, 발화 **0건** |
+| 3 | 해제 → **Chrome** → 복귀 → 몰입 | sticky | 재발화 1회 | ✅ `auto latch released: foreground=com.android.chrome` → `arrange done … trigger=FULLSCREEN_AUTO` |
+| 4 | 해제 → **홈** → **같은 앱** 복귀 → 몰입 | sticky | 재발화 0 | ✅ 홈 왕복 2회 유도, `latch released` 0건 · 발화 0건 · `reason=latched` 2회 |
+| — | 4행의 **탈출구**: 버블 탭 | — | 수동 배치 성공 | ✅ `startArrange … trigger=MANUAL` → `arrange done … trigger=MANUAL`(설계서 R7 생존) |
+
+4행은 **의도된 비대칭**이다 — 분할 해제는 "이 배치를 원하지 않는다"는 사용자의 명시적 신호이므로
+(D2), 같은 앱으로 그냥 돌아오는 것만으로 자동화를 재신뢰하지 않는다. 탈출구는 버블 탭이다.
+
+### 부수 관측
+
+- **자동 배치가 성공한 직후에도 런처 이벤트가 늦게 도착해 non-sticky 래치를 푼다**
+  (`arrange done` 07:17:17 → `latch released: launcher` 07:17:19, 1.7초 뒤). 진입 경로가 지나간
+  Recents 의 잔여 이벤트다. 그 시점엔 분할이 활성이라 술어가 NOT_FULLSCREEN 이므로 진입 엣지가
+  생기지 않고, 이후 해제 시 `onSplitDismissed` 가 sticky 로 다시 건다 — **무해**하다. 다만 자동
+  세션이 **실패**한 경우에는 같은 잔여 이벤트가 D3(연속 실패 억제)를 갉을 수 있어
+  `autoRecoveryInFlight`(2.5s) 가드가 그 창을 덮는다. 관측된 지연 1.7s < 2.5s.
+- 한 세션에서 `arrange done: verified=true residual=212 adjusted=true` 가 1회 나왔다(재생 중 콘텐츠
+  변화로 보정 후에도 잔여가 허용치를 넘음). W5-F9 의 「허용치 초과」 부기 경로에 해당한다.
+
+### 기기 잔여 상태 (22차 종료)
+
+분할 해제 · 홈 화면 · 세로 회전. **사용자 토글은 계속 켜짐**(기본값은 꺼짐).
 
 ### 부수 관측
 
