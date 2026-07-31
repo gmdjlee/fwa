@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- P3-1 버블 아이콘. 큰 창 + 작은 창 두 사각형으로 "분할 재배치"를 상징한다. -->
+<!-- P3-1 버블 아이콘. 큰 창 + 우하단으로 삐져나온 작은 창(둥근 모서리)으로 "분할 재배치"를 상징한다.
+     유기적 디자인 톤에 맞춰 각진 프레임 대신 둥근 사각형 두 개를 겹치는 형태로 갱신(ic_launcher_foreground
+     글리프와 동일 구성). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -7,8 +9,8 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M4,4h16v6h-2V6H6v12h6v2H4z" />
+        android:pathData="M5.5,5 H14.5 A1.5,1.5 0 0 1 16,6.5 V11.5 A1.5,1.5 0 0 1 14.5,13 H5.5 A1.5,1.5 0 0 1 4,11.5 V6.5 A1.5,1.5 0 0 1 5.5,5 Z" />
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M13,13h7v7h-7z" />
+        android:pathData="M13.5,11 H17.5 A1.5,1.5 0 0 1 19,12.5 V16.5 A1.5,1.5 0 0 1 17.5,18 H13.5 A1.5,1.5 0 0 1 12,16.5 V12.5 A1.5,1.5 0 0 1 13.5,11 Z" />
 </vector>

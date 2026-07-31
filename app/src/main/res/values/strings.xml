@@ -39,6 +39,7 @@
 
     <!-- P3-4: OnboardingActivity -->
     <string name="onboarding_title">FoldWindow 시작하기</string>
+    <string name="onboarding_subtitle">영상 비율에 맞는 분할 배치를 원터치로</string>
     <string name="onboarding_permission_overlay_title">다른 앱 위에 표시</string>
     <string name="onboarding_permission_overlay_desc">화면 위에 버블을 띄우기 위해 필요합니다.</string>
     <string name="onboarding_permission_accessibility_title">접근성 서비스</string>

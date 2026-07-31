@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- P3-1 포그라운드 알림 small icon. ic_bubble 과 동일 모티프(분할 창 아이콘), 상태바 흰색 실루엣 규칙 준수. -->
+<!-- P3-1 포그라운드 알림 small icon. ic_bubble 과 동일 모티프(둥근 분할 창 아이콘), 상태바 흰색 실루엣 규칙 준수
+     (색상/그라데이션 없이 순수 흰색 실루엣만 유지). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -7,8 +8,8 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M4,4h16v6h-2V6H6v12h6v2H4z" />
+        android:pathData="M5.5,5 H14.5 A1.5,1.5 0 0 1 16,6.5 V11.5 A1.5,1.5 0 0 1 14.5,13 H5.5 A1.5,1.5 0 0 1 4,11.5 V6.5 A1.5,1.5 0 0 1 5.5,5 Z" />
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M13,13h7v7h-7z" />
+        android:pathData="M13.5,11 H17.5 A1.5,1.5 0 0 1 19,12.5 V16.5 A1.5,1.5 0 0 1 17.5,18 H13.5 A1.5,1.5 0 0 1 12,16.5 V12.5 A1.5,1.5 0 0 1 13.5,11 Z" />
 </vector>

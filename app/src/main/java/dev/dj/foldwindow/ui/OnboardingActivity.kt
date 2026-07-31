@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
@@ -16,15 +17,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,6 +50,7 @@ import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.service.ArrangerAccessibilityService
 import dev.dj.foldwindow.service.FloatingLauncherService
 import dev.dj.foldwindow.service.ShizukuShell
+import dev.dj.foldwindow.ui.theme.FoldWindowTheme
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,6 +87,10 @@ class OnboardingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // targetSdk 36 은 edge-to-edge 를 강제한다 — 명시적으로 켜서 상태바 아이콘 명암을
+        // 라이트/다크 배경에 맞게 시스템이 자동 조정하게 한다(상태바 밑에 콘텐츠가 깔리는
+        // 사용자 제보 버그의 원인은 인셋 처리 누락이었다. 아래 windowInsetsPadding 참고).
+        enableEdgeToEdge()
 
         notificationPermissionLauncher =
             registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -86,8 +98,11 @@ class OnboardingActivity : ComponentActivity() {
             }
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            FoldWindowTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
                     OnboardingScreen(
                         overlayGranted = overlayGranted,
                         accessibilityGranted = accessibilityGranted,
@@ -220,10 +235,21 @@ private fun OnboardingScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+            // 상태바/내비게이션 바 밑으로 콘텐츠가 깔리지 않도록 안전 영역만큼 패딩을 준다
+            // (enableEdgeToEdge() 로 인해 Surface 는 이미 전체 화면을 차지한다).
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(text = stringResource(R.string.onboarding_title), style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = stringResource(R.string.onboarding_title),
+            style = MaterialTheme.typography.headlineMedium,
+        )
+        Text(
+            text = stringResource(R.string.onboarding_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         PermissionCard(
             title = stringResource(R.string.onboarding_permission_overlay_title),
@@ -251,13 +277,21 @@ private fun OnboardingScreen(
         )
 
         val bubbleReady = overlayGranted && accessibilityGranted
-        Button(onClick = onToggleBubble, enabled = bubbleReady, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = onToggleBubble,
+            enabled = bubbleReady,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(28.dp),
+        ) {
             Text(
                 text = if (bubbleRunning) {
                     stringResource(R.string.onboarding_bubble_stop)
                 } else {
                     stringResource(R.string.onboarding_bubble_start)
                 },
+                style = MaterialTheme.typography.titleMedium,
             )
         }
         Text(
@@ -267,9 +301,10 @@ private fun OnboardingScreen(
                 stringResource(R.string.onboarding_bubble_stopped)
             },
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        HorizontalDivider()
+        Spacer(modifier = Modifier.height(4.dp))
 
         Text(text = stringResource(R.string.onboarding_guide_title), style = MaterialTheme.typography.titleMedium)
         GuideCard(text = stringResource(R.string.onboarding_guide_usage))
@@ -288,43 +323,95 @@ private fun PermissionCard(
     granted: Boolean,
     onClick: () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+    // 허용됨 → 세이지 프라이머리 컨테이너를 옅게, 필요함 → 서프리스 변형 톤 — 두 상태 모두
+    // 경고성이 아니라 은은한 오가닉 카드로 표현한다.
+    val containerColor = if (granted) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = if (granted) {
-                        stringResource(R.string.onboarding_action_granted)
-                    } else {
-                        stringResource(R.string.onboarding_action_required)
-                    },
-                    color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelLarge,
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
                 )
+                Spacer(modifier = Modifier.width(8.dp))
+                StatusPill(granted = granted)
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = description, style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (!granted) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = onClick) { Text(stringResource(R.string.onboarding_action_grant)) }
+                Spacer(modifier = Modifier.height(12.dp))
+                FilledTonalButton(onClick = onClick) { Text(stringResource(R.string.onboarding_action_grant)) }
             }
         }
     }
 }
 
+/** 권한 카드 우측 상단 상태 표시 — 완전히 둥근(50%) 알약 모양 칩. */
+@Composable
+private fun StatusPill(granted: Boolean) {
+    val containerColor = if (granted) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val contentColor = if (granted) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = containerColor,
+        contentColor = contentColor,
+    ) {
+        Text(
+            text = if (granted) {
+                stringResource(R.string.onboarding_action_granted)
+            } else {
+                stringResource(R.string.onboarding_action_required)
+            },
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}
+
 @Composable
 private fun GuideCard(title: String? = null, text: String) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        ),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
             if (title != null) {
                 Text(text = title, style = MaterialTheme.typography.titleSmall)
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
-            Text(text = text, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
