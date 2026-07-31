@@ -1390,9 +1390,9 @@ ON 상태 수동 배치 20회 → `ENTRY_STEP_FAILED` 발생률이 OFF 대조군
 | W1-6 | bubble-off | ✅ (문구 델타) | 버블 중지 상태에서 엣지 유도 → **로그 0줄·발화 0**. 명세가 기대한 `reason=bubble-off` 는 **나오지 않는다** — `onWindowsChangedEvent` 최전방 선차단이 게이트 3 보다 먼저 끊기 때문. 게이트 3 은 "무장 후 3s 디바운스 사이에 버블이 꺼진 경우"에만 도달 가능하다 |
 | W1-7 | 재부팅 후 유지 | ✅ | 재부팅 후 `arranger service connected` + **`fullscreen auto snapshot: lever=true userToggle=true enabled=true`**(DataStore 유지) + `FloatingLauncherService` 자동 기동(BootReceiver). 콜드스타트 첫 신호는 홈 화면의 `UNKNOWN -> NOT_FULLSCREEN` 이고 **부팅~첫 조작 사이 발화 0**. 이어서 가로 몰입 진입 → `arrange done: verified=true residual=0 trigger=FULLSCREEN_AUTO` 로 **E2E 까지 재확인** |
 | W1-8 | 콜드스타트 | ✅ | 몰입 재생 중 접근성 서비스 off→on → `arranger service connected` + 스냅샷 로그만, **신호 전이·발화 0**(20s 관측). 「화면이 정적이면 창 이벤트가 아예 오지 않는다」는 설계 전제도 함께 확인 |
-| W1-9 | 세로 영상(직캠) | [미검증] | 미실시 |
+| W1-9 | 세로 영상(직캠) | ✅ **D17 예측 재현** | 「23차」 절 — 영상 면적 **61% 축소**인데 `verified=true residual=0` 으로 성공 보고 |
 | W1-10 | 넷플릭스 술어 | ✅ | 재생 중 `signal … appFull=1 topBars=0`(FULLSCREEN) → `reason=not-auto-target pkg=com.netflix.mediaclient`. `usages=[1, 1]` 로 다중 활성 재생 관측도 확인 |
-| W1-11 | 메인 스레드 A/B | [미검증] | 미실시. 다만 이 캠페인에서 자동 ON 상태로 돌린 세션 8회 중 **인위적으로 방해한 2회를 제외하면 `ENTRY_STEP_FAILED` 0건** |
+| W1-11 | 메인 스레드 A/B | ✅ | 「23차」 절 — 수동 배치 ON 20회 / OFF 20회, `ENTRY_STEP_FAILED` **0 : 0** · 40/40 `verified=true residual=0`. (21차 관측: 자동 ON 세션 8회 중 인위 방해 2회 제외 시 0건) |
 
 ### ⚠ 신규 결함 #31 — 홈 경유로는 자동 트리거 래치가 풀리지 않는다
 
@@ -1519,3 +1519,129 @@ JVM 테스트로 동결된다(서비스에 새 상태 플래그 0개 추가).
 - 유튜브 자동재생 = 켜짐(측정 편의로 켰음).
 - 재부팅 1회 수행(W1-7). 재부팅 직후 USB 재열거 실패 → 케이블 재연결로 복구(메모리 함정 #3 재현).
   재연결 후 W1-7 측정 완료, 분할 해제 및 세로 회전 복원까지 마쳤다.
+
+---
+
+## 23차 — W1-9·W1-11 소화 + 열축 판별자 오탐 발견 (2026-08-01)
+
+### 한 줄 결론
+
+W1 잔여 2항목을 닫았다. **W1-11 은 무해(0:0)** 로 통과했고, **W1-9 는 D17 이 예측한
+「세로 영상 61% 축소」를 정확히 재현**했다. 그 과정에서 **v1.5 D17 게이트가 쓰려던 열축
+판별자가 앰비언트 조명 앞에서 0 을 낸다**는 것을 픽셀 단위로 확인했다 — 이 발견이 이 차수의
+가장 값어치 있는 산출물이다. **코드 변경 0.**
+
+### 전제
+
+- 앱 = HEAD `debdb8a`. APK 07:11 빌드 · 설치 07:13 · `assembleDebug` UP-TO-DATE · 워킹트리 clean
+  → **설치본 = HEAD 소스** 확정(21차의 「구버전 설치본」 함정 재발 방지 절차).
+- 기기 = `OPENED`(내부 1968×2184 ON, 커버 OFF), 가로 = `wm user-rotation lock 1`.
+- 사용자 토글 `전체화면 자동 배치` = 켜짐(22차 종료 상태 그대로).
+- DoD 3종 비차단 재확인: 테스트 **372**(`--rerun` 강제 재실행, failures 0 · errors 0 · skipped 0) ·
+  `assembleDebug` · `lintDebug`(신규 0, `lint-baseline.xml` 무변경 · 15건 필터).
+
+### W1-9 세로 영상(직캠) 자동 발화 — ✅ D17 예측 재현
+
+대상 = `[안방1열 직캠4K] 있지 채령 'Motto' (ITZY CHAERYEONG FanCam)`(9:16 세로 업로드),
+가로 전체화면 2184×1968.
+
+```
+fullscreen signal: NOT_FULLSCREEN -> FULLSCREEN screen=2184x1968 appFull=1 topBars=0
+fullscreen media probe: playing=true usages=[1]
+fullscreen auto-arrange trigger: target=com.google.android.youtube
+startArrange: target=com.google.android.youtube trigger=FULLSCREEN_AUTO source=active-window
+measure[pre/rows]: 밴드 없음 residual=0px
+arrange decision: aspectSource=CACHED aspect=1.7777778 placement=BOTTOM
+                  placementSource=LAST_SUCCESS dividerCenterY=732 preMeasure=none
+verify: residualRows=0px residualCols=0px
+arrange done: verified=true residual=0 adjusted=false trigger=FULLSCREEN_AUTO
+auto arrange result (토스트 억제): 배치 완료 · 잔여 0px
+```
+
+**인과가 로그에 그대로 보인다.** 행축 pre-measure 가 세로 영상에서 밴드를 못 찾고(`밴드 없음`)
+캐시된 16:9 로 계획한다 → 하단 페인이 16:9 기준으로 잡히고, 그 안에서 9:16 영상이 다시
+필러박스된다.
+
+| 구간 | 영상 표시 영역 | 면적 |
+|---|---|---|
+| 발화 전(가로 전체화면) | 1107 × 1968 | 2,178,576 px² |
+| 발화 후(하단 페인 안) | 689 × 1228 (육안 실측) | 846,092 px² |
+
+→ **면적비 0.388 = 61.2% 축소.** 설계서 R3 의 「61% 작아진다」와 일치한다.
+그런데 앱은 `verified=true residual=0` 으로 **성공**을 보고한다. 사용자에게 보이는 유일한
+되돌리기 경로는 버블 롱프레스 → 「분할 해제」(D20 안내 카드)뿐이다.
+
+**토스트 문구 = `배치 완료 · 잔여 0px`. 화면에는 뜨지 않는다**(D19 자동 세션 억제) —
+logcat 에 `auto arrange result (토스트 억제):` 접두로만 남는다.
+
+**유도 절차(재현용).** 유튜브 검색의 세로 썸네일을 그냥 누르면 **Shorts 플레이어로 열리고
+전체화면 버튼이 없어 이 경로로는 유도 불가**다. 「세로 직캠」 검색 → 재생목록 진입 →
+칩 필터 **「동영상」**(Shorts 배제) → 일반 워치 페이지의 세로 업로드 영상 → 컨트롤 표시 탭 →
+전체화면 버튼. 컨트롤은 ≈2.2s 만에 숨으므로 **`input tap`(표시) 과 `input tap`(전체화면)을
+같은 `adb shell` 호출 안에서 연속 실행**해야 한다(별도 호출로 나누면 왕복 지연에 컨트롤이 먼저 사라진다).
+
+### ⚠ 신규 사실 — 열축 필러박스 판별자가 앰비언트 조명에서 0 을 낸다
+
+W1-9 세션의 `verify: residualCols=0px` 는 **오탐**이다. 같은 화면의 좌우 띠는 육안·측정 모두
+**각 ≈745px** 다. 원인을 픽셀로 특정했다(`adb exec-out screencap -d <inner-id>` raw, 헤더 16B + RGBA):
+
+| 지점 | RGB | 휘도 | `darkLuma ≤ 24` |
+|---|---|---|---|
+| 좌측 띠 (200,1000) | 57,49,52 | ≈52 | ❌ |
+| 좌측 띠 (400,1600) | 57,49,52 | ≈52 | ❌ |
+| 우측 띠 (1750,300) | 66,55,59 | ≈60 | ❌ |
+| 영상 내부 (1100,1000) | 129,138,165 | ≈139 | — |
+
+유튜브 앰비언트 조명이 띠를 영상 색으로 물들여 **휘도 52~60** 이 된다. `ScreenshotSampler`
+기본 `darkLuma = 24` 를 넘으므로 colDarkRatio ≈ 0 이고, `DEFAULT_DARK_ROW_THRESHOLD = 0.97`
+에 한참 못 미쳐 `residualBars()` 가 `(0,0)` 을 반환한다.
+
+**v1.5 D17 게이트에 대한 함의 — 새 판별자를 만들 필요가 없다.**
+- `LetterboxDetector.detectHybrid()` 는 이미 순흑 실패 시 `adaptiveDetect()` 로 폴백하고,
+  `ADAPTIVE_MAX_BAR_LUMA = 90` 이라 실측 52~60 을 **덮는다**.
+- `Bitmap.toPillarboxScan()` 은 `rowMeanLuma`/`rowLumaVariance` 를 **이미 채운다**
+  (`ScreenshotSampler.kt:200-205`) → `hasLumaStats == true`.
+- 빠진 곳은 하나다: verify 가 부르는 **`residualBars()`(`LetterboxDetector.kt:157`) 에만
+  적응형 폴백이 없다.** 최소 수정은 여기에 `detectHybrid` 와 같은 폴백을 다는 것이다.
+
+즉 PROGRESS §C 가 「올바른 판별자는 열축 양성 스캔인데 미구현」이라고 적어 둔 항목은
+**미구현이 아니라 미연결**이다. (v1.5 범위 — v1 은 로그 보고만 한다는 DESIGN_12 §3.4/§7 결정 유지.)
+
+### W1-11 메인 스레드 A/B — ✅ 증가 없음
+
+**절차.** 유튜브 가로 전체화면 + 자동 래치가 걸린 상태(= 자동 발화 0)에서 **버블 탭으로 수동
+배치 → 종료 대기 → 롱프레스 메뉴 「분할 해제」** 를 1사이클(≈10s)로 반복. 자동 토글만 바꾼
+두 암을 각각 20회.
+
+| 암 | 세션 | `ENTRY_STEP_FAILED` | 그 외 `Failed(reason=)` | `verified=true residual=0` | trigger |
+|---|---|---|---|---|---|
+| 자동 **ON** | 20 | **0** | 0 | 20/20 | `MANUAL` ×20 |
+| 자동 **OFF**(대조군) | 20 | **0** | 0 | 20/20 | `MANUAL` ×20 |
+
+**두 암이 실제로 달랐다는 양방향 증거** — 토글 OFF 상태에서 창 churn(`APP_SWITCH`→`BACK`)을
+일으키면 `fullscreen signal` 로그 **0건**, 토글 ON 으로 되돌리고 같은 churn 을 주면 **2건**.
+즉 OFF 암에서는 판정 코드가 실제로 한 줄도 돌지 않았다(W1-6 의 「최전방 선차단」과 같은 경로).
+
+→ **R6(메인 스레드 IPC 증가)는 40세션 표본에서 관측 가능한 열화를 만들지 않는다.**
+다만 이 표본은 `EntryRecipe.DRAG`(리사이저블) 경로 40회이며, `DividerPopupRotator` 를 타는
+UNRESIZEABLE 경로는 이 차수에 포함되지 않았다.
+
+### 부수 관측
+
+- **분할 해제 후 유튜브는 스스로 가로 전체화면으로 복귀한다**(`dismissSplit: 성공` →
+  `panel destroyed — 자동 트리거 재래치` → 0.2s 뒤 `NOT_FULLSCREEN -> FULLSCREEN`). 이어지는
+  진입 엣지는 **sticky 래치**에 막혀 `reason=latched` 로 떨어진다 — 22차 4행의 실동작 재확인이며,
+  40사이클 내내 자동 발화 0건으로 유지됐다.
+- 버블 롱프레스 메뉴는 **분할 활성/비활성에서 항목 구성·좌표가 동일**하다(「팝업으로 열기」는
+  Shizuku 미기동이라 양쪽 모두 부재). 스크립트로 좌표 고정 조작이 가능하다.
+- **`adb exec-out screencap` 은 폴드에서 `-d <display-id>` 가 필수**다. 생략하면 stdout 최상단에
+  `[Warning] Multiple displays were found…` 2줄이 섞여 PNG 가 깨진다. 내부 화면 id 는
+  `dumpsys SurfaceFlinger --display-id` 로 얻는다(이 기기 = `4630946449689556883`, 커버 =
+  `4630946872173396372`).
+
+### 기기 잔여 상태 (23차 종료)
+
+- **사용자 토글 `전체화면 자동 배치` = 켜짐**(캠페인 전 상태로 복원 완료. 기본값은 꺼짐).
+- 분할 해제됨. 유튜브가 가로 전체화면으로 재생목록 재생 중, 자동 래치 sticky.
+- 회전 = `wm user-rotation lock 1`(가로 고정) **미복원** — 세로로 되돌리려면
+  `adb shell wm user-rotation lock 0` 또는 `wm user-rotation free`.
