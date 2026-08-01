@@ -49,8 +49,8 @@ docs/DEVICE_VERIFICATION_RUNBOOK.md  실기기 검증 절차
 config/                앱별 프로파일 SSOT
 app/src/main/.../domain/    순수 Kotlin. android import 금지
 app/src/main/.../platform/  Android SDK 경계
-app/src/main/.../probe/     Phase 0 진단 (debug 빌드 전용으로 격리)
-app/src/test/               JVM 단위 테스트 322개
+app/src/main/.../probe/     Phase 0 진단 (매니페스트 선언만 debug 소스셋으로 격리 — 소스는 main)
+app/src/test/               JVM 단위 테스트 372개
 ```
 
 ## 라이선스 / 배포
