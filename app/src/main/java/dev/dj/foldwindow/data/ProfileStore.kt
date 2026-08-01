@@ -114,18 +114,23 @@ class ProfileStore(context: Context) {
      * (예: 중첩된 `withTimeout`) 명시적으로 발생한 취소류 예외를 취소가 아닌 일반 예외로 오인해
      * 삼키지 않도록 유지한다 — `NonCancellable` 자체는 외부 취소 신호를 차단할 뿐, 이런 예외의
      * 전파 경로를 바꾸지 않는다.
+     *
+     * 반환값 = 쓰기 성공 여부. 대부분의 호출부는 fire-and-forget 이라 이 값을 무시하지만,
+     * [savePanelMemo] 처럼 결과를 **사용자에게 표시**해야 하는 호출부는 이 값을 그대로 전달한다
+     * (실패를 삼킨 채 "저장됨"이라고 표시하면 그게 곧 조용한 실패다).
      */
-    private suspend fun safeWrite(block: suspend () -> Unit) {
+    private suspend fun safeWrite(block: suspend () -> Unit): Boolean =
         withContext(NonCancellable) {
             try {
                 block()
+                true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "DataStore 쓰기 실패 — 무시(다음 성공한 쓰기가 있을 때까지 이전 값 유지)", e)
+                false
             }
         }
-    }
 
     suspend fun isBubbleEnabled(): Boolean =
         safeRead(false) { appContext.fwaDataStore.data.first()[KEY_BUBBLE_ENABLED] ?: false }
@@ -233,10 +238,14 @@ class ProfileStore(context: Context) {
             emit("")
         }
 
-    /** [ProfileStoreMapping.sanitizePanelMemo] 로 상한을 적용한 뒤 저장한다(호출부가 원본을 그대로 넘겨도 안전) */
-    suspend fun savePanelMemo(text: String) {
+    /**
+     * [ProfileStoreMapping.sanitizePanelMemo] 로 상한을 적용한 뒤 저장한다(호출부가 원본을 그대로
+     * 넘겨도 안전). **디스크에 실제로 쓰였을 때만 true** — 호출부(PanelActivity)가 이 값으로
+     * 저장 표시/실패 표시를 가른다.
+     */
+    suspend fun savePanelMemo(text: String): Boolean {
         val sanitized = ProfileStoreMapping.sanitizePanelMemo(text)
-        safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_PANEL_MEMO] = sanitized } }
+        return safeWrite { appContext.fwaDataStore.edit { prefs -> prefs[KEY_PANEL_MEMO] = sanitized } }
     }
 
     /**

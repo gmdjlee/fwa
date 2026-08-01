@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P4-2 패널 모드 전환: 시계. 채움 링(두께 2.1, evenOdd 로 가운데를 뚫음) + 둥근 캡 바늘.
+     바늘 두께는 이 앱의 표준 획 굵기 1.6 을 따른다(ic_menu_* 전부 1.6). 광학 상자는 3..21.
+
+     바늘 길이: 분침 4.1(12,12→12,7.9) / 시침 3.1(12,12→15.1,12), 비 0.76.
+     **여백 대칭보다 길이 대비를 택한 결과다.** 끝 여백(둥근 캡 0.8 포함, 안쪽 링 반지름 6.9
+     기준)은 분침 2.0 / 시침 3.0 으로 비대칭이지만, 20dp 로 줄면 사람이 이 아이콘을 시계로
+     읽는 근거는 여백 대칭이 아니라 **두 바늘의 길이 차**다. 여백을 맞추려고 시침을 15.9 까지
+     늘렸더니(비 0.95) 길이가 같은 두 획 = 시계가 아니라 "L" 로 보였다 — 되돌린 이유다. -->
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,3 a9,9 0 1,0 0,18 a9,9 0 1,0 0,-18 z M12,5.1 a6.9,6.9 0 1,0 0,13.8 a6.9,6.9 0 1,0 0,-13.8 z" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,7.9 L12,12 L15.1,12" />
+</vector>

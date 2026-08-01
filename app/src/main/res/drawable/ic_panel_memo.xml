@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P4-2 패널 모드 전환: 메모. ic_panel_black(꽉 찬 둥근 사각형)과 실루엣 자체가 달라야 하므로
+     **오른쪽 위 모서리를 접은 종이** 형태로 만든다(윤곽선이 다르면 20dp 에서도 즉시 구분된다).
+     글줄은 evenOdd 로 뚫되 굵기 1.6 · 간격 2.0 — 간격 ≥ 굵기라야 20dp 렌더(스케일 0.833)에서도
+     1.67dp 간격이 살아남는다. 예전 버전은 굵기 1.8 에 간격 1.2(렌더 1.0dp)라 통짜로 뭉쳤다.
+     광학 상자는 4..20 × 4..20 으로 ic_panel_black 과 동일. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M6.4,4 H14.5 L20,9.5 V17.6 A2.4,2.4 0 0 1 17.6,20 H6.4 A2.4,2.4 0 0 1 4,17.6 V6.4 A2.4,2.4 0 0 1 6.4,4 Z M7.4,8 H16.6 A0.8,0.8 0 0 1 16.6,9.6 H7.4 A0.8,0.8 0 0 1 7.4,8 Z M7.4,11.6 H16.6 A0.8,0.8 0 0 1 16.6,13.2 H7.4 A0.8,0.8 0 0 1 7.4,11.6 Z M7.4,15.2 H13.4 A0.8,0.8 0 0 1 13.4,16.8 H7.4 A0.8,0.8 0 0 1 7.4,15.2 Z" />
+</vector>

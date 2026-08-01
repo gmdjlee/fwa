@@ -9,6 +9,20 @@
          Recents 파트너 선택 화면에서 우리 앱을 찾는다. -->
     <string name="panel_title">FW Panel</string>
 
+    <!-- P4-2: 파트너 창(PanelActivity) 위젯 모드 전환 컨트롤. 위 panel_title 과 달리 외부 계약이
+         없는 순수 UI 문자열이다. -->
+    <string name="panel_mode_clock">시계</string>
+    <string name="panel_mode_memo">메모</string>
+    <string name="panel_mode_black">검정</string>
+    <string name="panel_memo_placeholder">메모를 입력하세요</string>
+    <string name="panel_memo_saved">자동 저장됨</string>
+    <string name="panel_memo_saving">저장 중…</string>
+    <!-- 저장 실패는 사라지지 않고 남는다(조용한 실패 금지). 다음 입력이 곧 재시도다. -->
+    <string name="panel_memo_save_failed">저장 실패 — 다시 입력하면 재시도합니다</string>
+    <string name="panel_memo_cap_reached">최대 글자 수에 도달했습니다</string>
+    <!-- 창 전체가 모드 전환 컨트롤 되살리기 버튼이다(TalkBack 용 동작 라벨). -->
+    <string name="panel_reveal_controls">모드 전환 컨트롤 표시</string>
+
     <string name="arranger_service_label">FoldWindow 배치</string>
     <string name="arranger_service_desc">현재 보고 있는 앱을 감지해 화면을 분할하고, 영상 종횡비에 맞춰 화면 위/아래 남는 공간을 한쪽으로 모아줍니다. 화면 캡처·창 정보 조회·터치 제스처 권한을 사용하며, 수집한 정보는 기기 밖으로 전송하지 않습니다.</string>
 

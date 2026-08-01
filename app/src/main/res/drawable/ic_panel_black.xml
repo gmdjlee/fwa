@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P4-2 패널 모드 전환: 검정. "창을 단색으로 가득 채운다"를 그대로 그린 꽉 찬 둥근 사각형.
+     광학 상자 4..20 × 4..20, 라운드 2.4 — ic_panel_memo(접힌 종이)와 상자·라운드를 맞춰
+     두 아이콘이 같은 크기로 보이게 한다. (ic_bubble 은 라운드 1.5 로 다르다 — 그쪽은 작은 창
+     글리프가 겹치는 구성이라 반지름 기준이 애초에 다르다.) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.4,4 H17.6 A2.4,2.4 0 0 1 20,6.4 V17.6 A2.4,2.4 0 0 1 17.6,20 H6.4 A2.4,2.4 0 0 1 4,17.6 V6.4 A2.4,2.4 0 0 1 6.4,4 Z" />
+</vector>
