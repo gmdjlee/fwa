@@ -604,10 +604,27 @@ class FloatingLauncherService : Service() {
             // 여전히 터치 이벤트로 하되, 확정된 탭은 view.performClick() 을 호출해 여기로 수렴한다.
             setOnClickListener { onBubbleTap() }
 
-            // [F1] **스크린리더 사용자의 유일한 메뉴 도달 경로**. 확장 메뉴는 지금까지
-            // [BubbleTouchListener] 의 자체 롱프레스 검출(ACTION_DOWN 후 longPressTimeoutMs 유지)
-            // 로만 열렸는데, 접근성 서비스는 그 터치 시퀀스를 합성하지 못하고 ACTION_LONG_CLICK
-            // 을 디스패치할 뿐이다 — 즉 TalkBack 사용자에게는 메뉴에 도달할 방법이 아예 없었다.
+            // [F1] 스크린리더용 **명시적** 메뉴 도달 경로. 확장 메뉴는 원래 [BubbleTouchListener]
+            // 의 자체 롱프레스 검출(ACTION_DOWN 후 longPressTimeoutMs 유지)로만 열렸고, 접근성
+            // 서비스는 그 터치 시퀀스를 합성하지 못하고 ACTION_LONG_CLICK 을 디스패치할 뿐이라
+            // "스크린리더에서는 도달 불가"로 판단해 이 리스너를 넣었다.
+            //
+            // ⚠ [정정 2026-08-01, 24차 실측] **그 전제는 성립하지 않았다.** 실기기에서
+            // TalkBack 활성 시: (a) 버블 단일 탭은 TalkBack 이 정상 낭독하고 앱에는 터치가
+            // 도달하지 않는다(= 이 오버레이는 터치 탐색 **대상 안**이다). (b) 그런데도 메뉴가
+            // 열렸고 로그는 `bubble long-press`(터치 경로)였다 — `bubble long-click` 은 한 번도
+            // 관측되지 않았다. 평범한 터치가 앱에 닿지 않는데 터치 롱프레스가 발화했다는 것은
+            // TalkBack 이 어떤 제스처에서 터치를 **통과(pass-through)** 시킨다는 뜻이다(두 번 탭
+            // 후 유지가 유력하나 제스처 종류는 미확정). 즉 **메뉴는 이 리스너 이전에도 도달
+            // 가능했다.**
+            //
+            // 그래도 이 리스너는 남긴다: 몇 줄이고, 통과 동작은 TalkBack 구현 세부라 보장이
+            // 아니며, 라벨이 붙은 ACTION_LONG_CLICK 은 읽기 메뉴에서도 노출되는 **명시적** 계약이기
+            // 때문이다. 다만 "유일한 경로"가 아니라 "명시적 경로"다.
+            //
+            // 별건(더 큰 제약): **TalkBack 이 켜져 있으면 앱이 분할을 생성하지 못한다**
+            // (`SplitEntry` step2 의 Recents 카드 드래그가 3/3 실패, 플랫폼 제약 추정). 그래서 v1 은
+            // 스크린리더 지원을 범위 밖으로 둔다(TASK.md 「범위 밖」). 상세 = DEVICE_FACTS 24차.
             //
             // 터치 경로와 **이중 발화하지 않는다**(코드로 확인): 프레임워크의 롱클릭 검출
             // (`View.onTouchEvent` → `checkForLongClick`)은 터치 리스너가 이벤트를 소비하지
