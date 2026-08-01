@@ -47,6 +47,10 @@
     <string name="arrange_done_unverified">배치했지만 결과를 확인하지 못했습니다 — 화면을 확인해 주세요</string>
     <string name="arrange_done_residual_over">여백을 완전히 없애지 못했습니다 — 경계선을 직접 끌어 조절해 주세요</string>
 
+    <!-- 요청한 비율을 화면이 끝까지 허용하지 못할 때. 되돌릴 행동이 없으므로 원인과 눈에 보일 결과만 정직하게 알린다. -->
+    <string name="arrange_clamped_pillarbox">이 비율은 이 화면에서 끝까지 맞출 수 없어 좌우에 여백이 남습니다</string>
+    <string name="arrange_clamped_letterbox">이 비율은 이 화면에서 끝까지 맞출 수 없어 위아래에 띠가 남습니다</string>
+
     <!-- 배치 실패 사유(domain/FailureReason 1:1) -->
     <string name="arrange_fail_split_check_timeout">화면 상태를 확인하지 못했습니다 — 잠시 후 다시 시도해 주세요</string>
     <string name="arrange_fail_entry_step">화면 분할을 시작하지 못했습니다 — 다시 시도하거나 직접 분할한 뒤 눌러 주세요</string>

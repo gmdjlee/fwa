@@ -26,6 +26,7 @@ import dev.dj.foldwindow.domain.AspectMeasurement
 import dev.dj.foldwindow.domain.AspectResolver
 import dev.dj.foldwindow.domain.AspectSource
 import dev.dj.foldwindow.domain.AutoTriggerLedger
+import dev.dj.foldwindow.domain.ClampReason
 import dev.dj.foldwindow.domain.ConfirmOutcome
 import dev.dj.foldwindow.domain.CoverDismissPolicy
 import dev.dj.foldwindow.domain.FailureReason
@@ -1633,6 +1634,18 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 "cachedAspect=${sessionCachedAspect ?: "none"}",
         )
 
+        // [24차] 요청 비율을 화면이 끝까지 허용하지 못했다면 사용자에게 알린다 — 종전에는
+        // clampReason 이 로그에만 남아, 「4:3 구형」처럼 이 기기에서 성립 불가능한 선택이
+        // 성공처럼 보였다. 자동 트리거는 사용자가 시작한 행위가 아니므로 토스트하지 않는다
+        // (evaluateFullscreenAutoTrigger KDoc 의 원칙 승계).
+        if (!triggerSource.isAuto) {
+            when (computedPlan.clampReason) {
+                ClampReason.HIT_MAX_PANE_CEILING -> toast(getString(R.string.arrange_clamped_pillarbox))
+                ClampReason.HIT_MIN_PANE_FLOOR -> toast(getString(R.string.arrange_clamped_letterbox))
+                null -> Unit
+            }
+        }
+
         // [측정 2026-07-25] PROFILE(사용자가 고정한 진실) 종횡비 세션에서 오염된 재측정(컨트롤
         // 오버레이/DRM 잔상을 띠로 오인, residual=224)이 정확한 배치를 과축소했다(1235→1011).
         // PROFILE 소스는 재측정이 오염되기 쉬운데도 그 결과가 신뢰된 배치를 덮어쓰는 구조적 결함 —
@@ -1933,9 +1946,80 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
     private fun handleQuerySplitState() {
         scope.launch {
-            val windowList = safeWindows()
-            val active = dividerLocator.isSplitActive(windowList, screenRect())
+            val active = awaitSettledSplitState()
             dispatch(ArrangeEvent.SplitStateResult(SystemClock.uptimeMillis(), active))
+        }
+    }
+
+    /**
+     * 세션 시작 시점의 분할 활성 여부를 **정착된 판독**으로 얻는다.
+     *
+     * [실측 2026-08-01, 24차] 확장 메뉴(풀스크린 스크림) 경유로 배치를 트리거하면 스크림이 막
+     * 제거된 직후라 접근성 창 목록이 아직 재구축 중이고, [DividerLocator.isSplitActive] 의 2티어
+     * (디바이더 창 / APPLICATION 페인 기하)가 **둘 다** 가려져 false-negative 가 난다(재현 2/2).
+     * 그 결과 이미 분할이 있는데도 진입 스텝을 처음부터 돌려 `ENTRY_STEP_FAILED` 로 끝났다.
+     * 스크림 중에는 APPLICATION 창 수가 3 → 0 으로 떨어지고 제거 후 ~150~170ms 만에 복구된다.
+     *
+     * [awaitWindowsSettled] 가 [beginSession] 최전방에서 이미 돌지만 그 술어("APPLICATION ≥ 1")는
+     * **불충분함이 이미 실측으로 기록돼 있다** — 앱 창 일부가 먼저 돌아와 게이트를 통과시키고
+     * 디바이더/나머지 페인은 나중에 온다([awaitWindowsSettled] KDoc). 그래서 여기서는 목록의
+     * 대리 지표가 아니라 **결론([isSplitActive]) 자체**를 조건으로 삼는다.
+     *
+     * **[performDismissSplit] 의 폴링을 그대로 쓰지 않는 이유(비대칭 술어)**: 그쪽은 true 가 될
+     * 때까지 기다리면 되지만, 배치 경로에서 "분할 없음"은 **정상적인 다수 경로**(전체화면 영상 →
+     * 위로 배치)다. 같은 방식이면 그 경로마다 타임아웃만큼 지연이 붙는다. 그래서
+     *  - **true 는 즉시 신뢰한다** — 스크림은 창을 제거만 하므로 이 메커니즘에서 false-positive 가 없다.
+     *  - **false 만 확인한다** — 위험한 방향이고(기존 분할을 파괴한다), 확인 비용은 1틱뿐이다.
+     *  - APPLICATION 창 0 인 판독은 **무효 표본**이라 확인 횟수로 세지 않는다(가려진 상태다).
+     *
+     * ADR-2 준수: 고정 지연이 아니라 조건 폴링이며, 타임아웃에 도달하면 마지막 판독을 그대로
+     * 쓰되 경고를 남긴다(조용한 실패 금지). 정상 경로 비용은 확인 1틱
+     * ([SPLIT_STATE_READ_POLL_INTERVAL_MS])뿐이다.
+     *
+     * **로깅**: 첫 판독에 바로 잡히면 침묵하고, 한 틱이라도 늦게 잡히면 어느 경로로 늦었는지
+     * (가려진 판독 / 미정착 판독)까지 남긴다 — 실기기 24차에서 실제로 일한 경로가 후자였는데
+     * 종전 조건(`blindReads > 0`)으로는 그 순간이 로그에 남지 않았다.
+     */
+    private suspend fun awaitSettledSplitState(): Boolean {
+        val screen = screenRect()
+        val deadlineMs = SystemClock.uptimeMillis() + SPLIT_STATE_READ_SETTLE_TIMEOUT_MS
+        val startedMs = SystemClock.uptimeMillis()
+        var negativeConfirmations = 0
+        var blindReads = 0
+
+        while (true) {
+            val windows = safeWindows()
+            if (dividerLocator.isSplitActive(windows, screen)) {
+                // 첫 판독에 바로 잡혔으면 조용히 지나간다(정상). 한 번이라도 늦게 잡혔다면
+                // 그것이 곧 이 함수가 일한 순간이므로 반드시 남긴다 — 어느 경로로 늦었는지까지.
+                if (blindReads > 0 || negativeConfirmations > 0) {
+                    Log.i(
+                        TAG,
+                        "awaitSettledSplitState: 판독 정착 후 분할 활성 확인 — 오판정 회피 " +
+                            "(가려진 판독 ${blindReads}회 / 미정착 판독 ${negativeConfirmations}회, " +
+                            "${SystemClock.uptimeMillis() - startedMs}ms)",
+                    )
+                }
+                return true
+            }
+
+            if (dividerLocator.applicationWindowCount(windows) == 0) {
+                // 가려진 판독(무효 표본) — 확인으로 세지 않는다.
+                blindReads++
+            } else {
+                negativeConfirmations++
+                if (negativeConfirmations >= SPLIT_STATE_NEGATIVE_CONFIRMATIONS) return false
+            }
+
+            if (SystemClock.uptimeMillis() >= deadlineMs) {
+                Log.w(
+                    TAG,
+                    "awaitSettledSplitState: ${SPLIT_STATE_READ_SETTLE_TIMEOUT_MS}ms 내 판독 미정착 " +
+                        "(가려진 판독 ${blindReads}회) — 분할 없음으로 진행",
+                )
+                return false
+            }
+            delay(SPLIT_STATE_READ_POLL_INTERVAL_MS)
         }
     }
 
@@ -2706,6 +2790,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
          * 정착되는 즉시 통과하고, 정말 없으면 이 시간 뒤 정직하게 "분할 화면이 아닙니다".
          */
         private const val SPLIT_STATE_SETTLE_TIMEOUT_MS = 2_000L
+
+        /**
+         * [awaitSettledSplitState] 조건 폴링 파라미터([실측 2026-08-01, 24차]).
+         *
+         * 간격 80ms = 스크림 제거 후 창 목록 복구 실측(~150~170ms)의 절반 이하라 2틱 안에 잡힌다.
+         * 이 프로젝트의 다른 폴링(150ms)보다 촘촘한 이유는, 정상 경로("분할 없음")가 확인 1틱을
+         * **항상** 물기 때문이다 — 그 비용이 곧 사용자 체감 지연이라 짧을수록 좋다.
+         *
+         * 확인 2회 = "APPLICATION 창이 보이는데도 분할이 아니다"를 두 번 연속 관측해야 false 로
+         * 결론낸다. 목록이 부분 복구된 순간(앱 창은 왔고 디바이더는 아직)을 한 틱 흘려보내기 위한 것.
+         */
+        private const val SPLIT_STATE_READ_POLL_INTERVAL_MS = 80L
+        private const val SPLIT_STATE_READ_SETTLE_TIMEOUT_MS = 1_200L
+        private const val SPLIT_STATE_NEGATIVE_CONFIRMATIONS = 2
 
         /**
          * P3-5 플렉스 각도 안정성 조건 폴링 간격([awaitFlexTrigger]). 각도가 멎은 뒤

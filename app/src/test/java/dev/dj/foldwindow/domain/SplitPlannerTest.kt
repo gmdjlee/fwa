@@ -1,6 +1,7 @@
 package dev.dj.foldwindow.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -189,7 +190,7 @@ class SplitPlannerTest {
     // ── Fold 7 실측 기하 (P1-1) ──────────────────────────────────
 
     /**
-     * Fold 7 실측값 팩토리(dividerThickness=14, minPaneHeight=181)
+     * Fold 7 실측값 팩토리(dividerThickness=14, minPaneHeight=563 — 24차 가로 실측)
      */
     private fun foldSevenLandscapeGeom() = WindowGeometry.foldSevenLandscape()
 
@@ -200,7 +201,7 @@ class SplitPlannerTest {
 
         // allocatable = 1968 - 14 = 1954
         // idealVideoH = round(2184 / 1.7778) = 1229
-        // videoH = 1229.coerceIn(181, 1773) = 1229
+        // videoH = 1229.coerceIn(563, 1391) = 1229
         assertEquals(1229, plan.videoPaneHeight)
         assertEquals(0, plan.residualLetterboxPx)
         assertEquals(0, plan.residualPillarboxPx)
@@ -224,7 +225,7 @@ class SplitPlannerTest {
         val plan = SplitPlanner.plan(geom, ASPECT_21_9, Placement.TOP)
 
         // allocatable = 1954, idealVideoH = round(2184 / 2.3704) = 921
-        // videoH = 921.coerceIn(181, 1773) = 921
+        // videoH = 921.coerceIn(563, 1391) = 921
         assertEquals(921, plan.videoPaneHeight)
         assertTrue(plan.exact)
         assertNull(plan.clampReason)
@@ -236,19 +237,35 @@ class SplitPlannerTest {
         val plan = SplitPlanner.plan(geom, 20f, Placement.TOP)
 
         // idealVideoH = round(2184 / 20) = 109
-        // videoH = 109.coerceIn(181, 1773) = 181 (hit floor)
-        assertEquals(181, plan.videoPaneHeight)
+        // videoH = 109.coerceIn(563, 1391) = 563 (hit floor)
+        assertEquals(563, plan.videoPaneHeight)
         assertEquals(ClampReason.HIT_MIN_PANE_FLOOR, plan.clampReason)
-        assertEquals(181 - 109, plan.residualLetterboxPx)  // 72px residual letterbox
+        assertEquals(563 - 109, plan.residualLetterboxPx)  // 454px residual letterbox
+    }
+
+    @Test
+    fun `foldSevenLandscape with 4 to 3 hits max pane ceiling`() {
+        // [24차 결함 ②] 이 기기 가로에서 4:3 은 성립 불가능하다 — 필요한 영상 창 1638px 이
+        // 상한 1391px(= 1954 - 563)을 넘는다. 종전 minPaneHeight=181 에서는 상한이 1773 이라
+        // 클램프가 걸리지 않아, 도달 불가능한 목표를 clamp=null 로 내보내고 성공으로 보고했다.
+        val geom = foldSevenLandscapeGeom()
+        val plan = SplitPlanner.plan(geom, 1.3333f, Placement.TOP)
+
+        assertEquals(1391, plan.videoPaneHeight)
+        assertEquals(ClampReason.HIT_MAX_PANE_CEILING, plan.clampReason)
+        assertFalse(plan.exact)
+        assertEquals(0, plan.residualLetterboxPx)
+        // 영상이 창 높이에 맞춰지며 좌우로 남는 폭: 2184 - round(1391 * 1.3333) = 2184 - 1855
+        assertEquals(329, plan.residualPillarboxPx)
     }
 
     @Test
     fun `foldSevenLandscape constants match measured values`() {
         val geom = foldSevenLandscapeGeom()
 
-        // [측정] DEVICE_FACTS.md 2026-07-25
+        // [측정] DEVICE_FACTS.md 2026-07-25 (dividerThickness), 24차 2026-08-01 (minPaneHeight)
         assertEquals(14, geom.dividerThickness)
-        assertEquals(181, geom.minPaneHeight)
+        assertEquals(563, geom.minPaneHeight)
     }
 
     // ── 기하 불변식 (F1, W3) ───────────────────────────────────
@@ -285,7 +302,7 @@ class SplitPlannerTest {
     @Test
     fun `foldSevenLandscape satisfies the allocatable height invariant`() {
         val geom = WindowGeometry.foldSevenLandscape()
-        // allocatable = 1968 - 14 = 1954, 2*minPaneHeight = 2*181 = 362, 1954 >= 362 → 여유롭게 통과
+        // allocatable = 1968 - 14 = 1954, 2*minPaneHeight = 2*563 = 1126, 1954 >= 1126 → 통과
         assertEquals(1954, geom.allocatableHeight)
         assertTrue(geom.allocatableHeight >= 2 * geom.minPaneHeight)
     }

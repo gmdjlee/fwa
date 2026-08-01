@@ -67,7 +67,21 @@ data class WindowGeometry(
         const val GEOMETRY_TOLERANCE_FRACTION = 0.01f
 
         /**
-         * Galaxy Z Fold 7 내부 화면 가로(상하 분할). DEVICE_FACTS.md 2026-07-25 실측.
+         * Galaxy Z Fold 7 내부 화면 가로(상하 분할). DEVICE_FACTS.md 2026-07-25 실측,
+         * `minPaneHeight`·`dividerThickness` 는 2026-08-01(24차) 가로 실측으로 갱신.
+         *
+         * **[측정 2026-08-01, 24차] `minPaneHeight` = 563px (= 250dp @ 2.25).** 종전 값 181 은
+         * 세로 좌우분할에서 잰 것이라 가로에서는 틀렸다(당시 주석도 「가로 상하분할 [미검증]」이라
+         * 밝히고 있었다). 강제 종횡비 스윕 실측: 패널 300px 요청 → 563 착지, 1500px 요청 →
+         * 1391 착지(= 1954 − 563, 상대 페인도 같은 하한이라 **대칭**). 563 미만으로 더 밀면
+         * 리사이즈가 아니라 **접힘 슬라이버**로 점프하는데(창이 화면 밖으로 나가고 181px 만 보인다),
+         * 종전의 181 은 사실 그 슬라이버의 가시 폭이었다 — 즉 181~563 구간은 애초에 존재하지 않는
+         * 대역이고, 그 대역을 요청하면 플랫폼이 조용히 563 으로 되돌린다.
+         *
+         * 이 값이 틀리면 planner 가 도달 불가능한 목표를 clamp 없이 내보내고
+         * (`clamp=null`), 실패를 감지하지 못한 채 성공으로 보고한다 — 실제로 「4:3 구형」
+         * 프리셋이 그렇게 조용히 미달 배치돼 왔다(필요 패널 316px < 563px).
+         *
          * ⚠ 이 수치는 실기기 측정값이다. 바꾸려면 새 측정 근거를 DEVICE_FACTS.md에 기록할 것.
          */
         fun foldSevenLandscape() = WindowGeometry(
@@ -75,8 +89,8 @@ data class WindowGeometry(
             usableTop = 0,          // 상태바 인셋 실측 전 0 유지 (미확정)
             usableWidth = 2184,
             usableHeight = 1968,
-            dividerThickness = 14,  // [측정] 세로 좌우분할 시각 간격. 가로 대칭 가정 [미검증]
-            minPaneHeight = 181,    // [측정] 세로 좌우분할. 가로 상하분할 [미검증]
+            dividerThickness = 14,  // [측정] 가로 상하분할 실측 재확인(24차, 726/740·977/991·563/577)
+            minPaneHeight = 563,    // [측정] 가로 상하분할 최소 페인(24차). 위 KDoc 참고
         )
     }
 }

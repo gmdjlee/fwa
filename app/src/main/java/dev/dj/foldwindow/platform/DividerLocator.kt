@@ -66,6 +66,16 @@ class DividerLocator {
         }.getOrNull()
     }
 
+    /**
+     * 접근성 창 목록에 보이는 `TYPE_APPLICATION` 창 수.
+     *
+     * 판독 유효성 판정용이다 — 풀스크린 오버레이(확장 메뉴 스크림)가 떠 있는 동안 시스템은
+     * 가려진 하위 창을 목록에서 제외하므로 이 값이 0 이 된다. 전면 앱이 하나라도 있는 한
+     * 0 은 물리적으로 불가능한 값이므로, **0 은 "분할 없음"이 아니라 "판독 불가"를 뜻한다.**
+     */
+    fun applicationWindowCount(windows: List<AccessibilityWindowInfo>): Int =
+        applicationPaneRects(windows).size
+
     private fun applicationPaneRects(windows: List<AccessibilityWindowInfo>): List<IntRect> =
         runCatching {
             windows
