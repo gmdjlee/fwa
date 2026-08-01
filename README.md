@@ -43,6 +43,7 @@ CLAUDE.md              프로젝트 규칙 (Claude Code 자동 로드)
 TASK.md                Phase별 작업과 완료 기준
 PROGRESS.md            현재 상태 — 세션 간 단일 출처
 docs/ADR.md            설계 결정 6건
+docs/DESIGN_*.md       기능별 설계 5종 (#12 측정 합치·#20 클릭 사이클·#27 패널 카드·#30 전체화면 자동·P4-1 프리폼)
 docs/DEVICE_FACTS.md   실기기 측정값
 docs/DEVICE_VERIFICATION_RUNBOOK.md  실기기 검증 절차
 .claude/agents/        Worker 정의 4종

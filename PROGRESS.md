@@ -1,280 +1,78 @@
 # PROGRESS.md
 
 > Advisor가 매 작업 완료 시 갱신한다. 이 파일이 세션 간 상태의 단일 출처다.
+> 상세 서술은 두지 않는다 — 측정값은 `docs/DEVICE_FACTS.md`, 계획 이력은 git log, 설계는 `docs/DESIGN_*`/`docs/ADR.md` 가 SSOT.
 
-**최종 갱신:** 2026-08-01 **#32 런처 진입점 통합 검토 — 「합치기」 불가 확정, 「진입점 소유권 이전」이 유일 경로 (코드 변경 0, 문서만).** 사용자 질문 「3개의 앱을 1개로 통합 가능한가」의 정체를 먼저 확정했다 — **MAIN/LAUNCHER intent-filter 를 가진 액티비티 3개**(`OnboardingActivity` "FoldWindow" · `PanelActivity` "FW Panel" · debug 전용 `ProbeActivity` "FoldWindow Probe")이고 셋 다 `android:icon` 미지정이라 **같은 아이콘에 라벨만 다르다**. 릴리스 병합 매니페스트 실측 = **2개**. **이 항목은 이미 한 번 인지되고 미뤄졌다가 유실됐다** — `PROGRESS.md:369`·`:307`·`AndroidManifest.xml:30-33` 이 「앱 서랍 오염은 Phase 3 재검토」로 못 박아 뒀는데 현재 Phase 4 이고 후속 결정 기록이 **0건**이다. 이번 검토가 그 유실 항목을 근거와 함께 복구한다. **결론 ① 「합치기」는 불가능하다** — `pruneExtraPanelTasks` 가 `PanelActivity::class.java.name` 으로 태스크를 골라 `finishAndRemoveTask` 하므로 합치면 **사용자의 온보딩 태스크를 매 세션 지운다**(`ArrangerAccessibilityService.kt:1695-1708`) · `PanelActivity.onDestroy` 는 메뉴 해제·커버 자동 해제·자가 가드·사용자 BACK **4경로를 모두 덮는 유일한 분할 해제 관측점**이고 여기서 sticky 래치가 걸리므로 사라지면 **#30 이 22차에 고친 P-1 재발화 루프로 되돌아간다**(`PanelActivity.kt:153` → `:1195-1196`) · finish 경로 5개와 finish 토큰 DoS 방어(S4)가 전부 이 컴포넌트를 전제한다. **결론 ② 성립 가능한 유일한 방향 = 진입점 소유권 이전** — 합치지 않고 `OnboardingActivity` 의 LAUNCHER 만 제거해 `PanelActivity` 를 유일 진입점으로 남긴다. 위 4가지 전부 무접촉이고, **부수 이득으로 2026-07-25 피커 오클릭 사고의 원인이 구조적으로 소멸**한다(오클릭 대상이 존재하지 않게 된다). **결론 ③ 착수 전 인과 확정 필수** — 「카드 0 에서도 피커 앱 목록에 FW Panel 이 있다」(19차 5/5)의 근거를 `DEVICE_FACTS.md:876-877` 이 **「MAIN/LAUNCHER 노출로 추정」** 이라고만 적었다. 19차는 원인 변수를 조작하지 않았다. A/B 가 「LAUNCHER 때문이 아니다」를 내면 훨씬 싼 경로(패널 쪽 LAUNCHER 만 제거)가 열린다. **로드맵 L1(디버그 3→2, 무위험) → L2(A/B 인과 확정, 코드 영구 변경 0) → L3(2→1)** 이며 각 단계 독립 중단 가능. **L1 은 지금 당장 착수 가능** — 릴리스에 `ProbeActivity` 선언 자체가 없고, 프로브 실행 3종(`am start -n`·`am broadcast`·`cmd package query-activities`) 중 **LAUNCHER 에 의존하는 것이 하나도 없으며**, 선례로 `PairShortcutActivity` 가 필터 없이 exported 만으로 동작한다. **L3 의 숨은 급소 2개**: `onCreate` 에서 `isInMultiWindowMode` 로 분기하면 **모든 분할이 파괴된다**(600ms 유예가 존재하는 이유가 정확히 그것 — `PanelActivity.kt:105-107`)이므로 기존 자가 가드 시점을 재사용하고 새 고정 지연을 추가하지 않는다(ADR-2) · 아이콘 탭으로 뜬 인스턴스의 `onDestroy` 가 sticky 래치를 걸어 **자동 배치를 조용히 죽이므로** `routedToOnboarding` 일 때 `onPanelDestroyed()` 를 건너뛰어야 한다(선택이 아니라 구성요소). 라벨은 **"FoldWindow" 개명** 방향 — 과거 충돌은 「런처 항목이 2개였기 때문」이라 1개가 되면 무효화되지만, 셀렉터가 `contains` **부분 문자열**이라(`SplitEntry.kt:518`) 디버그의 "FoldWindow Probe" 가 걸리므로 **L1 선행 필수**다. **금지 사항 명문화**: `setComponentEnabledSetting` 동적 토글(런처 인벤토리가 런타임 이력의 함수가 돼 `query-activities` 기반 검증표 전부가 재현 불가능해지고, 캐시 반영 대기가 ADR-2 위반이며, 최악의 경우 **진입점 0개 = 실행 불가 앱**) · `<activity-alias>` 라벨 분리(후보가 2개로 늘어 목표의 정반대) · 후보 「추가」(교체여야 한다) · L2 없이 L3 착수. 부수로 리포 내 사실 오류 3건을 정정했다(`IMPROVEMENT_PLAN:51` 「릴리스 런처 아이콘 1개」→실제 2개 · `README:52` 「probe 는 debug 빌드 전용으로 격리」→매니페스트만 격리이고 Kotlin 소스는 `main` 에 있어 릴리스 APK 에도 컴파일된다 · `README` 테스트 수 322→372). 전문 = `docs/DESIGN_32_LAUNCHER_ENTRY.md`. 직전 = 2026-08-01 **23차 실기기 — W1 잔여 2항목 소화 + 열축 판별자 오탐 발견 (코드 변경 0).** 착수 전 DoD 3종을 비차단으로 재확인했다 — 1차 실행이 전부 `UP-TO-DATE` 라 테스트가 실제로 돌지 않았기에 `--rerun` 으로 강제해 **372 / failures 0 / errors 0 / skipped 0** 을 실측으로 받았다(assembleDebug · lintDebug 신규 0 · baseline 무변경). 설치본이 HEAD 소스와 같음을 3중으로 확정한 뒤(APK 07:11 빌드 · 설치 07:13 · `assembleDebug` UP-TO-DATE · 워킹트리 clean) 진행 — 21차의 「구버전 설치본으로 40분 태움」 함정 재발 방지. **W1-11 메인 스레드 A/B = 통과.** 유튜브 가로 전체화면 + sticky 래치 상태에서 「버블 탭 수동 배치 → 롱프레스 메뉴 분할 해제」를 1사이클(≈10s)로 자동화해 **자동 ON 20회 / OFF 20회**를 돌렸고 **`ENTRY_STEP_FAILED` 0 : 0 · 40/40 `verified=true residual=0` · 전부 `trigger=MANUAL`**. 두 암이 실제로 달랐다는 **양방향 증거**도 잡았다 — OFF 에서 창 churn 시 `fullscreen signal` **0건**, ON 복원 후 같은 churn 에 **2건**(판정 코드가 OFF 에서는 한 줄도 안 돈다 = W1-6 최전방 선차단과 같은 경로). 즉 **R6(메인 스레드 IPC 증가)는 40세션 표본에서 관측 가능한 열화를 만들지 않는다**(단 표본은 전부 `EntryRecipe.DRAG`, UNRESIZEABLE 경로는 미포함). **W1-9 세로 영상 = D17 예측 정확히 재현.** 9:16 직캠을 가로 전체화면으로 재생하니 행축 pre-measure 가 `밴드 없음` 을 내고 캐시된 16:9 로 계획해(`aspectSource=CACHED aspect=1.7777778`) 영상이 **1107×1968 → 689×1228 = 면적 61.2% 축소**됐는데 앱은 `verified=true residual=0` 으로 **성공**을 보고했다(설계서 R3 의 「61% 작아진다」와 일치). 토스트 문구는 `배치 완료 · 잔여 0px` 이며 **화면에는 안 뜬다**(D19 억제, logcat 에만 `(토스트 억제)`). 유도 함정 2건도 기록했다 — 검색 결과의 세로 썸네일은 **Shorts 플레이어로 열려 전체화면 버튼이 없어** 유도 불가라 재생목록 「동영상」 칩 필터를 거쳐야 하고, 컨트롤이 ≈2.2s 만에 숨으므로 표시 탭과 전체화면 탭을 **같은 `adb shell` 호출 안에서** 연속 실행해야 한다. **⚠ 이 차수의 가장 값어치 있는 산출물 = 열축 필러박스 판별자 오탐의 정량 확증.** 같은 세션의 `verify: residualCols=0px` 는 오탐이다(좌우 띠 실제 각 ≈745px). raw screencap 픽셀 샘플링으로 원인을 특정했다 — 유튜브 앰비언트 조명이 띠를 물들여 **휘도 52~60** 이고, `ScreenshotSampler` 기본 `darkLuma=24` 를 넘어 colDarkRatio≈0 → `DEFAULT_DARK_ROW_THRESHOLD=0.97` 미달 → `residualBars()` 가 `(0,0)` 을 낸다. **함의: v1.5 D17 게이트는 새 판별자를 만들 필요가 없다.** `detectHybrid()` 는 이미 순흑 실패 시 `adaptiveDetect()` 로 폴백하고 `ADAPTIVE_MAX_BAR_LUMA=90` 이 실측 52~60 을 덮으며, `toPillarboxScan()` 은 `rowMeanLuma`/`rowLumaVariance` 를 **이미 채운다**(`ScreenshotSampler.kt:200-205`). 빠진 곳은 **`residualBars()`(`LetterboxDetector.kt:157`) 에만 적응형 폴백이 없다**는 것 하나뿐 — 아래 §C 가 「미구현」이라 적어 둔 항목은 실은 **미연결**이다. 부수 관측: 분할 해제 후 유튜브가 스스로 가로 전체화면으로 복귀하고 그 진입 엣지는 sticky 래치에 막혀 `reason=latched` 로 떨어진다(22차 4행의 실동작 재확인, 40사이클 내내 자동 발화 0) · 버블 롱프레스 메뉴는 분할 활성/비활성에서 항목·좌표가 동일 · **`adb exec-out screencap` 은 폴드에서 `-d <display-id>` 필수**(생략 시 경고 2줄이 stdout 에 섞여 PNG 가 깨진다). 상세 = `docs/DEVICE_FACTS.md` **23차 절**. **기기 잔여: 사용자 토글 켜짐(캠페인 전 상태로 복원) · 회전은 가로 고정 미복원.** 직전 = 2026-08-01 **22차 — 결함 #31 수정 + P-1 회귀 발견·재수정.** 1차 수정은 「추적 신호 / 래치 해제 신호 분리」(신규 순수 도메인 `ForegroundSignalPolicy`) + 홈 런처를 해제 신호로 재허용 + 세션 가드였다. **#31 은 고쳤지만 곧바로 P-1 루프를 회귀시켰다** — 분할 해제 시 One UI 가 전환 중 홈 런처를 노출하는데, `onSplitDismissed` 가 재래치를 건 **0.3초 뒤** 그 런처 이벤트가 도착해 재래치를 풀고 즉시 재발화했다(`07:02:57 latch released → 07:03:02 trigger`). `dismissInFlight` 는 그때 이미 false 라 세션 가드가 못 덮는다. **시간창은 해법이 될 수 없다**(D2 가 「해제→재진입 간격은 사용자 페이스라 창 크기를 정할 근거가 원리상 없다」로 이미 기각 · ADR-2 위반). 최종 해법 = **래치를 두 종류로 구분** — `onSplitDismissed` 가 거는 래치는 **sticky** 라 홈으로 안 풀리고, `onAutoFired` 가 거는 래치는 non-sticky 라 홈으로 풀린다. 판정 전부를 `AutoTriggerLedger`(순수 도메인) 안에 두어 **서비스에 새 상태 플래그를 0개 추가**하고 JVM 테스트로 동결했다. **실기기 4행 + 탈출구 전부 통과**: ① 배치→홈→복귀 = 재발화 1회 ② 배치→해제→런처 블립 = `latch released` 0건·발화 0건·`reason=latched` ③ 해제→Chrome→복귀 = 재발화 1회 ④ 해제→홈→같은 앱 복귀 = 발화 0건(**의도된 비대칭** — 해제는 "원하지 않는다"의 명시 신호, 탈출구는 버블 탭) ⑤ 그 상태에서 버블 탭 → `trigger=MANUAL` 배치 성공(R7 생존). **DoD 3종 PASS: 테스트 372(355 → +17) · assembleDebug · lintDebug(신규 0, baseline 무변경)**. 부수 관측: 자동 배치 성공 직후에도 진입 경로(Recents)의 런처 잔여 이벤트가 1.7초 뒤 도착해 non-sticky 래치를 푼다 — 분할 활성 중엔 진입 엣지가 없어 무해하고, 실패 세션에서는 `autoRecoveryInFlight`(2.5s) 가드가 그 창을 덮는다. 직전 = 2026-08-01 **21차 실기기 캠페인 — #30 자동 트리거 W0/W1 측정 + 신규 결함 #31 발견 (코드 변경 0).** 설치본이 07-31 01:54 판이라 #30 미포함이었음을 확인하고 HEAD `42860c6` 재설치 후 진행. **W0 8항목 중 7 측정 완료(1 유도 불가) · W1 11항목 중 8 완료.** 설계의 두 핵심 판단이 실측으로 정당화됐다: ① **긍정 술어(D8)** — 우리가 만든 가로 상하 분할의 창 목록에 **상단 전폭 시스템 바가 아예 없다**(디바이더 창도 전폭 바가 아니라 221×54 핸들뿐). 초안의 부정 술어("상단 바 부재 = 몰입")였다면 자기 분할을 몰입으로 오판정해 P-1 루프에 빠졌을 것이다 ② **래치(D1·D2)** — 셰이드 개폐(사용자 페이스)와 상단 스와이프 transient bar(가시 ≈2.2s)가 **둘 다 `DEFAULT_EXIT_HOLD_MS`(1200)를 넘겨** disarm→재무장을 실제로 일으킨다. 즉 시간창으로는 자가유발 재진입을 막을 수 없고 래치가 유일한 방어임이 확인됐다. **W1-2(P-1 루프 부재)는 진입 엣지 6회 전부 `reason=latched`·발화 0** 으로 통과. **R5 해소** — `getActivePlaybackConfigurations()` 는 One UI 8 에서 정상 동작(재생 `usages=[1]` / 일시정지 `[]` / 스트림 볼륨 0 에서도 `[1]`)이라 기능이 조용히 죽지 않는다. **상수 근거 확보**: 컨트롤 자동 숨김 실측 ≈2.2s < `DEFAULT_ENTRY_DEBOUNCE_MS`(3000). **⚠ 신규 결함 #31** — `EXCLUDED_FOREGROUND_PACKAGES` 에 `com.sec.android.app.launcher` 가 있어 **홈 이동에서 `autoLedger.onForeground` 가 아예 호출되지 않는다** → 「홈 → 복귀 → 재발화」(W1-3 명세)가 성립하지 않는다. Chrome 경유는 정상 재발화하는 분리 실험으로 원인 확정. fail-safe 방향(미발화)이고 탈출구(버블 탭)는 살아 있어 차단 결함은 아니지만 **수정 필요**(제외 목록을 지우면 안 되고, 래치용 포그라운드 신호를 `lastForegroundPkg` 추적과 분리해야 한다). **W1-7 재부팅 유지도 통과** — 재부팅 후 DataStore 토글·접근성 서비스·버블 자동 기동(BootReceiver)이 모두 유지되고 부팅~첫 조작 사이 발화 0, 이어 가로 몰입 진입에서 `arrange done: verified=true residual=0 trigger=FULLSCREEN_AUTO` 로 E2E 재확인. **잔여 = W1-9 세로 영상 · W1-11 메인 스레드 A/B · W0-7 앱내 음소거(유도 불가).** **기기 잔여: 사용자 토글 켜짐 상태**(기본값은 꺼짐). 상세 = `docs/DEVICE_FACTS.md` **21차 절**. 직전 = 2026-07-31 **#30 전체화면 재생 자동 트리거 구현 — 적대적 설계 감사 후 GO_WITH_CHANGES.** 요구는 "유튜브 등에서 가로 전체화면 재생을 시작하면 자동으로 분할 배치". **먼저 감사부터 했다** — 에이전트 50개 워크플로(사실검증 3축 → 렌즈 4축 적대적 비평 → 지적별 반증 시도 → 종합)로 초안을 공격해 **지적 42건 중 27건 생존(BLOCKER 2 · MAJOR 14)**. 결과 = 초안 그대로 구현했으면 **사용자가 분할을 벗어나지 못하는 루프**에 갇혔다. ① **BLOCKER 2건은 같은 뿌리** — 초안의 "자가유발 재진입 억제창"이 **시간 기반**이라서, 셰이드 개폐·잠금해제가 매번 새 진입 엣지를 만들고(D1) 해제→재진입 간격이 사용자 페이스라 창 크기를 **원리상 정할 수 없다**(D2). 해법 = 시간창 폐기 후 **패키지 단위 에피소드 래치**(신규 순수 도메인 `AutoTriggerLedger`) — 래치 세팅은 발화 직전(성공·실패 무관)과 분할 해제 관측 시, 해제는 **시간이 아니라 사건**(포그라운드 이탈 / 사용자 수동 트리거)이다. 분할 해제 포착 지점은 `PanelActivity.onDestroy` 한 곳뿐이며(메뉴 해제·커버 자동 해제·자가 가드·BACK 4경로를 모두 덮는 유일 지점) 여기서 재래치한다. ② **판정 술어를 부정→긍정으로 뒤집었다** — 초안은 "systemui 상단 창 부재 = 몰입"이었는데 `probe_report_split.md` 가 **분할 활성 중에도 상태바 창이 목록에 없음**을 보여 술어가 분할을 몰입으로 오판정했고(D8), systemui 소형 창이 상단 스트립과 교차하면 또 오판했다(D10). 신규 순수 도메인 `FullscreenWindowJudge` 는 "APP 창이 화면을 ≥99% 덮는다 ∧ 상단 스트립을 폭 ≥80% 로 가리는 비-APP 창이 0" 로 판정하며 **`root?.packageName` 노드 조회가 0회**라 평가당 바인더 왕복이 1회뿐이다(D12). 실측 3표본(세로 비몰입/가로 몰입/분할 활성)에 대해 규칙이 전부 올바른 값을 내고 JVM 테스트가 그 bounds 를 리터럴로 동결한다. ③ **미디어 게이트의 의미를 격하했다** — AOSP 소스 확인 결과 비특권 앱에게 가는 `AudioPlaybackConfiguration` 은 **익명화**돼 uid/pid 가 −1 이라 **패키지 귀속이 구조적으로 불가**하고, `contentType` 은 ExoPlayer 기본값이 UNKNOWN 이라 쓸 수 없다(usage 만 유효). 따라서 이 게이트는 "대상 앱이 재생 중"이 아니라 "기기에서 미디어 오디오가 남"이라는 **약한 필요조건**이며 **P-1 방어에 기여도 0**이다. 또 광고 전환·seek 에 요동치므로 **게이트 체인이 아니라 폴링 루프 안**에 두고 실패해도 disarm 하지 않는다. `MediaSessionManager` 는 알림 접근 권한이 필요해 무권한 원칙과 충돌 → 채택 안 함. ④ **사용자 표면을 만들었다** — 초안의 옵트인이 빌드타임 JSON 이라 사용자가 켤 수도 끌 수도 없었다(D14·D16). 버블 롱프레스 메뉴에 토글 1개(DataStore, **기본 OFF**) + 온보딩 안내 카드. 자동 대상은 **유튜브 1개뿐**(`autoArrange` 플래그) — 넷플릭스는 재생 중 분할 진입 시 자체 PiP 로 재생이 죽는다는 실측이 있어 제외(D11). ⑤ **자동 세션 실패 복구**(D15) + **연속 2회 실패 서킷브레이커**(D3) + 자동 세션 토스트 억제(D19) + `TriggerSource` 도입으로 `placementSource=="FLEX"` 프록시 오용 해소(D4). **DoD 3종 PASS: 테스트 355(322 → +33) · assembleDebug · lintDebug(신규 0, baseline 15 무변경)**. 독립 검증 **PASS · 차단 결함 0**(설계서 대조 + **변조 4종 전부 검출** + 기존 테스트 편집 0 확인 + DoD 직접 재실행). **Advisor 가 추가로 닫은 결함 2건**(둘 다 "요청하지 않은 BACK 주입" 같은 부류): ⓐ `CANCELLED` 를 자동 실패로 취급해 **기존 FLEX 경로**에 BACK 주입 + 서킷브레이커를 새로 얹고 있었다 — 취소의 유일한 프로덕션 경로는 자세 이탈 의도 번복이라 "실패"가 아니다(래치는 발화 직전에 이미 걸려 있어 제외해도 P-1 위험 없음). ⓑ `recoverAfterAutoFailure` 가 대상 앱이 **아직 전면인데도** BACK 을 주입했다(`SPLIT_CHECK_TIMEOUT` 처럼 Recents 도달 전 실패) — 사전 가드 추가, `activeAppPackage()==null` 은 "유기됐을 수 있음"이므로 주입 진행. **실기기 0회 — W0 8항목 + W1 11항목 전량 `[미검증]`**(`DEVICE_FACTS.md` #30 절). 미검증 상태로 병합 가능한 근거 = **사용자 토글 기본 OFF 3중 방어**(DataStore 기본 false + 읽기 실패 폴백 false + 이벤트 최전방 선차단)로 토글 전에는 코드가 한 줄도 실행되지 않아 기존 동작 회귀가 0 이고, 설계가 **신호원 중립**(`FullscreenSignal` 3값)이라 W0 가 술어를 반증해도 판정기만 교체하면 된다. W0 는 별도 프로브 빌드 없이 **logcat 전이 로깅 2종**으로 수행 가능하게 심어 뒀다. 설계·감사 전문 = `docs/DESIGN_30_FULLSCREEN_AUTO.md`. **⚠ 사용자 토글을 켜기 전에 W0-1·W0-3·W0-4·W0-7 을 먼저 측정할 것.** 직전 = 2026-07-31 **UI 개선 — 상태바 겹침 수정 + organic 디자인 시스템·어댑티브 아이콘 적용.** ① 인셋: targetSdk 36 강제 edge-to-edge 인데 인셋 처리 전무 → `OnboardingActivity` 루트 Column 에 `windowInsetsPadding(WindowInsets.safeDrawing)` + `enableEdgeToEdge()`, `PanelActivity` ModeSwitcherRow 에 `navigationBars` 인셋(검은 배경 Box 는 레터박스 필러 본분이라 풀블리드 유지 — 그 외 무접촉, finish-token 로직 diff 0). ② organic 테마 신설 `ui/theme/Theme.kt` — 세이지(#4E6E5D)/클레이(#B0714F)/웜 크림(#F7F4EE) 라이트+다크 ColorScheme, Shapes 12/20/24/32dp; 온보딩 리디자인(헤더+부제 `onboarding_subtitle` 신설, 24dp 라운드 카드+상태 필 칩, FilledTonalButton, 56dp 필 토글 버튼) — 상태 필드·콜백·toggleBubble 로직 무변경. ③ 어댑티브 런처 아이콘 신설 `mipmap-anydpi/ic_launcher`(background 크림+세이지 블롭 / foreground 조약돌 블롭+흰 둥근 분할창 글리프 / monochrome 테마 아이콘) — manifest `android:icon` 교체(한 줄), `ic_bubble`·`ic_notification` 둥근 모티프 재작성(흰 실루엣 유지), `bubble_background`·`menu_background` 남색→반투명 딥 세이지. **DoD 3종 PASS: 테스트 322(무변경) · assembleDebug · lintDebug(신규 0 — 초회 검증에서 `mipmap-anydpi-v26` ObsoleteSdkInt 신규 1건 적발 → `-v26` 한정자 제거로 해소, baseline 무변경)**. 실기기 육안 [미검증] 4건: 라이트/다크 상태바 아이콘 대비 · 런처 아이콘 마스크(원형/스퀴클)별 렌더 · 버블/메뉴 세이지 톤 시인성 · 분할 하단 배치 시 패널 모드 버튼의 제스처바 회피. 직전 = 2026-07-31 **20차 실기기 검증 캠페인 완료 — W1~W7 잔여 검증 전량 소화 + 신규 결함 #29 발견·수정·재검증 + A 절(물리 조작) 소진.** 실기기 31항목 중 **28 통과**, 3건만 계획된 자연 대기 유지(W1-4·W2-7 — 유도 3후보 소진을 실증으로 확정, B-1/B-2 와 동일 조건). 절차 = 신규 `docs/DEVICE_VERIFICATION_RUNBOOK.md`(S-B~S7 8세션, 베이스라인 대조 채택) · 판정 상세 = `DEVICE_FACTS.md` **20차 절**. 핵심 4건: ① **#29 MENU 피커 유령 매치** — FW Panel 카드 잔존 시 0-bounds 유령 노드가 DFS 선행 → gesture 즉발 false → a11y 폴백이 유령 조상 클릭 → **패널 전체화면 낙착**(검은 시계 바운스) → 3attempt 전멸. **베이스라인(`1965a72`) 재설치 대조로 W0~W7 무죄 확정**(문자 단위 동일 실패 = 기존 결함, 07-25 MENU 6/6 은 카드 부재의 우연), 카드 제거 실험으로 유령 소스 특정. 수정 = `findPanelPickerNode` predicate 에 bounds 필터(07-25 「유령 매치 재폴링」 원칙의 누락 지점 보완, Worker 위임 구현, DoD 3종 PASS·테스트 322 무변경) → **카드 잔존 조건에서 gesture cycle=0 즉수렴 재검증 완료**. #27 의 거울상(카드 부재 vs 존재)이며 17차 D-절(node-not-found)과는 별개. ② **W5-4 육안 완결** — tolerance=0 실험에서 토스트 「배치 완료 · 잔여 30px (허용치 초과)」 문구 정확 일치, 실험 후 8 원복 + `git diff` 빈 출력 확인(함정 #7 준수). ③ **A-1 실물리 완결** — `hinge 90.0→0.0 → cover auto-dismiss fired` 화면 꺼짐 실상태 발화(17차 에뮬 → 실물리), **A-2 완결** — 팝업 창 내 DRM 육안 정상(17차 Secure layer 로그 + 금회 육안). ④ **신규 사실**: 넷플릭스는 재생 중 분할 진입 시 자체 PiP 전환·팝업 전환 시 진입 액티비티 재실행으로 재생 세션 종료(앱 고유 동작, v1.5 후보) / Shizuku 는 `libshizuku.so` 직접 실행이 유일 기동법 재확인 / `am force-stop` 은 shell uid 서버 못 죽임(`kill <pid>` 이 정답) / `am kill` 은 FGS 거부 실증. W6-5 는 조건부 통과(B 필드 전부 B 기준; consensus·캐시 판정은 B=PROFILE 정당 스킵으로 관측 불가 — B=MEASURED 후보 세션 자연 대기). **커밋 = `42f0c4a`(#29 수정) · `2d681f5`(20차 문서).** 직전 = 2026-07-30 **개선 계획 W7 완료 — 성능·중복 정리(P1·M3·P2·P4). 이로써 전 8웨이브(W0~W7)·23항목 구현 완료, 남은 것은 실기기 검증뿐이다.** P1 = 셀렉터마다 트리를 처음부터 다시 걷던 노드 탐색을 **DFS 1회 다중 셀렉터 평가**로(`findCardIconNode` 기준 폴링 주기당 3회 → 1회). 우선순위 규칙은 신규 순수 도메인 `BestMatchTracker` 로 올려 JVM 6테스트로 동결 — 엄격 부등호(`<`)가 「같은 인덱스면 먼저 만난 노드 유지」를 보장해 구 「셀렉터별 DFS 첫 매치」와 등가가 된다. **순회는 재귀 pre-order·자식 정순 유지**(스택 변환 시 DFS 순서가 뒤집혀 선택 노드가 달라진다). M3 = `NodeActions`/`Polling` 추출로 `SplitEntry` −197줄·`DividerPopupRotator` −115줄. P2 = `BootReceiver → startForegroundService` 직후 ANR 판정이 가장 가혹한 구간의 `runBlocking { store.bubblePosition() }` 제거(기본 위치로 먼저 뜨고 저장 위치는 도착하는 대로). **P4 는 계획서 해결책이 API 계약상 실행 불가**였다 — `getPixels` 의 `stride` 는 **목적지 행간 건너뛰기**(계약상 `>= width`)라 소스 열 서브샘플링 수단이 아니고 `toLetterboxScan` 은 `height=1` 호출이라 의미조차 없다. 대신 실재하던 과다 복사(`toPillarboxScan` 이 `[0,h)` 를 읽고 `[y0,y1)` 만 소비 = **24% 폐기**)를 잡고, PROGRESS §C 가 W7 에 배정했던 **1px `coerceIn(0,-1)` 크래시**를 함께 해소했다. **DoD 4종 PASS: 테스트 322(+10) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 편집 0**. 독립 검증 **CONDITIONAL PASS**(조건 = 실기기 6항목 + KDoc 3건 정정 → **정정 조치 완료**), **차단 결함 0** — 경미 결함 1건(경합 가드가 스냅 종료 시점에만 서서 드래그 구간이 열려 있었음)과 잠재 위험 3건을 전부 후속 수정으로 닫았다. **변조 9종 중 5종 무검출**로 「테스트 통과」를 안전 근거에서 **세 번째로 폐기**(무검출 = `walk` 순회 역전 · `accepts` 게이팅 삭제 · 노드 예산 1 · 버블 클램프 `view.width` · 경합 가드 무력화). **실기기 6항목 [미검증]** = `DEVICE_FACTS.md` W7 절 — 계획서 3세션에서 확장했다(계획서의 「MENU 세션 1」이 리사이저블 앱으로 수행되면 이 웨이브에서 가장 크게 재작성된 `DividerPopupRotator` 가 **한 줄도 실행되지 않는다**). 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W6 완료 — 세션 상태 캡슐화(M1 1단계)**. 서비스의 세션 가변 필드 **17개**를 `private class Session` 하나로 묶어 `cleanupSession()` 의 **16줄 수동 리셋을 `session = null` 한 줄**로 축소 — 종전의 유일하고도 확실한 실패 모드(「필드 추가하면서 리셋 한 줄 빠뜨림」, 컴파일러도 테스트도 못 잡음)가 **구조적으로 존재 불가**가 됐다. 읽기는 전부 `session?.x ?: <cleanupSession 이 되돌리던 값>` 이라 **문자 그대로 등가**(qa 가 36곳 전수 대조, 불일치 0). 다만 **쓰기는 세션 종료 후 no-op 으로 바뀌며 그 델타 3건은 전부 개선** — `lastHandle`·`aspectConfirmed`·`consensusAdoptedAspect` 는 다음 `beginSession` 이 재대입하지 않아 구 코드에서 「이전 세션 핸들 재사용」·「다음 세션 합치 게이트 통째 스킵」·「다른 앱 종횡비 캐시」가 가능했다(**잠복 교차-세션 누수 3종 부수 봉합**). **DoD 4종 PASS: 테스트 312(무변경) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 프로덕션 1파일 185+/124−, 테스트·`domain/` diff 0줄**. 독립 검증 **CONDITIONAL PASS**(조건 = 실기기 세션, 코드 결함 0) — 파라미터 섀도잉 24건을 함수 스코프 귀속으로 판정(오변환 0/누락 0) + **7종 동시 변조에도 312개 전부 통과**해 **「테스트 통과」가 이 웨이브의 안전 근거가 아님을 확정**(`session = Session(...)` 을 `dispatch(Start)` 뒤로 옮긴 심각한 회귀조차 무검출). **실기기 5항목 [미검증]** = `DEVICE_FACTS.md` W6 절(계획서 4경로 + qa 권고 W6-5 「연속 2세션 누수 없음」). 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W5 완료 — 구동부 안정화(F6·F9)**. `dispatch()` 를 **이벤트 큐 + 단일 드레인 루프**로 교체 — 종전엔 `Dispatchers.Main.immediate` 때문에 effect 핸들러가 **중단점 없이 dispatch 를 재호출**해, 바깥 dispatch 의 터미널 검사가 **자기가 만들지 않은 `machineState`** 를 읽었다(지금 무해한 건 우연 — effect 2개짜리 전이 하나만 추가돼도 발현). 신규 코드는 **이벤트당 터미널 검사 정확히 1회**, 디스패처 홉 없음 = 타이밍 영향 0. F9 = `reportTerminal` 이 잔여 > 허용치면 ` (허용치 초과)` 부기(`verified=true` 는 허용치 이내를 보장하지 않는다 — 생성 경로 3개 중 2개는 잔여를 그대로 보고). **계획서에 없던 신규 도메인 테스트 1개를 Advisor 판단으로 추가** — F6 등가 논증이 의존하는 「터미널 전이는 effects 를 갖지 않는다」 불변식을 300 조합 전수로 기계 강제(**W6/W7 이 이 불변식에 기댄다**). **DoD 4종 PASS: 테스트 312(+1) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 편집 0**. 독립 검증 **CONDITIONAL PASS**(조건 = 실기기 세션, 코드 결함 0) — 소스 전수로 터미널 Transition **12곳 전부 `emptyList()`** 확정 + 재진입 5개 핸들러 개별 판정 + **F9 는 JVM 테스트 사각지대임을 변조로 확정**(`>`→`>=` 로 바꿔도 29개 전부 통과 = 실기기 육안이 유일한 검증 수단). **실기기 4항목 [미검증]** = `DEVICE_FACTS.md` W5 절. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W3 완료 — 기하 정합성·도메인 불변식(F2 1단계·F1)**. `startArrange` 최상단에 **화면 기하 정합성 가드** 추가 — 종전엔 세로/커버/외부 디스플레이에서 캐시된 `WindowGeometry`(2184×1968)로 계산해 **디바이더를 조용히 틀린 곳으로 옮겼다**. 이제 명시적 미지원(토스트+`Log.w`)으로 떨어진다. 자동 트리거(`evaluateFlexAutoTrigger`)에도 동일 게이트를 넣되 **토스트 없이 로그만**(센서 발화는 "조용한 실패 금지" 원칙 비대상 — 기존 게이트 선례). 판정 자체는 신규 **순수 도메인 `WindowGeometry.matchesScreen()`**(±1% 상대 오차)로 올려 JVM 테스트 대상화 = 계획 대비 편차 1건. F1 = `WindowGeometry.init` 에 `allocatableHeight >= 2 * minPaneHeight` require(클램프 아님 — 계획 불가는 계획 불가로 드러낸다). **DoD 4종 PASS: 테스트 311(+7) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 편집 0(70 삽입/0 삭제)**. 독립 검증 **CONDITIONAL PASS**(조건 = 이 `PROGRESS.md` 갱신 자체, 코드 결함 0) — 변조 3종 전부 사전 예측과 일치, 특히 `&&`→`||` 변조가 1건 포착돼 **테스트 충분성 실증**. **실기기 2항목 [미검증]** = `DEVICE_FACTS.md` W3 절. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W4 완료 — 테스트 안전망(T1)**. Robolectric 배선(`@Config(sdk=[34])` 필수 — 4.14.1 은 API 36 jar 부재) + 신규 `ScreenshotSamplerTest` **5종**으로 `Bitmap.getPixels`·stride·margin `coerceIn` 경계를 처음으로 커버. 종전 도메인 테스트는 **이미 만들어진** `LetterboxScan` 만 봤고 그 앞단(모든 측정의 입력)은 무방비였다. **W7/P4(`getPixels` stride 최적화)의 선행 조건** — 계획서 P-2 원칙. **DoD 4종 PASS: 테스트 304(+5) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 프로덕션 diff 0줄**. 독립 검증 **PASS**(5개 기댓값 전부 수기 재도출 + 미사용 변조로 비-공허성 재확인 6건 FAILED). **실기기 불필요.** 편차 1건 = 계획서의 「리터럴 전치 쌍이 같은 AR」 요구가 기하학적 모순(`raw_pillarbox ≡ 1/raw_letterbox`) → 치수만 전치 + 밴드 독립 배치로 재설계, 검증자 CONFIRMED. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W2 완료 — Shizuku 셸 하드닝(F3·F4·F5·S2·S3)**. AIDL 을 `String run(String command)` → **`String run(in String[] argv, long timeoutMs)`** 로 전환해 `sh -c` 를 제거(셸 파싱 소멸 = S3 원천 해소) + 신규 순수 도메인 `ShellCommandPolicy` 허용 목록을 **원격 UserService(권한 있는 쪽)에서 강제**(S2) + 원격 `waitFor(timeoutMs)` + 읽기 스레드 분리로 **실효 타임아웃 확보**(F3) + `redirectErrorStream` 단일 스트림(F4) + `ensureBound` 타임아웃 시 `binding=false` 로 래치 해제(F5). **versionCode 2→3**(AIDL 변경 시 UserService 재생성 강제 — 안 올리면 `AbstractMethodError`). **DoD 4종 PASS: 테스트 299(+13) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · assembleRelease**. 독립 검증 **CONDITIONAL PASS**(조건 = 실기기 세션, 코드 결함 0). **실기기 7항목 [미검증]** = `DEVICE_FACTS.md` W2 절. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W1 완료 — 보안 차단(S1·S4·F7·F8)**. `probe/`·`ArrangeTriggerReceiver`·`FileProvider` 선언을 `app/src/debug/AndroidManifest.xml` 로 이관해 **릴리스에서 완전 소멸**(병합 릴리스 매니페스트 0건 확인) + `PanelActivity` finish 를 **프로세스 로컬 1회용 토큰**으로 교체(자체 DoS 차단, #28 결함 클래스 구조적 소멸) + 취소 시 Bitmap recycle + 리듀서 `Idle`+`Cancel` 무시. **DoD 4종 PASS: 테스트 286 · assembleDebug · lintDebug(신규 0, baseline 17→15) · assembleRelease**. 독립 검증 PASS. **실기기 4항목 [미검증]** = `DEVICE_FACTS.md` W1 절. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **개선 계획 W0 완료 — 무위험 정리·lint 게이트 도입·아키텍처 테스트** (M7·M4·M2·M6·T2·스타일 4건. `docs/IMPROVEMENT_PLAN_2026-07-29.md` §2 W0). **DoD 3종 PASS: 테스트 285(282+T2 3) · assembleDebug · `lintDebug`(신규 게이트, baseline 17건 필터)**. 실기기 불필요. 상세 = 아래 「개선 웨이브 진행」 절. 직전 = 2026-07-29 **잔여 작업 재편 (코드 무변경, 문서 정리만)** — 착수 목록을 A(사용자 물리 확인) · B(미발동·희귀 경로) · C(v1.5 후보) 로 3분류, Phase 4 행 갱신(19차 종결 반영), 번호 중복 해소. **차단 작업 0 — v1 기능은 전부 구현·검증 완료 상태.** 직전 = 2026-07-28 밤 **#27 종결 — 19차 실기기 캠페인 완료 + 축 B 기각·제거** (테스트 282 PASS · assembleDebug PASS · 제거 빌드 실기기 3/3 done 무회귀). **채택 = 축 A(파괴 제거) + #28**, **기각 = 축 B(소환)**. 근거: ① 소환 카드의 base intent 가 `NEW_DOCUMENT|MULTIPLE_TASK` 로 오염돼 **step3 를 깨뜨림**(전체화면 낙착 → 가드 3회 → `ENTRY_STEP_FAILED`) — 대조군 런처 형태 카드(`flg=0x10000000`)는 정상 낙착 ② **전제 반증**: 카드 0 에서도 배치 **5/5 성공**(`pm clear` 표본 2건으로 신규 설치 교란 배제) — 피커는 앱 목록에서도 「FW Panel」 제공. G4·G5·G6·G7·레버 전부 통과, G2 만 실패. 상세 = `docs/DEVICE_FACTS.md` 19차 절 · 절차 = `docs/CAMPAIGN_19_PANEL_CARD.md`(2026-07-31 제거 — git 이력). **[미해결]** 17차 3전멸의 진짜 원인 — 카드 0 은 재현 안 됨. 직전 = **#27 v1 구현(축 A+축 B+#28)** — A1 `finishAndRemoveTask()`→`finish()` 격하 4경로 5곳(커버 해제·dismissSplit instance·자가 가드·EXTRA_FINISH_PANEL onCreate/onNewIntent) + A2 `purgeStalePanelTasks`→`pruneExtraPanelTasks`(판정은 신규 순수 도메인 `PanelTaskPolicy`, MRU 1개 보존) + 반증된 premise 서술 KDoc 정리. **테스트 282 PASS(신규 `PanelTaskPolicyTest` 11개 포함) · assembleDebug PASS**. 실기기 G4~G7 [미검증]. 잔여 = 축 B 소환(B0) · #28. 직전 = **18차 프로브 — #27 원인 확정·설계 확정** (adb 전용·코드 무변경: purge 자충 재현 + G1·G3 통과 + AOSP 사실관계 확정 → 주 수정을 「소환 신설」에서 **「파괴 제거」**로 전환. `docs/DESIGN_27_PANEL_CARD.md` · DEVICE_FACTS 18차 절). 그 직전 = **17차 실기기 캠페인** — Phase 4 구현분 4종 검증 **실질 완료** (adb 주도, DEVICE_FACTS 17차 절): **P4-2 5/5** · **P4-4 4.5/5** · **P4-3 6/7** (신규 수단 `cmd device_state state 0/reset` 에뮬레이션으로 커버 게이트 전 경로 발화 — 핵심 미지수였던 "닫힘 중 패널 finish 의 분할 해소" 에뮬 기준 해소) · **P4-1 7/7** (Shizuku v13.6.0 adb 설치·스타터 활성 — 온보딩 3분기·메뉴 출현·재바인드·유튜브/넷플릭스 팝업 E2E bounds 정확·DRM 재생 Secure layer 팝업 내 구동). 부수: 12차 캐시 폴백 실전 2회 발동 실증. **⚠ 신규 중대 결함 발견**: step3 패널 소환 경로 부재 — 피커 「FW Panel」 노드 = recents 태스크 카드인데 `finishAndRemoveTask`(커버 해제·dismissSplit·purge·자가 가드)가 카드를 제거하면 배치 전체 불능 (node-not-found 3전멸, 재현 4회 + 원인 결정 실험 완료). purge 는 세션 시작마다 자충. 과거 캠페인은 카드 상시 잔존 우연에 의존했음. **P4-3 실배포 전 수정 필수** — DEVICE_FACTS 17차 「신규 결함」 절에 수정 방향 3후보
-**직전(P4-1 프로브+구현):** 프로브 F1~F6 게이트 통과·후보 A(Shizuku 셸) 채택(`7e1d912`) → 구현 완료(UserService AIDL + PopupPlanner·StackListParser + startPopup 5단 폴링 + 메뉴 조건부 노출 + 온보딩 카드). 테스트 271·빌드 PASS. 그 전 Phase 4 구현(`9c36905`)·16차·15차 = DEVICE_FACTS 각 절 참조
-**현재 Phase:** Phase 4 — **전 항목 구현 + 17차·19차·20차 검증 완료, #27 종결**. **#30(전체화면 재생 자동 트리거)는 21·22·23차로 실기기 검증 소진** — W1 11/11 완료, W0 는 7/8(잔여 1건은 유도 불가). 잔여 = 아래 「남은 작업」 A(소진) · B(희귀 경로·자연 발생 대기) · C(v1.5, **D17 열축 게이트 추가**). Phase 0~3 완료 확정
-
----
-
-## 🔖 남은 작업 (2026-07-31 정리 — 재개 지점)
-
-**전제:** Phase 0~4 전 항목 구현 완료. 17차·19차·**20차** 실기기 캠페인으로 주 경로 + 개선 웨이브 검증 완료. **차단 작업 없음.**
-아래는 전부 "v1 을 더 단단하게" 하는 잔여이며, 어느 것도 다른 것을 막지 않는다. 착수 순서는 자유.
-
-### A. 사용자 물리 조작 필요 — ✅ 20차 전량 소진 (2026-07-31), 잔여 0
-
-A-1 물리 접기·A-2 DRM 육안 = 20차 완결, A-3 600ms 재펴기 = 15차 미검증 수용 확정. 판정 상세 = `docs/DEVICE_FACTS.md` 20차 절.
-
-### A'. #30 전체화면 자동 트리거 실기기 차수 — ✅ **21·22·23차로 소진, 잔여 1건(유도 불가)**
-
-| 차수 | 상태 | 잔여 |
-|---|---|---|
-| **W0** (8항목) | ✅ 7 완료 | W0-7 「앱내 음소거」 = **유도 불가**(유튜브에 표면 없음) [미검증] — 나머지 3상태는 21차 측정 완료 |
-| **W1** (11항목) | ✅ **11 전량 완료** | 없음. W1-3 = 22차 수정·재검증 · **W1-9·W1-11 = 23차 완료** |
-
-판정 상세·근거 로그 = `docs/DEVICE_FACTS.md` **21차·22차·23차 절** · 설계 근거 =
-`docs/DESIGN_30_FULLSCREEN_AUTO.md` §6.
-
-**W1-9 가 D17/R3 를 실측으로 확정했다** — 세로 영상에서 자동 발화 시 영상 면적이 **61.2% 축소**
-되는데 앱은 `verified=true residual=0` 으로 성공을 보고한다. v1 의 노출 제한(대상 유튜브 1개 +
-토글 기본 OFF + 래치 + D20 안내)은 유지하고, **v1.5 열축 게이트는 아래 §C 로 이관**한다.
-
-### A''. 결함 #31 — 홈 경유 시 자동 트리거 래치 미해제 ✅ **22차에서 수정·재검증 완료**
-
-**최종 해법 = 래치 2종 구분**(`AutoTriggerLedger.latchSticky`, 순수 도메인). 아래는 발견 당시 기록.
-1차 수정(런처를 해제 신호로 재허용)은 **P-1 루프를 회귀시켰다** — 분할 해제 전환 중 One UI 가
-노출하는 런처가 재래치를 0.3초 만에 풀어 즉시 재발화했다. 상세 = `docs/DEVICE_FACTS.md` 22차 절.
-
-
-
-`EXCLUDED_FOREGROUND_PACKAGES` 에 `com.sec.android.app.launcher` 가 포함돼 있어
-`autoLedger.onForeground` 가 홈 이동에서 호출되지 않는다 → 설계서 W1-3 명세(홈 → 복귀 → 재발화 1회)가
-성립하지 않는다. **분리 실험으로 원인 확정**(Chrome 경유는 정상 재발화, 2회 재현). fail-safe 방향이라
-차단 결함은 아니고 탈출구(버블 탭 = 수동 트리거)는 살아 있다. **제외 목록을 지우는 수정은 금지**
-(2026-07-25 실측 근거, CLAUDE.md 함정 #7) — 래치용 포그라운드 신호를 `lastForegroundPkg` 추적과
-분리하는 방향이 옳다. 상세 = `docs/DEVICE_FACTS.md` 21차 「신규 결함 #31」.
-
-### B. 미발동·희귀 경로 [미검증] — 자연 발생 대기 또는 인위적 유도
-
-| # | 경로 | 유도 방법 / 비고 |
-|---|---|---|
-| B-1 | **#28** `performDismissSplit` 3분기 중 "패널 태스크 부재" 분기 | 조건 = `instance==null` ∧ 패널 태스크 부재 ∧ 분할 활성 판정 통과. **20차에서 유도 3후보 소진 확정**(「활동 유지 안 함」은 조건 논리적 유도 불가 · `am kill` 은 FGS 거부 실증 · `force-stop` 은 조건 파괴) — 자연 발생 대기 확정 |
-| B-2 | **P3-2** dismissSplit 인텐트 폴백 | 조건 = `instance==null` (프로세스 사망 후 분할 잔존). B-1 과 인접 조건 — 같은 세션에서 함께 유도 가능. **W1/S4 토큰 소비 경로와 동일 조건**(`DEVICE_FACTS.md` W1-4)이므로 셋을 한 세션에서 함께 확인한다 |
-| B-3 | **#20** 클릭 사이클 cycle-2(a11y) · 스왑 제스처 사이클(cycle-1/2) | 10차 이후 미발동. `mech` 로그 상시 계측 중 — 자연 발생 대기. 3시도 전멸 재발 시 FORENSIC viewId 로 특정 후 스텝 되감기 재검토 |
-| B-4 | **#19** 스왑 실패 시 회전×2 폴백 | 누적 12+ 세션 미발동 (PaneSwapper 가 항상 수렴). 검증 기회 확보 대기 |
-| B-5 | **`PanelTaskPolicy`** `ActivityManager.appTasks` MRU-first 순서 계약 | 공개 API 로 `lastActiveTime` 조회 불가 → 플랫폼이 전부 0 전달, 순서에 위임. 이 계약 자체가 [미검증] — prune 오제거 시 재조사 |
-
-### C. v1.5 후보 (v1 범위 밖, 결정 완료 — 근거는 각 항목 참조)
-
-- **#12 축적분**: BOTH_AXES_BARS 시 보정 생략(G1 드리프트 실측) · 적응형 residual(글로우 필러박스 블라인드 G5 실측) · 비-16:9 콘텐츠 합치·캐시 실측 · flex 게이트2↔startArrange TOCTOU(이론상, DEVICE_FACTS 기록)
-- **P3-5 축적분**: 포그라운드 안정성 윈도(폴드 전환 중 월렛 quick 카드가 event-tracked 오염 → 게이트5 통과 실측) · 재열기 멈칫 Done-후 분할 잔존(수동 해제로 복구, 키가드 게이트는 정당 사용례 훼손으로 기각) · 각도 대역 경계값 실측
-- ~~**`ScreenshotSampler` 1px 입력 크래시** [W4 발견]~~ → **W7 에서 해소.** `coerceAtMost((n/2-1).coerceAtLeast(0))` 로 교체(`n >= 2` 에서 항등) + `require(...MarginPct >= 0f)` 로 등가 전제 강제. 회귀 가드 = 신규 테스트 1×1 · 1×N/N×1 · 음수 마진 거부
-- **F2 2단계 — 실화면 기반 `WindowGeometry` 생성** [W3 에서 v1.5 로 이관 확정]: W3 은 **가드만** 넣었다(불일치 시 명시적 미지원). 근본 수정은 `WindowGeometry` 를 `screenRect()` 에서 만들고 `dividerThickness`/`minPaneHeight` 만 실측 상수로 남기는 것인데, **선행 조건 = 세로 분할의 디바이더 두께·최소 페인 높이 실측**이다(현재 값은 「세로 좌우분할 측정 → 가로 대칭 가정 `[미검증]`」). 이는 코드 작업이 아니라 **프로브 측정 작업**이라 v1 범위 밖 — 프로브는 W1/S1 이후에도 개발 빌드에 남아 있으므로 그대로 쓸 수 있다
-- **D17 열축(필러박스) 게이트 — 23차에서 「미구현」이 아니라 「미연결」로 판명**: 세로 영상 자동
-  발화를 막을 판별자는 새로 만들 필요가 없다. `LetterboxDetector.detectHybrid()` 가 이미 순흑
-  실패 시 `adaptiveDetect()` 로 폴백하고 `ADAPTIVE_MAX_BAR_LUMA=90` 이 실측 앰비언트 띠 휘도
-  52~60 을 덮으며, `Bitmap.toPillarboxScan()` 은 `rowMeanLuma`/`rowLumaVariance` 를 이미 채운다
-  (`ScreenshotSampler.kt:200-205`). 빠진 곳은 **verify 가 부르는 `residualBars()`
-  (`LetterboxDetector.kt:157`) 에만 적응형 폴백이 없다**는 것 하나다 — 그래서 좌우 띠가 각
-  ≈745px 인 화면에서 `residualCols=0px` 라는 오탐이 났다(23차 픽셀 샘플링으로 확증). 최소 수정 =
-  `residualBars` 에 `detectHybrid` 와 같은 폴백을 달고, 열축 양성 시 자동 발화를 게이트. v1 은
-  로그 보고만 한다는 DESIGN_12 §3.4/§7 결정은 유지
-- **#32 런처 아이콘 2→1 — 「진입점 소유권 이전」** [2026-08-01 검토, 설계 = `docs/DESIGN_32_LAUNCHER_ENTRY.md`]:
-  앱 서랍 아이콘이 릴리스 2개(`OnboardingActivity` "FoldWindow" + `PanelActivity` "FW Panel") ·
-  디버그 3개(+`ProbeActivity`)다. **「합치기」는 불가능하다** — `pruneExtraPanelTasks` 가
-  `PanelActivity::class.java.name` 으로 태스크를 골라 `finishAndRemoveTask` 하고
-  (`ArrangerAccessibilityService.kt:1695-1708`), `PanelActivity.onDestroy` 가 **분할 해제 4경로를
-  덮는 유일한 관측점**이며(`PanelActivity.kt:153` → `:1195-1196` → sticky 래치), finish 경로 5개와
-  finish 토큰 DoS 방어가 전부 이 컴포넌트를 전제한다. **성립 가능한 유일한 방향 = `OnboardingActivity`
-  의 LAUNCHER 를 제거해 `PanelActivity` 를 유일 진입점으로 남기는 것**(위 4가지 전부 무접촉,
-  부수 이득으로 2026-07-25 피커 오클릭 사고의 원인이 구조적으로 소멸). **선행 조건 = 인과 확정** —
-  「카드 0 에서도 피커 앱 목록에 FW Panel 이 있다」의 근거를 `DEVICE_FACTS.md:876-877` 이
-  **「MAIN/LAUNCHER 노출로 추정」** 이라고만 적어 뒀다(원인 변수 미조작). 실기기 A/B(L2)가
-  「LAUNCHER 때문이 아니다」를 내면 훨씬 싼 경로가 열린다. 라벨은 "FoldWindow" 개명 방향이며
-  셀렉터가 `contains` 부분 문자열이라(`SplitEntry.kt:518`) **L1 선행 필수**(디버그의
-  "FoldWindow Probe" 가 걸린다)
-- **L1(디버그 아이콘 3→2)만은 무위험 · 언제든 착수 가능** — `ProbeActivity` 의 LAUNCHER 필터
-  제거. 릴리스에 그 선언 자체가 없어 영향 0이고, 프로브 실행 3종(`am start -n` · `am broadcast` ·
-  `cmd package query-activities`) 중 **LAUNCHER 에 의존하는 것이 하나도 없다.** 선례 =
-  `PairShortcutActivity` 는 필터 없이 exported 만으로 동작한다. **위 #32 와 묶여 방치되지 않도록
-  별도 항목으로 둔다.** 함께 고칠 문서 = `DEVICE_VERIFICATION_RUNBOOK.md:177` W1-2 판정 문구
-- **열린 질문 잔여**: #1 `rowStride` 축소의 역산 정밀도 영향 · #3 wavve 패키지명 · #5 `ADAPTIVE_*` 상수 실기기 재검증 · #6 셀렉터 다국어(EN) 안정성 · #14 BOTTOM 배치 시 스왑 생략 가능성
-
-### D. 미해결 (원인 미상 — 재발 시 재조사)
-
-- **17차 step3 3전멸의 진짜 원인**. 19차에 「카드 0」 가설은 **5/5 배치 성공으로 반증·폐기**(`pm clear` 표본 2건이 신규 설치 교란 배제). 재발 시 후보 = 피커 화면 상태 · purge 타이밍 · 오염 카드 잔존. 관련 기록 = 열린 질문 #27, DEVICE_FACTS 17차·19차 절. **20차 주의:** 신규 #29(유령 매치, DEVICE_FACTS 20차 절)는 시그니처가 다르다(17차 = node-not-found / #29 = 매치 후 dispatched=false·전체화면 낙착) — 동일시 금지, 단 재발 조사 시 #29 의 bounds 필터가 증상을 node-not-found 로 바꿀 수 있음을 감안할 것
+**상태 (2026-08-01):** Phase 0~4 전 항목 구현 + 실기기 검증 완료. v1 기능 완결, 차단 작업 없음.
+잔여는 전부 "v1을 더 단단하게" 하는 선택 항목(아래 남은 작업 B/C) 또는 원인 미상 재조사 대기(D) 뿐이다.
+**✅ AAA UI/UX 품질 캠페인 완료 (2026-08-01)** — 5표면 전부 비평 PASS. 코드/빌드 수준 검증만 거쳤으므로
+실기기 확인 항목이 남아 있다(아래 절). **미커밋 상태** — 사용자 확인 후 커밋한다.
 
 ---
 
-## 🌊 개선 웨이브 진행 (2026-07-29 리뷰 대응)
+## ✅ AAA 품질 캠페인 — 완료 (2026-08-01)
 
-계획서 = `docs/IMPROVEMENT_PLAN_2026-07-29.md` · 원 리뷰 = `docs/CODE_REVIEW_2026-07-29.md`
-전 8웨이브(W0~W7) / 23항목. 각 웨이브 종료 = CLAUDE.md DoD 충족 = 언제든 중단 가능한 지점.
+**목표:** 5개 사용자 대면 표면(버블/메뉴·파트너 패널·온보딩/테마·메시지·문서)을 상용 최고 앱 기준으로.
+**방법:** Worker 전면 개편 → 엄격 비평가(읽기 전용, **모든 수치 주장 재계산**) → 조준 수정 → 재비평, PASS까지.
 
-| 웨이브 | 상태 | 실기기 |
+| 라운드 | 내용 | 결과 |
 |---|---|---|
-| **W0** 무위험 정리·게이트·아키텍처 테스트 | ✅ **완료** | 불필요 |
-| **W1** 보안 차단 (S1·S4·F7·F8) | ✅ **완료** | ✅ **20차** (W1-4 만 자연 대기) |
-| **W2** Shizuku 셸 하드닝 (F3·F4·F5·S2·S3) | ✅ **완료** (`1d1e0bd`) | ✅ **20차** (W2-7 만 자연 대기) |
-| **W3** 기하 정합성·도메인 불변식 (F2 1단계·F1) | ✅ **완료** (`8edcce3`) | ✅ **20차** (토스트 육안 포함) |
-| **W4** 테스트 안전망 (T1) | ✅ **완료** (`0f53af2`) | 불필요 |
-| **W5** 구동부 안정화 (F6·F9) | ✅ **완료** (`70e53fa`) | ✅ **20차** (W5-4 육안 포함) |
-| **W6** 세션 상태 캡슐화 (M1 1단계) ⚠ 최대 위험·단독 커밋 | ✅ **완료** (`836efe0`) | ✅ **20차** (W6-5 조건부) |
-| **W7** 성능·중복 정리 (P1·M3·P2·P4) | ✅ **완료** (`a8a3522`) | ✅ **20차** (W7-6 미재현·무이상) |
+| R1 전면 개편 (5 워커) | 5표면 병렬 | 빌드 ✅ |
+| R2 비평 (3) | 상용 기준 판정 | 3/3 FAIL — 결함 49건 |
+| R2.5 수정 (3) | 49건 + lint/deprecation 3건 | 빌드 ✅ |
+| R3 재비평 (3) | 수정 성립 검증 + 회귀 사냥 | 3/3 FAIL — 잔여 좁혀짐 |
+| R3.5 수정 (3) | 표면별 외과적 수정 | 워커 3명 도중 정지(사용자 지시 중단) |
+| **R3.5 재개 (3+1+3)** | 자체 grep 감사 → OPEN 만 수정 → 비평 | **3/3 PASS** — 심각 0, minor 4 |
+| R3.6 정리 (1) | minor 4건 + 파생 1건 | **잔여 0** |
 
-**→ 전 8웨이브(W0~W7) / 23항목 구현 + 20차 실기기 검증 완료. 잔여 = 자연 발생 대기 3건(W1-4·W2-7·B 계열)과 v1.5 후보뿐.**
+**최종 트리 상태: 단위 테스트 372/372 ✅ · assembleDebug ✅ · lintDebug 신규 이슈 0 ✅**
+(`--rerun-tasks` 로 캐시 없이 Advisor 가 직접 재검증. JUnit XML 합산 failures=0 errors=0)
 
-### W7 완료 내역 (성능·중복 정리 · 실기기 6항목 [미검증])
+### 이 캠페인의 지배적 결함 클래스 — **주석에 적힌 수치가 거짓**
 
-- **P1 단일 순회** — `SplitEntry.firstMatch` 가 셀렉터마다 트리를 처음부터 다시 걸었다(`findCardIconNode` 는 3셀렉터 = 폴링 주기당 **DFS 3회**). 이제 **DFS 1회**로 모든 셀렉터를 동시 평가한다. 우선순위 규칙은 신규 순수 도메인 `BestMatchTracker` 로 올려 JVM 6테스트로 동결했다 — `offer` 의 엄격 부등호(`<`) 덕분에 **같은 인덱스에서는 먼저 만난 노드가 유지**되고, 이것이 구 「셀렉터별 DFS 첫 매치」와의 등가를 만든다. 순회는 **재귀 pre-order·자식 정순을 유지**한다(`PaneSwapper` 식 `ArrayDeque.removeLast()` 로 바꾸면 DFS 순서가 뒤집혀 선택 노드가 달라진다 = 계획서 P-3 위반). qa 가 호출자 3곳의 셀렉터 정의를 **4097바이트 바이트 일치**로 확인
-- **M3 중복 추출** — `platform/NodeActions.kt`(`walk`·`clickableAncestorOrSelf`·`tapNodeCenter`·`tapPoint` + 상수) / `platform/Polling.kt`(`pollUntil`·`pollForValue`·`clickWhenFound`). `SplitEntry` −197줄, `DividerPopupRotator` −115줄. **"바이트 단위로 동일한 중복" 은 사실이 아니었다** — qa 대조 결과 `tapPoint`/`tapNodeCenter` 만 byte-identical 이고, `clickableAncestorOrSelf`/`pollUntil` 은 포매팅만 다르며, `pollForValue` 는 Divider 에 아예 없었고, **`clickWhenFound` 는 제어 흐름은 같았으나 로그가 달랐다**. 더 자세한 `SplitEntry` 판을 채택해 통합했고 그 결과가 **의도된 로그 델타 2건**이다(Worker 는 1건으로 신고 → qa 가 2건으로 정정)
-- **⚠ `MAX_NODES_VISITED` 는 통합하지 않았다 (계획 대비 편차 1)** — 계획서는 단일화를 지시했으나, 이 상수를 가진 곳은 `PaneSwapper` 뿐이고 값 **500**은 팝업 노드 탐색용 실측값이다. `SplitEntry` 순회는 **지금 상한이 아예 없어서**, 여기에 500 을 씌우면 Recents 런처 트리가 500 노드를 넘는 순간 카드 아이콘을 못 찾고 **진입 경로 전체가 죽는다** — 측정 없이 검증된 상수를 주 경로로 확대하는 것이라 CLAUDE.md 함정 #7 위반이다. 신규 `MAX_NODES_VISITED_TREE = 4000` / `MAX_TREE_DEPTH = 50` 을 별도로 두되 **둘 다 실측값이 아님**을 명시하고 초과 시 `Log.w` 를 남긴다(`DEVICE_FACTS.md` W7-2 가 그 로그의 부재를 확인한다)
-- **P2 부팅 경로** — `FloatingLauncherService.onCreate` 의 `runBlocking { store.bubblePosition() }` 제거. 이 경로는 `BootReceiver → startForegroundService` 직후, **ANR 판정이 가장 가혹한 구간**에서 돌고 최초 실행 시에는 `SharedPreferencesMigration` 까지 동기로 태웠다. 이제 기본 위치로 먼저 뜨고 저장 위치는 도착하는 대로 반영한다(부팅 직후 한두 프레임 점프 = 계획서가 명시 수용한 트레이드오프). **클램프는 계획서 코드(`view.width`)를 쓰지 않고 `layoutParams.width` 를 쓴다** — `addView` 직후엔 레이아웃 전이라 `view.width == 0` 이고, 그러면 `maxX` 가 화면 폭 전체가 되어 버블이 화면 밖으로 나갈 수 있다(계획 대비 편차 2)
-- **P2 경합 가드 (계획서에 없는 추가 · qa 지적으로 2차 보강)** — 저장값 읽기가 도착하기 전에 사용자가 버블을 옮기면 **뒤늦게 도착한 옛 값이 방금 옮긴 위치를 되돌린다**(구 동기 코드엔 없던 신규 실패 모드). 1차 구현은 `savePosition()` 에서만 플래그를 세웠는데, qa 가 그 유일한 호출부가 **스냅 애니메이션 종료 콜백**임을 짚어 「드래그 중」 구간이 그대로 열려 있음을 지적했다. 이제 ① 드래그 확정(`ACTION_MOVE`, 기존 `touchSlop` 판정 재사용) ② 스냅 종료 저장 ③ 스냅 애니메이션 진행 중 — **3지점**을 막는다. 남는 창은 `ACTION_DOWN`~드래그 확정 사이 수 ms 이며 **의도적으로 열어 뒀다**(DOWN 에서 세우면 단순 탭만 해도 복원이 영구 차단된다). 그 창에 복원이 도착해도 다음 `ACTION_MOVE` 가 `initialX + dx` 로 즉시 덮으므로 **저장값 오염은 없고 한 프레임 시각적 튐뿐**이다
-- **⚠ P4 는 계획서 해결책이 실행 불가였다 (계획 대비 편차 3)** — 계획서는 「`getPixels` 의 `stride` 인자로 필요한 열만 받는다」고 했으나, `Bitmap.getPixels(pixels, offset, stride, x, y, w, h)` 의 `stride` 는 **목적지 배열의 행간 건너뛰기**이고 계약상 `>= width` 다. **소스 영역 `(x,y,w,h)` 는 항상 전부 복사**되므로 열 서브샘플링 수단이 아니며, 게다가 `toLetterboxScan` 은 `height=1`(한 행씩) 호출이라 `stride` 가 의미조차 없다 → **`toLetterboxScan` 은 무변경**이고 이 근거를 소스에 「다시 시도하지 말 것」으로 동결했다. 대신 **실재하던 과다 복사**를 잡았다: `toPillarboxScan` 은 열 전체 `[0,h)` 를 읽고 `[y0,y1)` 만 소비했다(`edgeMarginPct` 0.12 → **읽은 픽셀의 24% 폐기**). 읽기 범위를 `[y0,y1)` 로 줄이고 인덱스를 `colBuf[y - y0]` 로 옮겼다
-- **1px 크래시 수정 (PROGRESS §C 가 W7 에 배정한 항목)** — `coerceIn(0, n/2 - 1)` 은 `n == 1` 이면 상한 `-1` = **빈 범위 → `IllegalArgumentException`**. 3곳을 `coerceAtMost((n/2-1).coerceAtLeast(0))` 로 교체했다(`n >= 2` 에서 항등이므로 기존 동작 무변경). qa 가 이 치환이 **하한 방어를 잃었음**을 지적해 — 등가 성립의 전제인 `pct >= 0` 이 강제되지 않았다 — 두 함수에 `require(...MarginPct >= 0f)` 를 추가했다(클램프가 아니라 require: 음수 마진은 호출자 계산 오류이지 정상 입력이 아니다. W3 `WindowGeometry.init` 선례). 프로덕션 호출부 6곳은 마진 인자를 아예 넘기지 않아 **영향 0**
-- **`walk` 가 KDoc 이 선언한 방어를 실제로 이행하게 함 (qa 지적)** — KDoc 은 「`visit`/`childCount`/`getChild` 를 전부 `runCatching` 한다」고 썼는데 구현이 `visit` 를 감싸지 않아, 방어 책임이 워커에서 호출자로 조용히 이동해 있었다. `runCatching { visit(node) }.getOrDefault(true)` 로 고쳤다(**예외 시 기본값이 `true`(계속)** 여야 구 `searchNode` 의 `getOrDefault(false)` = 「매치 아님, 순회 계속」과 등가). 현 호출자 2곳은 이미 자체 `runCatching` 이라 **오늘 동작 변화 0** — 미래 호출자를 위한 계약 이행이다
-- **DoD 4종 PASS: 테스트 322(312 → +6 `BestMatchTracker` +3 `ScreenshotSampler` +1 margin require) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 편집 0(주석 1건 제외)**
+49건 중 다수, 그리고 마지막까지 남은 5건이 전부 이것이었다. 색·치수·대비를 바꿀 때
+주석의 숫자를 **인용**하고 재계산하지 않은 것이 누적된 결과다. 재발 방지 규칙:
 
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS** — 조건 = ① 실기기 6항목 ② KDoc 3건 정정(**전부 조치 완료**). **차단 결함 0건**, 경미 결함 1건(P2 경합 가드 커버 부족)과 잠재 위험 3건을 전부 후속 수정으로 닫았다. 검증 핵심 3건:
-① **「바이트 단위 동일한 중복」 주장을 기계 대조로 반증** — Worker 가 M3 통합 근거로 내세운 서술을 qa 가 구코드 함수 본문 대조로 검증했더니 6함수 중 **byte-identical 은 2개뿐**이었고 `clickWhenFound` 는 로그가 달랐다. 제어 흐름 델타는 0이라 통합 자체는 안전하지만, **사실과 다른 근거가 소스 KDoc 에 박히는 것**을 막았다(정정 완료). 로그 델타도 신고된 1건이 아니라 2건이었다
-② **변조 9종 중 5종 무검출 → 「테스트 322 통과」를 안전 근거에서 명시적으로 폐기** — 잡힌 4종은 전부 `BestMatchTracker`·`ScreenshotSampler` 라는 **순수 함수 표면**이었다. 진짜로 깨질 수 있는 `walk` 순회 방향 역전 · `accepts` 게이팅 삭제 · **노드 예산을 1 로** · 버블 클램프를 `view.width` 로 · 경합 가드 무력화는 **5종 전부 무검출**이다. W5-4·W6 에 이은 **세 번째 확정** → `DEVICE_FACTS.md` W7 절
-③ **계획서 3세션이 부족함을 실행 경로로 논증** — 계획서의 「MENU 세션 1」이 리사이저블 앱으로 수행되면 이 웨이브에서 **가장 크게 재작성된 `DividerPopupRotator`(−115줄)가 한 줄도 실행되지 않는다.** 「UNRESIZEABLE 앱 필수」 제약 + 신규 상한 로그 부재 확인(W7-2) + `PaneSwapper` 스왑 1회(W7-4, `TAP_DURATION_MS` 소유권 이전의 유일한 실동작 경로)를 추가해 **3 → 6항목**으로 확장했다
+- 대비값을 적거나 고칠 때는 WCAG 공식으로 **실행 계산**한다(눈대중·기존 주석 인용 금지).
+- **알파 합성 주의**: 순검정 배경에서는 합성 채널 = `alpha × 원본채널` 을 sRGB 공간에서
+  곱한 **뒤** 선형화한다. 반올림도 오차원이다 — `0xE6` 은 0.90 이 아니라 0.901961 이다
+  (이 반올림 하나가 5.126 vs 5.143 을 만들었다).
+- 실측 상수를 인용할 때는 `docs/DEVICE_FACTS.md` 를 대조한다(내부 화면은 840dp 가 아니라 **875dp**).
 
-### W6 완료 내역 (세션 상태 캡슐화 · 실기기 5항목 [미검증])
+### 표면별 착지 결과
 
-- **M1 1단계** — 서비스의 세션 가변 필드 **17개**를 `private class Session` 하나로 묶고 `private var session: Session?` 로 관리한다. `cleanupSession()` 의 **16줄짜리 수동 리셋이 `session = null` 한 줄**이 됐다. 종전 구조의 유일하고도 확실한 실패 모드는 「필드를 추가하면서 리셋 한 줄을 빠뜨리는 것」이었고 **컴파일러도 테스트도 이를 잡지 못했다** — 이제 그 버그 클래스가 구조적으로 존재할 수 없다
-- **폴백 규약이 등가의 전부** — 읽기 사이트는 전부 `session?.x ?: <cleanupSession 이 되돌리던 값>` 이다(`desiredPlacement`/`effectivePlacement`→`Placement.TOP`, `placementSource`→`"FALLBACK"`, `presetAspect`→`DEFAULT_ASPECT`, `requireAgreement`/`cacheAspectEnabled`→`true`, `aspectConfirmed`→`false`, `entryRecipe`→`EntryRecipe.DRAG`, 나머지 8개는 `null` 전파). 세션 종료 뒤 늦게 도착하는 코루틴이 실재하므로(예: 취소 직후 도착하는 `handleMeasureLetterbox`) 폴백이 리셋값과 정확히 같아야 **읽기 동작이 문자 그대로 보존**된다. qa 가 읽기 36곳을 전수 대조해 불일치 0건 확정
-- **「동작 변경 0줄」의 정확한 범위 — 읽기는 등가, 쓰기는 세션 종료 후 no-op 이며 그 델타 3건은 전부 개선** — `session?.x = v` 는 `session == null` 이면 조용히 no-op 인데, 구 코드는 리셋된 필드에 **실제로 썼다**. `cleanupSession()` 은 effect 코루틴을 취소하지 않으므로 이 경합 창은 실재한다. 쓰기 12곳을 개별 판정하면 `effectivePlacement`/`plan`/`resolvedAspect` 는 다음 `beginSession` 이 재대입해 등가지만, **`lastHandle`·`aspectConfirmed`·`consensusAdoptedAspect` 는 재대입되지 않아** 구 코드에서는 각각 「이전 세션 핸들을 집음」·「다음 세션이 DESIGN_12 §3.2 합치 게이트를 통째로 스킵」·「다른 앱의 종횡비를 캐시」가 가능했다. 이 변환이 **잠복 교차-세션 누수 3종을 부수적으로 봉합**한다 — M1 이 노린 구조적 소멸의 직접 귀결
-- **`arrangeConfig` 폴백은 증명 가능한 등가** — 이 필드만 구 `cleanupSession` 의 리셋 대상이 아니었다(세션 종료 후 직전 값 잔존). 신규는 `session?.config ?: ArrangeConfig()` 인데, `session == null ⟺ machineState == Idle` 이고 `ArrangeStateMachine.reduce` 는 Idle 에서 `reduceIdle(event)` 를 부르며 **이 함수는 config 를 인자로 받지도 않는다**(`ArrangeStateMachine.kt:191`). 나머지 3개 읽기 사이트는 전부 세션 생존 구간(`reportTerminal` 은 `dispatch` 안에서 `cleanupSession()` **보다 먼저** 호출된다)
-- **중단점 넘어 캡처 금지** — `val s = session` 캡처는 `reportTerminal`(비-suspend) 한 곳뿐이고, `handleDragDividerTo`·`handleMeasureLetterbox`·`handlePerformEntryStep`·`finishConfirm`·`rotateTwiceFallback` 은 전부 사용 지점마다 인라인 재읽기다. 상단 캡처 후 suspend 를 건너뛰면 구 코드(매번 필드 재읽기)와 동작이 갈린다
-- **로그 포맷 무변경** — 84개 `Log.*` 블록 멀티셋 대조로 차이 **정확히 3건**, 전부 보간식만 바뀌고 렌더링은 동일. `arrange decision:`/`arrange done:`/`resize-mode detection:`/`transition:`/`verify:` 는 **바이트 단위 무변경**(실기기 DoD 가 logcat 대조라 필수 조건)
-- **DoD 4종 PASS: 테스트 312(무변경) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 프로덕션 1파일 185 삽입/124 삭제, 테스트·`domain/` diff 0줄**
+- **① 패널** (`PanelActivity.kt`): 휘도 사다리 12행 전부 재계산 검증(캐럿 7.41 / MEMO 본문 6.60
+  최상위 / 날짜 1.83 …)하고 **수치와 모순되던 계약 문장**을 사실에 맞게 수정 — "콘텐츠 > 크롬" →
+  "그 모드의 **주역** 콘텐츠 > 크롬 상한", BLACK 모드는 시계가 없으므로 칩이 유일 발광체.
+  `PaneSelectionColors` 의 허위 1.9:1 → 3.71:1 정정. 저장 표시 접근성은 조건부 컴포지션으로
+  이미 닫혀 있었고(근거를 KDoc 에 명문화), 좌측 빈 `Text` 의 TalkBack 무음 정지는
+  `clearAndSetSemantics` 로 제거(레이아웃 무영향).
+- **② 온보딩** (`OnboardingActivity.kt`·`Theme.kt`): F1~F11 전항 착지 확인. F8 은 래핑 `Column` +
+  AV 내부 패딩으로 접힘/펼침 양쪽 20dp 수렴(exit 애니메이션 유지), F11 죽은 축소 분기는
+  도달 불가 증명(W≥2.6h vs 필요폭 2.46h) 후 삭제. F10 다크 히어로 outline 대비 3.15:1 확보.
+  후행 화살표는 `Icon` 대신 글리프 + `clearAndSetSemantics` 유지 — 벡터 에셋/의존성 추가 없이
+  같은 결과(프로젝트 전체에 `Icons.` 사용 0건, material-icons 의존성 미도입).
+- **③ 버블/메뉴** (`FloatingLauncherService.kt`): 이번 재개의 주 작업(이전 워커가 편집 전 정지).
+  **F1 = `isLongClickable` + `setOnLongClickListener` — TalkBack 사용자가 메뉴에 도달할 유일한 경로**
+  (터치 리스너가 DOWN 을 소비하므로 터치 경로 무변화). F2 섹션 라벨 전용 색 `#DCEAE3`
+  (불투명 표면 6.111:1 / 스크림 최악 5.143:1 — 종전 액센트는 4.162:1 로 AA 미달).
+  F4 = **커밋 액션 3결과 모델**(즉시 / `deferredMenuAction` 으로 복원까지 이연 / onDestroy 폐기),
+  정상 복원과 안전 타이머가 같은 경로로 수렴해 어느 쪽에서도 액션이 잊히지 않는다.
+- **④ 메시지**: 사용자 문자열 전량 `strings.xml` 이관 + 제품 카피 재작성. 성공 토스트 억제
+  (배치·분할해제 — 화면이 증거), 실패 메시지는 원인+행동 지시형.
+- **⑤ 문서**: ~6,300줄 → ~2,900줄. 죽은 문서 5종 삭제, 측정값은 `DEVICE_FACTS.md` 로 이관(MISSING 0).
 
-**계획 대비 편차 0건** — 계획서 §M1 의 `Session` 코드 블록(프로퍼티 이름·순서·타입·`var effectivePlacement = desiredPlacement` 기본값)을 1:1 그대로 구현했다. 계획서가 명시한 제외 항목(플렉스/커버/팝업/측정 파이프라인 분리)도 손대지 않았다 — 파일 크기는 그대로고 **상태 캡슐화만** 했다. `Session` 을 `domain/` 으로 올리지 않은 것은 `DividerHandle` 이 `platform/DividerLocator.kt` 소속이라 순수성 위반이 되고(`ArchitectureTest` 가 잡는다), 로직이 0이라 테스트 이득도 없기 때문이다(W2·W3 의 「도메인으로 올림」 편차와 반대 판단이며 근거도 반대다).
+**HOLDS(비평가가 "성립한다" 판정 — 재구조화 금지)**: `panelSaveScope`·정직한 저장 표시 ·
+`pendingMenuAction` 액션 원장 · `removeViewImmediate` 스윕(D20) · `menuAttached` 술어 ·
+아이콘 22dp 프레임 통일 · 온보딩 히어로 대비/색 체계 · `Theme.kt` 팔레트 슬롯.
 
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS** — 조건 = 실기기 4+1경로 스모크 + 이 문서 갱신, **코드 결함 0건**. 검증 핵심 3건:
-① **파라미터 섀도잉을 함수 스코프 귀속으로 판정** — `targetPackage` 는 5개 함수의 **파라미터 이름이기도** 해서 컴파일러가 오변환을 잡아주지 못하는 유일한 지점이다. `grep` 24건을 하나씩 스코프에 귀속시켜 **파라미터 5곳 미변경 · 필드 5곳 변환**을 확인했고, 특히 `handleMeasureLetterbox` 안의 `actualVideoPaneRect(targetPackage, screen)` 이 파라미터가 아닌 **필드**임을 시그니처로 재확인했다(이 한 줄이 작업 최대 함정이었다). 오변환 0 / 누락 0
-② **7종 동시 변조로 JVM 사각지대 확정** — 폴백 6종 오염에 더해 **`session = Session(...)` 을 `dispatch(Start)` 뒤로 이동**(Start 리듀스가 만든 첫 effect 핸들러가 null session 을 읽는 심각한 회귀)까지 넣었는데 **312개 전부 통과**했다. "테스트가 통과하니 됐다" 를 명시적으로 폐기하고 **실기기가 유일한 실효 검증 수단**임을 판정한 것이 이 검증의 값어치다 → `DEVICE_FACTS.md` W6 절
-③ **W5 구조 불변 확인** — `dispatch` 의 이벤트 큐(`dispatching` 가드 + `pendingEvents` + 단일 드레인 `while` + `finally` clear)와 `reportTerminal` → `cleanupSession` **순서**가 그대로임을 diff 컨텍스트로 확인. 순서가 뒤집히면 `reportTerminal` 이 전부 폴백값을 읽어 토스트·last-success 저장·종횡비 캐시가 동시에 망가진다
+### ⚠ 실기기 검증 목록 [미검증] — 전 변경이 코드/빌드 수준만 거쳤다
 
-### W5 완료 내역 (구동부 안정화 · 실기기 4항목 [미검증])
-
-- **F6 이벤트 큐** — `dispatch()` 를 「재귀 재진입 허용」에서 **`dispatching` 가드 + `ArrayDeque` 큐 + 단일 드레인 루프**로 교체. 근본 원인은 `scope` 가 `Dispatchers.Main.immediate` 라 `handleQuerySplitState` 의 `scope.launch` 가 **중단점 없이**(`safeWindows()` 는 suspend 아님) 곧바로 `dispatch()` 를 재호출하고, 그 사이 바깥 dispatch 의 `val terminal = machineState` 가 **자기가 만들지 않은 상태**를 읽는다는 것. 신규 코드는 중첩 호출을 큐에 적재만 하고 최상위 호출 하나가 드레인하므로 **이벤트당 터미널 검사가 정확히 1회**씩, 그 이벤트가 만든 상태 기준으로 수행된다. 디스패처 홉을 추가하지 않아 **타이밍 영향 0**
-- **동작 등가의 전제를 테스트로 못 박음** — 신·구의 유일한 잠재 차이는 **「터미널 상태 + effect 를 동시에 내는 Transition」** 이 존재할 때다(그 경우 신규 코드는 `cleanupSession()` 으로 `machineState` 가 `Idle` 이 된 **뒤에** 큐를 드레인). qa 가 소스 전수 확인으로 그런 전이가 **12곳 중 0곳**임을 확정했고, 그 위에 **신규 도메인 테스트**(대표 상태 10 × 이벤트 15 × config 2 = 300 조합, 터미널 103건 방문)가 불변식을 기계 강제한다. **W6/W7 이 이 불변식에 기댄다**
-- **F9 v1 대응** — `reportTerminal` 의 `Done` 분기에서 잔여 > `arrangeConfig.residualTolerancePx` 면 ` (허용치 초과)` 부기 + `arrange done:` 로그에 `tolerance=` 추가. `verified=true` 는 허용치 이내를 **보장하지 않는다**(생성 경로 3개 중 2개 — `closedLoopCorrection=false`, 이미 1회 보정함 — 은 잔여를 그대로 보고). 종전엔 사용자가 「배치 완료 · 잔여 40px」 를 보고 성공/실패를 구분할 수 없었다. **필드 개명(`Done.verified` → `measured`+`withinTolerance`)은 v1.5** — 리듀서 테스트 전면 개정 비용이 이득을 초과하고, 사용자 측 문제는 메시지 구분으로 100% 해소된다
-- **로그 포맷 무변경** — `"transition: $machineState -> ${transition.state} (event=$e)"` 는 보간 변수명(`event`→`e`) 외 **문자 하나도 안 바뀌었다**(qa 가 diff 로 문자 단위 확인). 실기기 DoD 가 logcat 전이 로그 순서 대조이므로 필수 조건
-- **DoD 4종 PASS: 테스트 312(311+1) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 편집 0(신규 83줄 순수 추가)**
-
-**계획 대비 편차 0건** — 계획서 §F6 코드 스니펫을 그대로 구현했다. 다만 **계획서에 없던 신규 테스트 1개를 Advisor 판단으로 추가**했다(위 2번째 항목). F6/F9 는 둘 다 서비스 레이어라 JVM 테스트로 직접 보호할 수 없는데, F6 의 **등가 논증이 의존하는 도메인 불변식**은 순수 테스트로 못 박을 수 있다. 안전망을 논증이 아니라 기계에 맡긴다.
-
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS** — 조건 = 실기기 세션(계획서가 W5 에 지정) + 이 문서 갱신, **코드 결함 0건**. 검증 핵심 3건:
-① **반례 탐색을 소스 전수로** — `Done`/`Failed` 생성 Transition **12곳을 라인 단위로 열거**해 전부 `emptyList()` 임을 확인(174/218/251/256/298/328/332/348/353/377/383/391). 신규 테스트의 「대표 조합」이 놓친 경로가 있을 가능성을 소스 대조로 닫았다
-② **재진입 경로 5개 핸들러 개별 판정** — `handleQuerySplitState` 는 **항상 무중단**(큐 경로), `handleMeasureLetterbox` 는 **정상 경로에서 항상 중단**(`captureScreen` 이 진짜 비동기), 나머지 3개는 **양쪽 다 실재**(`pollUntil` 이 조건 즉시 참이면 무중단 반환 / `handleDragDividerTo` 의 조기 반환 분기). 두 경로 모두 ① 때문에 안전함을 논증. **이벤트 유실 없음**도 확인 — `while` 은 `removeFirstOrNull()` 이 null 일 때만(=큐가 빈 상태에서만) 빠져나오므로 정상 경로의 `clear()` 는 공집합 무해 재확인이고, 5개 핸들러가 전부 `scope.launch{}` 로 감싸여 있어 예외가 `dispatch` 프레임으로 동기 전파되지도 않는다
-③ **F9 는 JVM 테스트 사각지대임을 변조로 확정** — 부등호를 `>` → `>=` 로 바꿔도 **테스트 29개 전부 통과**했다(`ArrangerAccessibilityService` 를 인스턴스화하는 JVM 테스트가 0개). "테스트가 통과하니 됐다" 로 넘어가지 않고 **실기기 육안이 유일한 검증 수단**임을 명시 판정한 것이 이 검증의 값어치다 → `DEVICE_FACTS.md` W5-4 로 등재. 부수로 Worker 와 **다른 지점**(Cancel 최우선 가드)을 변조해 신규 테스트의 비-공허성을 독립 재확인(1건 FAILED, 원복 후 diff 빈 출력)
-
-### W3 완료 내역 (기하 정합성·도메인 불변식 · 실기기 2항목 [미검증])
-
-- **F2 1단계 가드** — 서비스가 들고 있는 `geometry` 는 `WindowGeometry.foldSevenLandscape()`(2184×1968) **상수**인데, 실화면이 그와 다르면(세로 방향 · 커버 디스플레이 · 외부 디스플레이) 그 기하로 계산한 `dividerCenterY` 를 실화면에 그대로 적용해 **조용히 틀린 곳으로 디바이더를 옮겼다**. `startArrange` **첫 문장**(세션 상태 `machineState`/`sessionInFlight` 를 건드리기 전, busy 가드보다도 앞)에 `geometry.matchesScreen(screenRect())` 검사를 넣어 토스트 「이 화면 방향/디스플레이는 아직 지원하지 않습니다」 + `Log.w` 로 떨어뜨린다. **가로 경로 영향 0** — 가로에서는 항상 통과한다
-- **자동 트리거는 로그만** — `evaluateFlexAutoTrigger` 게이트 체인의 **busy 게이트와 split-active 게이트 사이**에 동일 검사를 넣되 토스트 없이 `reason=geometry-mismatch` 로그 + `flexPolicy.disarm()`. 「조용한 실패 금지」 는 *사용자가 시작한 행위*의 원칙이고 센서 발화 자동 트리거는 비대상이라는 기존 5개 게이트의 선례를 그대로 따른다. 부수로 바로 아래 `isSplitActive(safeWindows(), screenRect())` 가 새 `screen` 지역변수를 재사용하도록 정리(중복 호출 제거, 동작 등가 — 두 지점 사이에 suspend 지점 없음 + `Dispatchers.Main.immediate` 단일 스레드라 끼어들 경로 없음을 검증자가 확인)
-- **`startPopup` 은 대상 아님** — `PopupPlanner.plan(screen.width, screen.height, ...)` 이 이미 실화면을 직접 읽으므로 애초에 이 결함에 노출되지 않는다. KDoc 에 근거를 명시해 "왜 여기만 빠졌나" 를 나중에 다시 묻지 않게 했다
-- **F1 불변식** — `WindowGeometry.init` 에 `require(allocatableHeight >= 2 * minPaneHeight)`. **클램프가 아니라 require 인 이유**: 음수 `panelH` 를 0으로 클램프하면 "말이 안 되는 계획"을 조용히 만들어낸다 — 계획 불가는 계획 불가로 드러내야 한다. 기존 `SplitPlannerTest` 의 모든 기하 조합(`minPane=800`, `divider=24,minPane=200` 등)과 Fold 7 실측값(`1954 >= 362`)이 여유롭게 통과해 **기존 테스트 편집 0건**
-- **신규 테스트 7종** — F1 3종(경계 정확히 통과 `986 == 2×493` · 1px 부족 시 예외 · Fold 7 실측 통과) + F2 4종(정확 일치 · 톨러런스 안 `2205×1987` · **폭 단독 위반과 높이 단독 위반을 분리 단언** · 세로 전치 `1968×2184`)
-- **DoD 4종 PASS: 테스트 311(304+7) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 기존 테스트 순수 추가(70 삽입/0 삭제)**
-
-**계획 대비 편차 1건 — 판정 함수를 서비스 private 이 아니라 `domain/` 으로:**
-계획서는 `private fun geometryMatches(screen: IntRect)` 를 서비스 안에 두라고 했으나, `WindowGeometry.matchesScreen(screen, toleranceFraction = GEOMETRY_TOLERANCE_FRACTION)` 멤버로 올렸다.
-서비스 private 이면 **톨러런스 경계가 실기기 없이는 검증 불가**한데, 도메인에 두면 JVM 단위 테스트 대상이 되고 `ArchitectureTest` 가 순수성을 기계 강제한다(ADR-4). W2 편차 1번(`ShellCommandPolicy` 를 `domain/` 으로)과 같은 취지이며, 검증자도 "더 나은 설계, 문제 삼을 이유 없음" 판정.
-
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS** — 유일한 조건이 **이 `PROGRESS.md` 갱신 자체**였고(계획서 W3 DoD 가 §C 등재를 명시) 코드 결함은 0건. 검증 핵심 3건:
-① **변조 3종 전부 사전 예측과 정확히 일치** — (a) `matchesScreen` 무조건 `true` → 2건 FAILED (b) **`&&` → `||`** → 1건 FAILED (c) `require` 무력화 → 1건 FAILED. 특히 (b) 는 "게으른 테스트 세트면 아무것도 안 잡힌다" 를 겨냥한 변조인데 실제로 포착됐다 — **폭 단독/높이 단독 분리 단언이 실효를 갖는다는 실증**. portrait 테스트가 (b) 를 못 잡는 것(두 축 동시 위반이라 `||` 로도 false 유지)까지 사전 예측대로였다
-② **가드 배치를 문자 그대로 확인** — F2 가드가 `startArrange` 의 첫 statement 이고 `sessionInFlight = true`·`scope.launch`·busy 체크 **전부보다 앞**, fall-through 없음. flex 게이트는 busy 와 split-active **사이**, `toast()` 호출 0, `disarm()` 이웃과 동일
-③ **NUL 오탐을 스스로 폐기** — bash `grep -c $'\x00'` 가 NUL 을 인자에서 잘라 빈 패턴이 되며 전체 라인 수와 우연히 일치하는 **허위 신호**를 냈고, `wc -l` 대조로 이를 탐지한 뒤 Python 바이트 스캔으로 대체해 4개 파일 NUL 0건·제어문자 0건 확정 (W2 에서 발견된 소스 위생 함정의 재발 없음)
-
-### W4 완료 내역 (테스트 안전망 · 실기기 불필요 · 프로덕션 로직 0줄)
-
-- **T1 Robolectric 배선** — `testImplementation(libs.robolectric)`(4.14.1, 카탈로그에 이미 선언돼 있었으나 미사용이던 것을 사용 전환 = M4 「robolectric 미사용」 동시 해소) + `testOptions.unitTests.isIncludeAndroidResources = true`. **`@Config(sdk = [34])` 필수** — Robolectric 이 `targetSdk` 로 android-all jar 를 고르는데 4.14.1 은 API 36 jar 가 없다. 34 가 1차 시도에 통과해 4.16.1 상향은 불필요했다
-- **신규 `app/src/test/.../platform/ScreenshotSamplerTest.kt` 5종** — 종전 도메인 테스트는 **이미 만들어진** `LetterboxScan` 을 입력으로 순수 로직만 봤다. 실제 `Bitmap.getPixels`/stride/margin `coerceIn` 경계는 **커버 범위 밖**이었고, 여기가 모든 측정의 입력이다. ① 행축 letterbox → `resolveAspect` 16:9 ② 열축 pillarbox → `resolveAspectPillarbox` 4:3 ③ 전치 쌍 대응 ④ `rowStride ∈ {1,2,4}` raw 불변 ⑤ 초소형(4×4·2×2) 경계
-- **이 웨이브의 목적은 W7/P4 의 선행 조건** — P4(`getPixels` 의 `stride` 인자 활용)는 **모든 측정의 입력 함수**를 건드린다. 계획서 P-2 원칙대로 안전망을 먼저 깐다. 테스트 ④ 가 그 직접적 게이트다(stride 를 바꿔도 raw 가 불변임을 기계 보장)
-- **DoD 4종 PASS: 테스트 304(299+5) · assembleDebug · lintDebug(신규 0, baseline 15 무변경) · 프로덕션 diff 0줄**
-
-**계획 대비 편차 1건 — 테스트 ③ 은 「리터럴 픽셀 전치」로 만들 수 없다 (계획서 요구가 모순):**
-계획서는 "동일 콘텐츠의 전치 쌍이 양축에서 같은 AR" 을 요구했으나, 이는 기하학적으로 불가능하다.
-`resolveAspect` 의 raw = (frame 폭)/(content 높이), `resolveAspectPillarbox` 의 raw = (content 폭)/(frame 높이) 인데
-이미지를 90도 돌리면 두 항이 서로 자리를 바꾸므로 **`raw_pillarbox ≡ 1/raw_letterbox`** 가 강제된다
-(A: 144×270, content 81 → 144/81 vs 81/144 로 실수 대입 확인). 따라서 **프레임 치수만 전치**(144×270 → 270×144)하고
-콘텐츠 밴드는 B 안에서 독립 배치해 같은 16:9 를 재현했다. 대신 stride 를 명시적으로 교차 배정(entries 축 1, 교차축 8)하고
-**`scanA.width == scanB.width == 144` 를 직접 단언**해 원래 겨냥한 회귀군(`scaledWidth=w/rowStride` ↔ `scaledHeight=h/colStride` 대응 붕괴)을
-그대로 포착한다. 검증자 판정 **CONFIRMED**(커버리지 약화 아님)
-
-**독립 검증(qa-verifier) 판정 = PASS** — 워커 주장 전부 재현. 검증 핵심 3건:
-① **5개 테스트 기댓값 전부 수기 재도출** — 잘못된 기댓값도 통과한다는 위험을 겨냥. 특히 테스트 ③ 의 `band.height = 256` 은
-`sideMarginPct=0.005` 로 `x0=1` 이 되어 x=0 열이 빠지는 것까지 반영된 값이며 off-by-one 우연이 아님을 확인.
-테스트 ④ 의 content fraction = 64/192 = 0.333 이 `MIN_CONTENT_FRACTION`(0.25) 을 반올림 의존 없이 상회함도 확인
-② **워커가 쓰지 않은 변조로 비-공허성 재확인** — `impliedAspect` 의 분자·분모를 뒤집으니 **6건 FAILED**(신규 3 + 기존 `LetterboxDetectorTest` 3),
-사전 손예측과 정확히 일치. 원복 후 `git diff` 공백 + 304/0 재확인
-③ **lint 15건 무변경의 이유 확정** — robolectric 의존성 추가가 신규 경고를 안 만든 것은, `NewerVersionAvailable`(4.14.1→4.16.1) 이
-**W0 시점부터 이미 baseline 에 있었기** 때문이다(`lint-baseline.xml:148-150`, 위치가 `libs.versions.toml` 버전 선언 라인 — lint 의 카탈로그
-신선도 검사는 실제 사용 여부와 무관하게 카탈로그 항목 자체를 스캔한다). baseline 수동 편집 불필요, `updateLintBaseline` 미실행
-
-### W2 완료 내역 (Shizuku 셸 하드닝 · 실기기 7항목 [미검증])
-
-- **S3 + S2 argv 전환** — `IShellExec.aidl` 을 `String run(in String[] argv, long timeoutMs)` 로 바꾸고 `sh -c` 를 폐기했다. **셸 파싱 자체가 사라져** 문자열 보간·작은따옴표 인용 의존(YouTube `Shell$HomeActivity` 의 `$`)이 원천 소멸한다. 그 위에 신규 **순수 도메인 `domain/ShellCommandPolicy.kt`** 허용 목록 — `am` → `{start, stack, task}` 정확 일치(대소문자 구분), argv 크기 `2..16`, NUL 문자 포함 인자 거부(execve 인자 절단 방어). **강제 지점은 원격 `ShellExecUserService.run`** 이고 클라 `ShizukuShell.exec` 의 동일 검사는 fail-fast 용 중복 — 우회 가능한 클라 검사만으로는 보안 통제가 아니다. **목적은 인젝션 방어가 아니라 shell UID(2000) 권한 최소화**(인젝션할 셸이 이미 없다)
-- **F3 실효 타임아웃** — 근본 원인은 `binder.run()` 이 **블로킹 바인더 호출**이라 클라 `withTimeoutOrNull` 이 취소를 걸 수 없다는 것(코루틴 취소는 중단점에서만 작동). 따라서 실효 타임아웃은 **원격에만 만들 수 있다**: `process.waitFor(timeoutMs, TimeUnit)` + 초과 시 `destroyForcibly()`. 클라 예산은 `timeoutMs + BINDER_OVERHEAD_MS(2s)` 로 **원격보다 크게** 잡아 원격이 먼저 포기하고 진단 가능한 `-1` + timeout 문자열을 돌려주게 했다. `ensureBound()`(자체 데드라인 3s)는 이 창 **밖**으로 빼 예산 이중 소비를 제거 — 종전엔 3초 바인드가 5초 exec 예산을 잠식했다
-- **F3 부수 — 읽기 스레드 분리가 타임아웃의 전제** — 자식이 stdout 을 닫지 않으면 같은 스레드의 읽기가 영원히 블록돼 `waitFor(timeout)` 에 **도달조차 못 한다**. 데몬 스레드(`fw-shell-reader`)로 분리해야 타임아웃이 실효를 갖는다
-- **F4 파이프 데드락** — `ProcessBuilder(argv).redirectErrorStream(true)` 로 단일 스트림화 + `outputStream.close()`. 구 코드는 stdout 을 EOF 까지 소진한 뒤에야 stderr 를 읽어, 자식이 stderr 파이프(64KB)를 채우면 상호 대기에 빠졌다. 버퍼는 **읽기·쓰기 양쪽 다** `synchronized`
-- **F5 바인드 래치 해제** — `ensureBound()` 타임아웃 경로에 `if (bound != true) binding = false`. 구 코드는 `bindUserService` 가 예외 없이 반환됐는데 `onServiceConnected` 가 끝내 안 오면 `binding` 이 `true` 로 고착돼 이후 모든 호출이 `if (!binding)` 에 걸려 **재바인드를 시도조차 안 했다**(복구 경로 없음). `unbindUserService` 는 부르지 않는다 — 도착 직전 연결을 죽이면 새 실패 모드가 생긴다
-- **versionCode 2→3 (필수 부수)** — `Shizuku.UserServiceArgs.version(BuildConfig.VERSION_CODE)` 이 UserService 프로세스 재생성을 결정한다. AIDL 이 바뀌었는데 버전이 같으면 **구 바이너리 재사용으로 `AbstractMethodError`**. W0 에서 이미 1→2 로 올렸고 그 빌드가 기기에 설치돼 있을 수 있으므로, AIDL 이 실제로 바뀌는 이 커밋에서 다시 올렸다
-- **부수** `proguard-rules.pro` 에 `ShellExecUserService`·`IShellExec`(+Stub) keep 규칙 — Shizuku 가 리플렉션으로 로드하고 `destroy()` 를 이름으로 호출한다. `isMinifyEnabled=false` 라 현재는 무효, M6 과 같은 취지의 v1.5 대비
-
-**계획 대비 편차 3건 (전부 Advisor 판단으로 계획서에 추가한 것):**
-1. **허용 목록을 `domain/` 순수 Kotlin 으로** — 계획서는 위치를 지정하지 않았다. 도메인에 두면 보안 판정이 JVM 단위 테스트 대상이 되고 `ArchitectureTest` 가 순수성을 기계 강제한다. `Array<String>` 대신 `List<String>` 을 받는 것도 도메인 관례(배열 `==` 는 참조 동등성)
-2. **`ensureBound()` 를 타임아웃 예산 밖으로 이동** — 계획서에 없던 항목. F3 수정만으로는 3초 바인드가 5초 exec 예산을 잠식하는 문제가 남는다
-3. **versionCode 를 다시 올림(2→3)** — 계획서는 "M4 의 1→2 가 이 목적을 겸한다" 고 봤으나, W0 빌드가 이미 기기에 설치됐을 가능성이 있어 AIDL 이 실제로 바뀌는 커밋에서 재상향하는 쪽이 `AbstractMethodError` 를 확정 차단한다
-
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS** — 유일한 조건은 계획서가 W2 에 지정한 **실기기 E2E 세션**이며 코드 결함은 0건. 검증 핵심 3건:
-① **허용 목록 대조 실험** — `isAllowed` 를 `return true` 로 임시 무력화하니 `ShellCommandPolicyTest` **13중 9 FAILED**(허용 목록 밖 케이스 전부), 원복 후 MD5 일치 확인. 테스트가 장식이 아님을 실증
-② **`ensureBound` 이동을 diff 로 확인** — 개정 전엔 `withTimeoutOrNull(timeoutMs)` **안**에 있었고 개정 후 밖으로 나왔음을 실제 diff 로 대조
-③ **S2 우회 벡터 3종 차단 확인** — `/system/bin/am`·`./am` 경로 변형은 `ALLOWED[argv[0]]==null` 로 거부(더 엄격), NUL 검사가 argv 전 원소·전 문자 순회, 대소문자/호모글리프는 `equals` 정확 일치로 자연 거부. 추가로 `ArchitectureTest` 가 `walkTopDown()` 디렉터리 순회라 신규 도메인 파일이 자동 포함됨(vacuous-pass 아님)도 확인
-
-**소스 위생 함정 [신규 발견]** — Kotlin 소스에 NUL 문자 유니코드 이스케이프를 쓰려다 파일 기록 과정에서 **raw NUL 바이트(0x00)가 소스에 그대로 박히는** 현상이 발생했다. Read 계열 도구가 NUL 을 공백처럼 렌더해 "오타로 스페이스가 들어갔다" 로 오인하기 쉽다. `c.code == 0` / `0.toChar()` 형태로 재작성해 이스케이프를 소스에서 제거했고, qa 가 변경 파일 8종 전부를 바이트 수준으로 스캔해 잔여 0건 확인. **이 도구 체인에서 파일 내용에 유니코드 이스케이프를 넣을 때 상시 주의** (`DEVICE_FACTS.md` W2 절에도 기록)
-
-### W1 완료 내역 (보안 차단 · 실기기 4항목 [미검증])
-
-- **S1 debug 소스셋 분리** — 신규 `app/src/debug/AndroidManifest.xml` 로 **선언 5종 이관**(`probe.ProbeActivity`·`probe.ProbeAccessibilityService`·`probe.ProbeTriggerReceiver`·`service.ArrangeTriggerReceiver`·`FileProvider`). **Kotlin 소스는 이동하지 않았다** — 매니페스트만. 릴리스 병합 매니페스트에서 5종 **0건**, 디버그에는 5종 전부 확인. adb 트리거 편의 100% 보존. **M5(프로브 릴리스 탑재) 동시 해소** — 릴리스는 접근성 서비스 1개·런처 아이콘 1개로 정상화, 프로브는 개발 빌드에 남아 F2 2단계 측정에 계속 쓸 수 있다
-- **S4 finish 토큰** — `EXTRA_FINISH_PANEL: Boolean` → `EXTRA_FINISH_TOKEN` + companion `@Volatile finishToken` / `issueFinishToken()` / `consumeFinishToken()`(1회용). `PanelActivity` 는 파트너 피커 노출 때문에 `exported="true"` 가 불가피한데, 발신자 신원 검증 수단이 없다(`callingActivity` 는 `startActivityForResult` 전용, `referrer` 는 Service 발 `startActivity` 에서 신뢰 불가) → **비밀값으로 검증**. **정상 경로 회귀 0**: 1차 경로는 `PanelActivity.instance.finish()` 라 토큰을 아예 쓰지 않고, 토큰 경로(`instance==null ∧ hasPanelTask()`)는 서비스 인스턴스 위에서 호출되므로 발급·소비가 항상 동일 프로세스. **보너스**: base intent 에 토큰이 박혀도 프로세스가 바뀌면 불일치로 무시 → **#28 「영구 실패 루프」 결함 클래스가 구조적으로 소멸**(단 `hasPanelTask()` 사전 가드는 불필요한 태스크 생성 방지라는 별개 목적으로 유지)
-- **F7 취소 시 Bitmap 회수** — `ArrangerAccessibilityService.captureScreen()` · `ProbeAccessibilityService` 2곳에 `else bmp?.recycle()`. 전면 스크린샷 1장 ≈17MB(2184×1968×4B)라 GC 압박이 무시할 수준이 아니다
-- **F8 리듀서 `Idle`+`Cancel`** — Cancel 최우선 가드에 `&& state !is ArrangeState.Idle` 추가 + 테스트 1개. 서비스 `cancelArrange()` 가 Idle 을 먼저 걸러 실제 도달은 없었으나, **가드가 리듀서 밖에 있는 것 자체**가 순수 리듀서의 자기완결성 위반이었다
-- **부수 개명** `Intent?.requestsFinish()` → `consumesFinishRequest()` + 부작용 KDoc — 토큰을 **소비**하는데 순수 질의처럼 읽혀 이중 호출 함정이 있었다
-
-**계획 대비 편차 3건 (후속 웨이브 참고):**
-1. **`ExportedReceiver` 2건은 자동 해소되지 않았다** (W0 편차 2번의 연장). `lintDebug` 는 debug 병합 매니페스트를 보므로 리시버는 여전히 존재하고 **위치만 `src/debug/` 로 바뀌어 신규 경고**가 된다 → debug 매니페스트의 두 `<receiver>` 에 `tools:ignore="ExportedReceiver"` + 근거 주석. baseline 은 계획대로 **17 → 15**(해당 2건만 수동 삭제, `updateLintBaseline` 미실행)
-2. **lint `ForegroundServiceType` 오탐 신규 발생** — debug 소스셋에 `foregroundServiceType` 없는 `<service>`(=`ProbeAccessibilityService`, AccessibilityService 라 없는 게 정상)가 **별도 매니페스트 파일**로 생기자 검사기가 `FloatingLauncherService.startForeground()` 호출을 잘못 연결. **대조 실험으로 오탐 확정**: 동일 코드에서 `lintRelease`(매니페스트 1개)는 통과, `lintDebug`(2개 병합)만 실패. 병합 debug 매니페스트에 `foregroundServiceType="specialUse"` 정상 존재 확인. `startForegroundCompat()` 에 `@SuppressLint` + 진단 근거 주석(baseline 에 숨기지 않음)
-3. **AGP 머저가 XML 주석을 병합 결과에 보존한다** — main 매니페스트 주석에 남아 있던 `probe.ProbeActivity` / `probe.ProbeTriggerReceiver` 리터럴이 **릴리스 매니페스트까지 따라 들어갔다.** 해당 주석 2곳을 debug 매니페스트 경로 표기로 대체(내용 정확도는 오히려 개선)
-
-**독립 검증(qa-verifier) 판정 = PASS.** 억제 정당성을 대조 실험으로 실증하고 `@SuppressLint` 제거 후 재현·원복까지 확인. S4 토큰 로직은 (a)정상 경로 통과 (b)`onCreate`/`onNewIntent` 이중 소비 없음(플랫폼이 둘 중 하나로만 라우팅) (c)config change 재생성 시 오발화 없음(`PanelActivity` 는 `configChanges` 로 재생성 자체가 없고, 낡은 토큰은 불일치로 무시) 전부 확인.
-
-### W0 완료 내역 (실기기 불필요 · 런타임 동작 변경 0줄)
-
-- **M7 lint 게이트 도입** — 실제 수정 7종(`PropertyEscape` 2곳·`MissingApplicationIcon`·`ObsoleteSdkInt`×2·`ClickableViewAccessibility`×2·`DataExtractionRules`·`RedundantLabel`) + 코드 억제 2종(`ResizeModeDetector` 리플렉션 `@Suppress`, 폴백 비트가 이미 대응) → **그 다음에** baseline 생성. `app/lint-baseline.xml` **17건 = `AndroidGradlePluginVersion`×2·`GradleDependency`×6·`NewerVersionAvailable`×7·`ExportedReceiver`×2**. 앞 15건은 의존성 상향(P-5, v1.5 일괄), `ExportedReceiver` 는 **W1/S1 에서 해소 예정**(W0 시점엔 `app/src/debug/` 부재라 해소 불가 — 검증자 확인). **금지 ID(고치기로 한 8종) baseline 진입 0건** 감사 완료. baseline 경로는 전부 상대경로 — 머신 종속 없음
-- **M4** versionCode 1→2 · versionName `0.4.0`(**W2 Shizuku AIDL 변경의 선행 조건** — `UserServiceArgs.version` 이 프로세스 재생성을 결정) · `android:icon` · `EntryContext.panelIntent` 필드+생성부 삭제(재사용처 0 확인) · `tapPoint` KDoc 정정
-- **M2** CLAUDE.md 정정 — 「의존성」에서 **Hilt 삭제**(실제 미사용, 컴포넌트가 직접 생성하는 것이 이 규모에서 옳음) + 「검증 명령」에 `JAVA_HOME` 전제 명시(런처는 `org.gradle.java.home` 과 별개로 요구) + DoD 3번에 `lintDebug` 편입
-- **M6** `app/proguard-rules.pro` 신규 — `ApplicationInfo.privateFlags` keep 규칙 사전 작성 + release 배선. `isMinifyEnabled=false` 유지라 현재는 무효, v1.5 대비
-- **T2** `app/src/test/.../ArchitectureTest.kt` 3개 — `domain/` 순수성 + `ProfileStoreMapping` 순수성 + **vacuous-pass 가드**(경로 오타로 항상 통과하는 것이 이 테스트의 유일한 실패 모드). **실효성 실증**: `domain/Profiles.kt` 에 `import android.util.Log` 임시 주입 → 실제 FAILED 확인 후 원복. CLAUDE.md 「철칙」이 사람 리뷰 의존에서 기계 강제로 전환됨
-- **스타일** dp 리터럴 4종 상수화(값 불변 14/4/14/10) · `MENU_ITEM_TEXT_COLOR = -1` → `Color.WHITE`(동일 값, `const`→`val` 은 외부 정적 필드라 불가피) · 로그 태그 `PanelActivity`→`FWPanelActivity`(유일하게 `FW` 접두사 이탈 → `logcat -s` 누락 원인)
-- **부수 추가** `res/xml/backup_rules.xml` + `android:fullBackupContent` — minSdk 30(<31) 이라 `dataExtractionRules` 단독으로는 lint 갭이 안 닫힘. `allowBackup="false"` 와 정합하게 전부 제외
-- **KTX 치환 2건** `Bitmap.createBitmap`→KTX `createBitmap` · `Uri.parse`→`toUri()`. core-ktx 1.15.0 sources jar 실물 확인으로 **둘 다 순수 pass-through inline** 판정 (baseline 로 숨기지 않고 실수정한 근거)
-
-**독립 검증(qa-verifier) 판정 = CONDITIONAL PASS → 권고 2건 반영 후 종료.** 검증 핵심 2건:
-① **`BubbleImageView` 이중 발화 없음** — `BubbleTouchListener.onTouch` 4분기 전부 `return true` → 프레임워크 `onTouchEvent` 미호출 → `performClick()` 호출 지점은 탭 확정 분기 단 하나. 탭/드래그/롱프레스 임계값·분기 구조 무변경(16차 오분류 0 검증분 보존)
-② `SDK_INT < R` 죽은 분기 제거 2곳(minSdk=30=R) 후 제어 흐름 동일, `ArrangerAccessibilityService` 의 `import android.os.Build` 는 미사용 확정 제거 / `ProbeAccessibilityService` 는 `Build.MANUFACTURER` 등 실사용이라 유지 — 판단 정확
-
----
-
-**개발 환경 주의 (실측 누적)**: Git Bash 에서 gradlew 는 `JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` 프리픽스 필수 — 없으면 installDebug 가 조용히 실패해 구버전 APK 로 검증하게 됨 (실제 발생, 40분 소모). screencap 은 `-d 4630946449689556883` (멀티 디스플레이). adb 롱프레스 시뮬레이션은 `input swipe x y x y 1200` (700ms 는 경계 실패). **10차 추가**: Git Bash 가 `/sdcard/...` 인자를 로컬 경로로 변환해 파괴 — 원격 명령은 `adb shell "cat /sdcard/x"` 처럼 통째 인용, `adb pull` 은 `MSYS_NO_PATHCONV=1` 프리픽스. E2E 리셋 = 패널 페인 탭+`keyevent 4` (PanelActivity finish → 상대 앱 전체화면 복귀). 유튜브 상태 셋업 = `am force-stop` 후 `am start -a VIEW -d '...watch?v=aqz-KE-bpKQ&t=120'` (기존 태스크는 딥링크 미라우팅) → 컨트롤 탭 → 전체화면 버튼 (2184×1968 가로에서 ≈1466,858). 회전 강제 = `accelerometer_rotation 0` + `user_rotation 1` (외부 요인으로 리셋되니 캠페인 중 재확인). **13차 추가**: Shorts 진입이 포트레이트 강제 + 잠금 무시하며, 복귀 후 settings put 만으론 WM 재평가 안 됨 — `adb shell cmd window user-rotation lock 1` 이 즉시 적용 (`free` 로 해제). pre-null(측정 실패) 상태 유도 = 세로 직캠(MPD직캠 검색) immersive 전체화면 — 다크 UI 는 상태바/엣지 순흑 행 때문에 pre 가 항상 후보 생성(한쪽 밴드 0 허용). 종료 대기 = `adb logcat -s FWArranger -e "arrange (done|failed)" -m 1`. **15차 추가**: 13차 `user-rotation lock` 잔재가 남아 있으면 FoldingFeature orientation 이 물리 자세와 무관하게 VERTICAL — 폴드 검증 전 `cmd window user-rotation free` 확인 필수. 재설치 후 `settings put secure enabled_accessibility_services` 를 **동일 값**으로 put 하면 no-op (서비스 재기동 로그 안 나옴) — 기동 로그 관찰하려면 `none` 으로 토글 후 재설정.
-**실기기 검증 절차 (참고):**
-
-```bash
-./gradlew :app:installDebug
-# 재설치 후 접근성 재활성화 필수 (함정 #6). probe 병행 시 콜론으로 연결
-adb shell settings put secure enabled_accessibility_services \
-  dev.dj.foldwindow/dev.dj.foldwindow.service.ArrangerAccessibilityService
-# 유튜브 가로 전체화면 재생 상태에서 (⚠ -n 필수 — 액션만으로는 implicit broadcast 제한으로 수신 안 됨, 7차 실측):
-adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.service.ArrangeTriggerReceiver --es placement top
-# 하단 배치: --es placement bottom / 종횡비 강제: --ef aspect 1.7778 / 취소: --ez cancel true
-```
+연결 시 확인: 메뉴 행 탭→배치 1회(exit 애니메이션 개입) · 애니메이터 배율 0 설정 ·
+**TalkBack 롱클릭 메뉴 진입**(F1, 신규 경로라 우선) + 토글 낭독 · 패널 메모 상단 좌측
+무음 정지 소멸(F6c) · 버블 링 55% 밝은/어두운 영상 위 시인성 · 패널 IME(하단 배치 MEMO) ·
+시계 계수 0.26/3.4 실측 · 온보딩 커버 화면 폭 · 아이콘 22dp 실렌더 ·
+**F4 이연 실행**(메뉴 항목 탭 직후 자동 배치 세션 진입 → 복원 시 액션 1회만 실행).
 
 ---
 
@@ -282,175 +80,147 @@ adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.servic
 
 | Phase | 상태 | 비고 |
 |---|---|---|
-| Day 0 수동 검증 | ✅ 완료 | #1·#2·#3 통과, #4는 대체 불가로 판정 |
-| 부트스트랩 | ✅ 완료 | AGP 8.11.1 / Kotlin 2.1.0 / Gradle 8.13 wrapper / compileSdk 36. assembleDebug·testDebugUnitTest 통과 (32/32) |
-| Phase 0 프로브 | ✅ 완료 | 3회 실행(전체화면/분할활성/가로영상). #5 ✅ #6 ❌ #7 ✅(분할 중에만). E는 유튜브 앰비언트 모드로 미검출 → Detector v2 필요. `docs/DEVICE_FACTS.md` 확정 |
-| Phase 1 도메인 | ✅ 완료 | P1-1·P1-2·P1-3·P1-4·Detector v2 전부 완료. 전체 91 테스트 통과, qa-verifier PASS. 완료 기준 3항목(16:9 잔여 0px / 상태머신 실패 경로 / JSON 로더 거부) 전부 테스트로 입증 |
-| Phase 2 액추에이터 | ✅ 완료 | DoD ① 검은띠0 ✅ ② 넷플릭스 ✅(MENU 레시피 E2E 6회, 4.7초, 디바이더 1235 정확 — 단 재생은 "배치 후 시작" 순서 필요) ③ 상하전환 ✅ ④ 실패노출 ✅. 131 테스트. 유튜브 DRAG 회귀 ✅ (1차 실패→step2 수정→2차 통과, 4.2초 residual=0). 잔여: 회전×2 폴백 미발동(미검증) |
-| Phase 3 UI | ✅ 완료 | DoD 3항목(콜드부팅 버블 복귀 · 프로파일 유지 · 권한 미부여 무크래시 안내) 실기기 검증 완료. P3-1 버블 ✅ + P3-4 온보딩 ✅ (실기기 E2E: 버블 탭→배치 4.1초, 버블 숨김/복원 검증). P3-2 확장 메뉴 ✅ **실기기 E2E 완료** (메뉴發 배치 verified·분할 해제 성공·재탭 닫기만·프리셋 렌더·가로/세로 클램프 — 결함 3건 발견·수정·재검증, DEVICE_FACTS P3-2 절). P3-3 DataStore ✅ **실기기 검증 완료** (141 테스트 + 7차 실기기 #26 5항목 전부 — 이관·goAsync 부팅·placement 복원 E2E·corruption 복구·중지 레이스). P3-5 FoldingFeature ✅ **15차 실기기 검증 5항목 전부 통과** (결함 2건 현장 수정: UiContext 3-인자 채택·닫기 오발화 2층 방어. qa PASS 230/230, DEVICE_FACTS 15차 절) |
-| Phase 4 확장 | ✅ 구현·검증 완료 (물리 확인 2건 이월) | P4-1·2·3·4 구현 + **17차 실기기 검증** (P4-2 5/5 · P4-3 6/7 에뮬 · P4-4 4.5/5 · P4-1 7/7, DEVICE_FACTS 17차 절) + **19차 #27 종결** (축 A 채택·축 B 기각 제거·#28 수정. G4~G7 통과, G2 실패가 축 B 기각 근거. DEVICE_FACTS 19차 절). 잔여 = 「남은 작업」 A-1 물리 접기 · A-2 DRM 육안 + B 희귀 경로 |
+| Day 0 수동 검증 | ✅ 완료 | #1~#3 통과, #4 대체 불가 판정 |
+| Phase 0 프로브 | ✅ 완료 | 실기기 측정값 `docs/DEVICE_FACTS.md` 확정 |
+| Phase 1 도메인 | ✅ 완료 | SplitPlanner/LetterboxDetector/AspectResolver/ArrangeStateMachine 등 확정 |
+| Phase 2 액추에이터 | ✅ 완료 | DRAG·MENU 레시피 E2E 검증 완료 |
+| Phase 3 UI | ✅ 완료 | 버블·온보딩·프로파일 저장·FoldingFeature 자동 배치 전부 실기기 검증 |
+| Phase 4 확장 | ✅ 완료 | P4-1(팝업/Shizuku)·P4-2(위젯)·P4-3(커버 자동 해제)·P4-4(앱 페어 바로가기) 구현+검증, #27/#28/#29 결함 종결 |
+| 개선 웨이브 W0~W7 | ✅ 완료 | 23항목, 20차 캠페인으로 28/31 실기기 검증(3건은 계획된 자연 대기). 상세 = 아래 표 + `docs/DEVICE_FACTS.md` |
+| #30 전체화면 자동 트리거 | ✅ 완료 | 21·22·23차로 W0 7/8·W1 11/11 검증, 결함 #31 발견·수정·재검증 |
+| #32 런처 진입점 통합 검토 | ✅ 검토 완료(코드 변경 0) | 결론은 아래 남은 작업 C 참조 |
 
-## 작성된 코드
+**개선 웨이브 커밋**: W2=`1d1e0bd` W3=`8edcce3` W4=`0f53af2` W5=`70e53fa` W6=`836efe0` W7=`a8a3522`(+`42f0c4a`=#29 수정). 계획·원 리뷰 문서(2026-07-29)는 23항목 전부 반영 완료 후 폐기했다 — 각 수정의 이유는 해당 `.kt` KDoc 에 인라인으로 옮겼다. 실기기 검증 결과(항목별 로그 근거) = `docs/DEVICE_FACTS.md` 「개선 웨이브 W1~W7」·「20차」절.
 
-| 파일 | 상태 |
-|---|---|
-| `domain/SplitPlanner.kt` | ✅ P1-1 반영. `foldSevenLandscape()` = divider 14px / minPane 181px (실측). 테스트 22개 |
-| `domain/LetterboxDetector.kt` | ✅ v2 하이브리드. 순흑(0.97) 우선 → luma 통계 기반 적응 폴백(`ADAPTIVE_*` 상수 4종). `resolveAspect` 진입점 불변. 11차 #12: `resolveAspectPillarbox` 열축 역산(band.height/scan.width) 추가 — 기존 함수 무변경. 테스트 37개 |
-| `domain/MeasurementConsensus.kt` | ✅ 11차 #12 신규 + **실기기 검증** (G1~G5, 판정 6경로 발동 실증). 순수 Kotlin — 2-샷 합치 판정 (`classifyAxis`/`classifyConfirm`/`agree`, verdict 9종, DESIGN_12 §3.3 코드화). classifyAxis minConfidence(0.25) — 크롬 그라디언트 conf 0.08 유사 밴드 오승격 차단 (실측 대응). 테스트 25개 |
-| `domain/FlexModePolicy.kt` | ✅ 14차 신규 → **15차 각도 게이트 확장 + 실기기 검증**. 순수 Kotlin — 800ms 디바운스·진입당 1회 arm·이탈 disarm 유지 + `onHingeAngle`/`isAngleStable`(대역 45~135 ∧ 침묵≥600ms ∨ 600ms 윈도 스프레드≤8°, 센서 무가용 시 통과 격하, 불안정 시 armed 유지). 근거: 닫기 체류 실측 ~2s(3표본) — 시간 단독 판별 불가. 테스트 24개 |
-| `domain/PanelTaskPolicy.kt` | ✅ #27/A2 신규. 순수 Kotlin — `PanelTaskSnapshot`(taskId/componentClassName/lastActiveMs) + `pruneTargets`(**MRU 패널 태스크 1개 반드시 보존** = step3 소환원, 나머지 taskId 만 입력 순서로 반환. `componentClassName==null` = 비패널 취급으로 오제거 차단, `taskId<0` = 식별 불가라 반환 제외하되 보존 선정엔 참여) + `hasPanelTask`(19차에 `needsSummon` 에서 개명·반전 — 용도는 #28 폴백 가드 하나). 동률 `lastActiveMs` → 입력 순서 타이브레이크 = 실전 주 경로(공개 API 로 lastActiveTime 조회 불가 → 플랫폼이 전부 0 전달, `ActivityManager.appTasks` 의 MRU-first 순서에 위임 — 이 계약은 [미검증]). 테스트 11개 |
-| `domain/CoverDismissPolicy.kt` | ✅ P4-3 신규. 순수 Kotlin — armed(비UNKNOWN 관측 후) 상태에서 UNKNOWN 진입 시 600ms 디바운스 예약 → 발화 시점 `shouldDismissNow` 재검증 → 에피소드당 1회 래치, 콜드스타트 UNKNOWN 보호, 재열림 시 재-arm. 테스트 14개. 실기기 미검증 |
-| `platform/FoldStateMonitor.kt` | ✅ 14차 신규 → **15차 실기기 판정 반영**. 후보 체인 = ①서비스 자신(One UI 8 거부 — assertUiContext, 타 OS 대비 유지) ②**3-인자 `createWindowContext(display,...)` 실채택**(방출 수신 확인, SDK 31 가드) ③createDisplayContext 체인(예비). 구 2-인자 후보는 생성 불가 판명·삭제. 커버 디스플레이 기하(1080×2520)로도 방출 지속 실측 |
-| `platform/HingeAngleMonitor.kt` | ✅ 15차 신규 **실기기 검증**. `Sensor.TYPE_HINGE_ANGLE` 래퍼 (Fold 7 노출 확정 — 도 단위, 노트북 ≈90.0, 닫힘 0.0, on-change 방출). start/stop 멱등, arm 수명주기 연동(배터리 위생), 센서 부재 시 Log.w 1회 후 무동작 |
-| `domain/ArrangeStateMachine.kt` | ✅ P1-4 + `closedLoopCorrection` 플래그 (false 면 ADR-5 보정 생략, 잔여 정직 보고 — PROFILE 소스 오보정 실측 대응). 순수 리듀서, 시간은 이벤트 nowMs 만(ADR-2). 테스트 24개 |
-| `domain/ClickCyclePlan.kt` | ✅ #20 신규 (9차) **10차 실기기 검증**. 순수 Kotlin — 클릭 메커니즘 사이클 계획. `PICKER`(gesture-first)/`POPUP_SWITCH`(a11y-first) 프로파일 = 데이터(1줄 롤백 레버), `mechanismFor` 클램프, verifySlice≥400ms 불변식. 테스트 12개. 실기기: 피커 cycle-0 14/15·cycle-1 회복 1회, 스왑 cycle-0 4/4 (cycle-2/스왑 제스처 사이클 미발동 [미검증]) |
-| `domain/Profiles.kt` | ✅ P1-2 신규. `AspectSource`/`PartnerMode`/모델 4종 + `validate()` 위치 특정 에러. 순수 Kotlin. 12차 §6: `AspectSource.CACHED`(리졸버 출력 전용, JSON 금지)·`defaults.cacheMeasuredAspect` 레버·MIN/MAX_ASPECT 공개 승격(값 불변, 캐시 오염 검증 공유). 14차 P3-5: `defaults.flexAutoTopPlacement` 레버(부재=true). P4-3: `defaults.coverAutoDismiss` 레버(부재=true). (#27/B `panelCardPreflight` 는 19차 축 B 기각과 함께 제거 — 시드 JSON 무변경) |
-| `domain/AspectResolver.kt` | ✅ P1-3 신규 + 12차 §6 확장. ADR-1 폴백 4단(PROFILE→MEASURED→**CACHED**→PRESET) — `cachedAspect` 기본 null 파라미터라 기존 호출부 무영향, 유효 측정이 캐시를 절대 못 이김. `DEFAULT_MIN_MEASUREMENT_CONFIDENCE=0.25f`. 테스트 15개 |
-| `data/WindowProfilesParser.kt` | ✅ P1-2 신규. kotlinx-serialization DTO→domain 매핑, 예외 누출 없이 `ProfilesParseResult`. 11차 #12: `requireMeasurementAgreement` 토글 (키 부재=true, 1줄 롤백 레버 — 시드 JSON 무수정). 12차 §6: `cacheMeasuredAspect` 토글 동형 추가. 14차 P3-5: `flexAutoTopPlacement` 토글 동형 추가. P4-3: `coverAutoDismiss` 토글 동형. (#27/B `panelCardPreflight` 토글은 19차 기각으로 제거 — 테스트도 함께 원복) |
-| `data/ProfileStore.kt` | ✅ P3-3 신규. Preferences DataStore(`fwa_store`) 래퍼 — 버블 enabled/x/y + 앱별 마지막 성공 placement. `SharedPreferencesMigration("bubble_prefs")` 무손실 이관(레거시 키 이름 동결 계약), `ReplaceFileCorruptionHandler`→emptyPreferences(부팅 크래시 루프 방지), 쓰기 = `safeWrite` NonCancellable(레거시 apply() 의 종료 후 반영 보장 대체), 읽기 = safeRead 예외 방어. **7차 실기기 검증**: 이관 무손실·corruption 복구·NonCancellable 완주 (DEVICE_FACTS P3-3 절). 12차 §6: `measuredAspect`/`saveMeasuredAspect` (키 `measured_aspect.<pkg>`, 저장측도 범위 검증 후 거부 — 이중 방어) → **13차 실기기 검증** (pb 키 실물 판독, 레버 OFF 중 보존 확인). P4-2: `panelWidgetMode`/`panelMemo` (저장측 허용집합 재검증·절단, safeWrite 경유) |
-| `data/ProfileStoreMapping.kt` | ✅ P3-3 신규. 순수 Kotlin 매핑 — placement 직렬화 왕복(오염값→null, 크래시 금지)·키 네임스페이스·레거시 키 상수. 12차 §6: `measuredAspectKeyFor`·`aspectFromStorage`(NaN/∞/1.0..4.0 밖 → null, domain 공개 상수 공유). JVM 테스트 18개 (키 이름 동결 회귀 테스트 포함). P4-2: 위젯 모드 허용집합 검증·`PANEL_MEMO_MAX_CHARS=4000` 절단 (테스트 29개) |
-| `platform/ScreenshotSampler.kt` | ✅ v2 확장. 행별 luma 평균/분산 산출 추가. 11차 #12: `toPillarboxScan` 열축 전치판 (entries=열, width 자리=height/colStride — 역산 좌표계 계약) + **실기기 검증·현장 튜닝 2건** — sideMarginPct 0.005(최외곽 열 var 404~501: 코너 누출+엣지 렌더링 물증), edgeMarginPct 0.12(플레이어 크롬 y-대역 제외). 수정 후 글로우 밴드 214/214 대칭 3/3 재현. 기존 `toLetterboxScan` 무변경 |
-| `domain/PaneGeometry.kt` | ✅ P2-2 + 확장. 가시 교집합·간격 휴리스틱·상하/좌우 분할 판정·분할선택 페인 판정·`pickPaneLike`(최소화 플레이어 팝업 오염 필터, 실기기 근거). 순수 Kotlin. 테스트 30개 |
-| `platform/DividerLocator.kt` | ✅ P2-2. `TYPE_SPLIT_SCREEN_DIVIDER` 핸들 중심 1차 → PaneGeometry 간격 휴리스틱 폴백. 실기기 미검증 |
-| `platform/DividerDragger.kt` | ✅ P2-4 **실기기 검증**. SINGLE_STROKE 기본(확정). HOLD_THEN_MOVE 는 GestureDrags 위임 |
-| `platform/PaneSwapper.kt` | ✅ 9차 #20 재구성 → **10차 실기기 검증** (회전 여파 컨텍스트 4/4 수렴 — 과거 무효 2회 실측 컨텍스트 동형 전승): 정착 게이트(`dividerSettled` 주입, 핸들 bounds 2연속 동일, 실측 ~154ms ok) + 스위치 클릭 = POPUP_SWITCH 사이클(a11y→gesture→gesture, involution 가드·팝업 소멸 시 재탭 전 isSwapped 재확인·검증 슬라이스 800ms — cycle-0 a11y 로 전승, cycle-1/2·재탭 분기 [미검증]). 핸들탭/팝업탐색 루프·더블탭 폴백 무변경. 실패 시 서비스 회전×2 폴백 유지(미발동) |
-| `platform/SplitEntry.kt` | ✅ P2-3 **실기기 검증** (DRAG·MENU 양 경로). `EntryRecipe` 분기: DRAG 3단계(유튜브 회귀 E2E 통과) / MENU 5단계(UNRESIZEABLE 전용, E2E 6회 성공). 2026-07-25 오후 2차: step2 유령 매치 재폴링 + 목표 상태 선체크 수정. 9차 #20 → **10차 실기기 검증**: step3/menuStep4 = `clickUntilCondition` PICKER 사이클(gesture→gesture→a11y) 재작성 — 15세션 cycle-0 gesture 14회(176~362ms)·cycle-1 회복 1회(오착지 FORENSIC 특정), ENTRY_STEP_FAILED 0 (과거 무override ~50% 실패 → 5연속 무실패). **LAUNCH_ADJACENT 전략2 삭제** 무회귀 확인. cycle-2 a11y·오버레이 가드 발동 [미검증]. menuStep2/3/5·step1/2·셀렉터 무변경 |
-| `platform/ResizeModeDetector.kt` | ✅ 신규 **실기기 검증**. `privateFlags` 필드 리플렉션 allowed / 상수 리플렉션 denied(max-target-o) → 폴백 비트 **1<<11** (0x8c000910 교차 검증). 실패 시 null → DRAG 폴백 |
-| `platform/DividerPopupRotator.kt` | ✅ 신규. 핸들 탭→"시계 방향으로 회전" 클릭 공용화 (MENU step5 + 서비스 회전×2 폴백). step5 경로 실기기 검증, 회전×2 폴백은 미발동 **미검증** |
-| `platform/GestureDrags.kt` | ✅ 신규·실기기 검증. 2-페이즈 홀드드래그(1px 드리프트 홀드 + continueStroke 이동, 타이밍 가드). API 함정 4종 문서화 |
-| `service/ArrangerAccessibilityService.kt` | ✅ **실기기 검증** (유튜브+넷플릭스). 상태 머신 구동, 레시피 선택 배선, pre-measure **페인 크롭**, `pickPaneLike` 위치 판정, `purgeStalePanelTasks`, 스왑 실패 시 회전×2 폴백, `closedLoopCorrection` 배선(PROFILE 시 off), 세션 `dragTimeoutMs=12s` 오버라이드. P3-2 `dismissSplit()` **실기기 E2E 검증**: 디바이더 드래그 아님(반증) — `PanelActivity.instance.finishAndRemoveTask()` + 인텐트 폴백[미검증], 진입 체크 = `isSplitActive` 자체 2s 조건 폴링(스크림發 a11y 목록 비원자 재구축 대응), 150ms/3s 해소 폴링, 실패 전부 토스트. `awaitWindowsSettled()` = beginSession freshness 게이트. P3-3: placement 결정 체인에 `ProfileStore.lastSuccessfulPlacement` 2순위 삽입(override>last-success>profile>defaults>TOP, placementSource 로그), Done ∧ effective==desired 시에만 저장(지역 캡처 후 launch) — **7차 실기기 E2E 검증** (OVERRIDE 저장 → LAST_SUCCESS 복원, residual=0). 9차 #20 → **10차 실기기 검증**: `awaitDividerSettled` 공급(4/4 ~154ms ok), `TYPE_VIEW_CLICKED` 포렌식 수신 검증(성공 클릭=FrameLayout/null·오착지=icon_container·카드=task_icon 판별 실증), 오버레이 가드 람다 주입(발동 [미검증]). 11차 #12: `confirmMeasuredAspect` 합치 게이트 (handleDragDividerTo 선두, 세션 1회, MEASURED 만 발동, 레이트리밋 조건부 대기, realTargetY 덮어쓰기 선례 재사용 — 머신 무변경), aspectOverride tier 0 (측정·보정 전부 생략), verify residualCols 로그 병기(MeasureResult 인자 불변), `logMeasurement` 밴드 기하 상시 기록 — **실기기 G1~G5 통과** (9/9 done, DEVICE_FACTS 11차 절). 12차 §6 캐싱 배선: beginSession 캐시 조회(override 세션 생략)+decision 로그 `cachedAspect=`, finishConfirm 불합치 폴백 cached→preset, reportTerminal Done 에서 admission(합치∧verified∧레버) 저장, cleanupSession 3필드 리셋 → **13차 실기기 4항목 전부 검증** (저장·폴백/decision 양 지점 CACHED 낙착·confirm 미실행·레버 회귀, DEVICE_FACTS 13차 절). 14차 P3-5: `FoldStateMonitor` 구동(onServiceConnected, 기본 런처 해석 포함) + `onFoldPosture` 디바운스 예약(delay 후 shouldTriggerNow 재검증 — ADR-2 예외 요건 충족) + `evaluateFlexAutoTrigger` 5단 게이트(거부 시 disarm·토스트 없음) + placement 체인 FLEX 티어 + `sessionPlacementSource` 세션 필드(cleanupSession 리셋) + FLEX 세션 last-success 저장 억제 — 15차 실기기 검증 통과. P4-3: `coverPolicy` 배선(onFoldPosture 의 flex 조기 return 앞 삽입, UNKNOWN 디바운스→`evaluateCoverAutoDismiss` 게이트 4종→패널 직접 finish, dismissSplit 미경유·토스트 없음). P4-4: `foregroundPackageForExport`/`startArrangeWhenForeground`(150ms/5s 사전 조건 폴링 — 머신 밖, placement 는 기존 체인) — P4 분 실기기 미검증. **#27/A1·A2**: `performDismissSplit` instance 경로·`evaluateCoverAutoDismiss` 를 `panel.finish()` 로 격하(18차 G1 — removeTask 는 step3 소환원까지 지우는 초과 동작), `purgeStalePanelTasks`→`pruneExtraPanelTasks` 재구현(판정 `PanelTaskPolicy` 위임, `lastActiveMs` 는 전부 0 전달, 로그 `보존 1 / 제거 N`, 호출 위치 `beginSession` 선두 불변) + 반증된 premise KDoc 정리 — 실기기 [미검증]. **#28**: 폴백 3분기화(패널 태스크 부재 시 인텐트 폴백 생략) + 헬퍼 `panelTaskSnapshots`/`hasPanelTask`. **#27/B 소환은 19차 실기기 기각으로 전량 제거** (`ensurePanelCard`·`setPanelCardOutcome`·`lastPanelCardOutcome`·폴링 상수 2종·토스트 병기 삭제, `reportTerminal` 원복). 축 A·#28 경로는 **19차 실기기 검증 완료** (커버 해제 후 카드 생존 3/3 · prune 보존1/제거1 · 재설치 죽은 카드 done). **W1/S4**: `performDismissSplit` 인텐트 폴백이 `PanelActivity.issueFinishToken()` 발급값을 실어 보낸다(`hasPanelTask()` 사전 가드 유지). **W1/F7**: `captureScreen()` 취소 시 `bmp?.recycle()` |
-| `service/ArrangeTriggerReceiver.kt` | ✅ adb 디버그 트리거 (`dev.dj.foldwindow.ARRANGE`). 버블 도입 후에도 회귀용으로 유지 |
-| `service/FloatingLauncherService.kt` | ✅ P3-1 + P3-2 확장 메뉴 **실기기 E2E 검증**. 탭=배치, 드래그=이동+스냅, **롱프레스=메뉴 열기**(위/아래 배치·분할 해제·프리셋(JSON SSOT 파싱 캐시)·설정). 메뉴 = **풀스크린 투명 스크림** FrameLayout 창 (ACTION_OUTSIDE 방식은 디스패치 순서 경합 실측으로 폐기 — 스크림이 모든 터치 선점, 재탭=닫기만 구조 보장). 함정 #22: 모든 트리거 직전 + `setBubbleHiddenForArrange(true)` 시 메뉴 제거. 위치/켬 상태 P3-3 에서 `ProfileStore`(DataStore) 이관 완료 — 초기 위치는 onCreate 1회 runBlocking 스냅샷(runCatching 폴백), 쓰기는 serviceScope.launch(store 계층 NonCancellable). 9차 #20: `bubbleAttached`/`menuView` @Volatile + companion `hasAttachedOverlayWindow()` (제스처 탭 오버레이 가드 판정원). 16차: `HIDE_SAFETY_TIMEOUT_MS` 30s→90s (이론 최악 ≈70s 근거) + 제스처 실사용감 검증 (오분류 0). P4-4: 메뉴 「앱 페어 바로가기 만들기」+`exportAppPair`(dismissMenu 선행·2s 식별 폴링·`requestPinShortcut` 지원 체크) — 실기기 미검증 |
-| `service/BootReceiver.kt` | ✅ P3-1 신규 + P3-3 개편. BOOT_COMPLETED 시 bubble_enabled+오버레이 권한 확인 후 FGS 재기동. 실부팅 검증은 구 동기 prefs 코드로 통과(5차) — P3-3 에서 goAsync+IO 코루틴(finally finish 보장)으로 재작성 → **7차 실부팅 재검증 통과** (로그·FGS 기동·버블 가시, 회귀 해소) |
-| `ui/OnboardingActivity.kt` | ✅ P3-4 신규 **실기기 검증** (권한 감지·버블 토글·안내 렌더 확인). 권한 카드 3종 + 버블 시작/중지 + 사용 안내 (넷플릭스 "배치 후 재생" 포함). MAIN/LAUNCHER 진입점. P3-3: 중지 = NonCancellable(enabled=false 쓰기→stopService, 액티비티 파괴에도 완주) + stopInProgress 재진입 가드 — **7차 근사 + 16차 물리 폴드 접기 실기 검증** (양 경로 시퀀스 완주). 16차: 알림 권한 플로우 전 구간 검증 (회수 감지·다이얼로그·허용 즉시 반영) |
-| `ui/PanelActivity.kt` | ✅ P2-5 + P3-2. 검정 배경+시계 파트너 창. 라벨 "FW Panel" = SplitEntry 피커 셀렉터 계약. P3-2: `instance` 정적 참조 + `EXTRA_FINISH_PANEL` (dismissSplit 의 패널 finish 경로 — finish 실기기 검증, 인텐트 폴백 [미검증]). MAIN/LAUNCHER 노출은 Phase 3 재검토. P4-2: 위젯 3종(시계/메모/검정)+하단 모드 버튼 상시 표시, 메모 500ms 디바운스+ON_PAUSE flush(DisposableEffect — Activity 메서드 무접촉) — 기존 자가 가드·라벨 계약 무변경 (실기기 미검증). **#27/A1**: `EXTRA_FINISH_PANEL` 경로(onCreate·onNewIntent)와 `scheduleFullscreenCheck` 자가 가드 3곳을 `finish()` 로 격하 — 분할은 그대로 해소되고 최근 태스크 카드는 잔존(18차 G1). companion KDoc·잔존 청소 주석 갱신. **W1/S4**: `EXTRA_FINISH_PANEL: Boolean` → `EXTRA_FINISH_TOKEN` + companion `@Volatile finishToken`/`issueFinishToken()`/`consumeFinishToken()`(1회용) — exported 상태에서의 자체 DoS 차단. 확장함수는 `consumesFinishRequest()` 로 개명(부작용 명시). 실기기 [미검증](W1-3·W1-4) |
-| `ui/PanelWidgetMode.kt` | ✅ P4-2 신규. UI 표시 선호 enum(CLOCK/MEMO/BLACK)+`fromStorage` CLOCK 폴백 — 도메인 `PartnerMode{BLACK}`(JSON 스키마 소속)과 의도적 분리 |
-| `ui/PairShortcutActivity.kt` | ✅ P4-4 신규. 트램펄린 — extra 검증→접근성 확인(꺼짐 시 온보딩 유도)→대상 앱 실행(NEW_TASK)→`startArrangeWhenForeground`→finish, 전 구간 runCatching. exported+excludeFromRecents+noHistory+전용 taskAffinity+반투명 테마. 실기기 미검증 |
-| `probe/ProbeAccessibilityService.kt` | ✅ 실기기 검증 완료 (3회 실행) |
-| `probe/ProbeReport.kt` | ✅ 완성 |
-| `probe/ProbeActivity.kt` | ✅ 실기기 검증 완료 |
-| `probe/ProbeTriggerReceiver.kt` | ✅ 신규. adb 브로드캐스트로 프로브 트리거 (`RUN_PROBE`). Phase 0 이후 제거 대상 |
-| Gradle / Manifest / 접근성 XML | ✅ 부트스트랩에서 확정. AGP 8.11.1, Gradle 8.13 wrapper, `org.gradle.java.home`=Android Studio JBR(머신 종속 경로 주의) |
+---
 
-## 열린 질문
+## 남은 작업 (재개 지점)
 
-1. `ScreenshotSampler` 의 `rowStride` 축소가 종횡비 역산 정밀도에 미치는 영향 — 실측으로 확인
-2. ~~드래그 전략 비교~~ → **SINGLE_STROKE 확정** (실기기: 단일 스와이프로 984→1236 정확 이동). HOLD_THEN_MOVE 는 GestureDrags 로 재구현돼 카드 드래그 진입에만 사용
-3. wavve 패키지명 확인 필요
-4. ~~minPaneHeight 실측~~ → 세로 좌우 분할 181px 확정. 가로 상하 분할은 미검증 (DEVICE_FACTS 참조)
-5. ~~LetterboxDetector v2 설계~~ → 구현 완료. 남은 것: `ADAPTIVE_*` 상수(분산≤400, luma≤90, ref±28)의 실기기 재검증 — 앰비언트 영상에서 프로브 E 재실행해 16:9 스냅 확인. 순흑 조건(넷플릭스 등) E 실측도 아직 0건. `ScreenshotSampler`의 luma 통계 산출도 실기기 미검증
-6. Recents 분할 진입 셀렉터의 다국어 안정성 (한국어만 검증됨). MENU 레시피 추가로 대상 확대: `SPLIT_MENU_TEXT_EN`·`ROTATE_DESC_EN` 도 [미검증]
-7. ~~`AspectResolver.DEFAULT_MIN_MEASUREMENT_CONFIDENCE = 0.25f` 튜닝~~ → **접근 자체 기각** (11차 #12 검토): 오염 conf 0.60~0.97 ≥ 정상 ADAPTIVE 상한 0.6 — 어떤 임계도 오염/정상 분리 불가. 0.25 는 "후보 자격" 게이트로 역할 격하·값 유지, 채택은 합치 게이트가 결정 (DESIGN_12 §3.3)
-8. ~~PaneSwapper 셀렉터~~ → **"창 전환" 실측 확정** (팝업 노드 3종: "App pair 추가 위치"/"창 전환"/"시계 방향으로 회전"). 하단 배치 E2E 성공
-9. ~~step 파트너 경로~~ → **피커 노드 탭이 1차 확정**. LAUNCH_ADJACENT 는 분할 선택 상태를 파괴(전체화면 강탈)해 최후 폴백으로 강등
-10. ~~`defaults.closedLoopCorrection` JSON 토글 미배선~~ → **배선 완료** (2026-07-25 오후). 추가 규칙: aspectSource=PROFILE 이면 무조건 보정 생략 (오염 측정이 프로파일을 덮어쓰는 실측 사고 2회 대응)
-11. 대상 앱 라벨 조회 — `<queries>` 블록으로 실기기 정상 동작 확인 (label=YouTube 조회 성공)
-12. 사전 실측 오염: 플레이어 컨트롤 오버레이/앰비언트 글로우가 떠 있으면 종횡비 오측 (1.333/1.12 관측. **추가 실측 2026-07-25 오후 2차: 영상 시작 직후 탭 → 추천화면/인트로 오염 1.6 오측(conf 0.60), 어두운 장면이라 verify residual=0 오판**). → **11차 해소 완결**: 검토→구현(qa PASS)→**실기기 G1~G5 전부 통과** (DEVICE_FACTS 11차 절). 2-샷 합치 게이트 (`docs/DESIGN_12_MEASUREMENT_CONSENSUS.md`) — 사고 클래스 3종(엔드스크린 conf 0.70·컨트롤 snap 1.5·과거 1.6) 전부 차단 실증, 클린 경로는 SNAP_AGREE→MEASURED 3/3. 잔여 = v1.5 후보(다음 행동 2번)와 좁은 갭(재트리거 시 디바이더 이미 목표 4px 이내면 Dragging 스킵 → confirm 미발동 — pre 단독 = 종전 동작, 회귀 아님)
-13. 필러박스 맹점: 과소 이동 시 `residualBars=0` 으로 verified 오판 가능. → 열축 도메인 로직이 #12 confirm 측정과 동일 기반 — v1 에서 `residualColumns` **로그 보고까지** 동봉, `verified` 의미론 반영은 v1.5 (DESIGN_12 §3.4·§7). **11차 실측 보강**: 순흑 residual 은 글로우 필러박스에 블라인드 확정 (G5: 16:9-in-21:9 실재 필러박스에서 residualCols=0) — v1.5 는 적응형 residual 필요
-14. BOTTOM 배치 최적화: 현재 상단 도킹 후 "창 전환" 스왑. step2 드롭 지점을 하단 가장자리로 바꾸면 스왑 생략 가능한지 실기기 확인 — Phase 3
-15. ~~step2 성공 조건 폴링 예산~~ → **실질 해소** (2026-07-25 오후 2차). 실측: 잔여 폴링 ~370ms 로 애니메이션 정착 불가 → 실패 판정. 예산 분리 대신 **다음 시도의 목표 상태 선체크**가 늦은 정착을 흡수하는 설계 채택 — 회귀 E2E 에서 시도1 실패→시도2 선체크 즉시 성공 실증. 타임아웃 값 무변경
-16. ~~넷플릭스(UNRESIZEABLE) 분기 자동화~~ → **완료 + 실기기 E2E 검증** (2026-07-25 오후, 6회). 감지 = privateFlags 필드 리플렉션 + 폴백 비트 1<<11 (실측 교차 검증)
-17. ~~넷플릭스 재생-분할 관계~~ → **특성 규명 완료**: 분할 페인 안에서 재생 시작 = 유지 / 재생 중 메뉴 진입 = 재생 세션이 "최소화된 플레이어" 팝업으로 분리 (3회+ 재현, One UI 동작). v1 지침 = "배치 후 재생". Phase 3 온보딩/토스트에 안내 반영
-18. ~~step2/3 성공 조건 오탐~~ → **완결** (2026-07-25 오후 2차). 유튜브 DRAG 회귀 E2E 통과. `isSplitSelectTopPane` 임계(전폭≥90%, `EDGE_DOCK_TOLERANCE_PX=40`) 는 ground truth(대상 페인 `[0,0][2184,977]`, 도킹 0px)로 **[검증]**. 회귀에서 발견된 실버그 2종(유령 매치/성공 미인지)은 SplitEntry 수정 완료
-19. 회전 결과 페인 위치 비결정 — 원인 미상. 10차 표본 보강: 이 세션 TOP 7/7 (누적 TOP 10 / BOTTOM 2 — 상단 편향). 하단 낙착 시 교정 체인: PaneSwapper(10차 4/4 수렴) → 회전×2 폴백(**미발동·미검증**) → 실패 시 하단 유지+토스트
-20. **[10차 실기기 Gate 1~3 통과 — 주 경로 완결]** 15/15 done·ENTRY_STEP_FAILED 0. 피커 cycle-1 회복 실증 + FORENSIC 이 무효 클릭 = **오착지(icon_container) 클래스**임을 물증화 (실행 자체 없음 아님). 회전 여파 스왑 4/4 수렴 (정착 게이트 ~154ms). 잔여 = 미발동 경로 [미검증] 목록 (DEVICE_FACTS 10차 절)과 3시도 전멸 클래스 재발 시 스텝 되감기 재검토만. — (이하 이력) "창 전환" ACTION_CLICK 무효 (회전 직후 컨텍스트 2회 실측, 유튜브 세션에선 성공) — 원인 탐구 필요. 좌표 탭 제스처로 대체 시도 검토. **2026-07-25 오후 4차 보강: step3 피커 탭도 동일 계열 변동성 실측** — 메뉴發 배치 4회 중 2회 step3 3연속 실패(클릭 무효 2회 = 액티비티 생성 이벤트 없음 / `startActivityFromRecents` 오라우팅 1회), 직후 재시도는 성공. 성공 시그니처 = `startActivityAsUser:launcher` (DEVICE_FACTS P3-2 절). → **2026-07-25 저녁 8차 검토 완결**: AOSP 소스 검증 — ACTION_CLICK=true 는 isClickable 만 보장(performClick 결과 폐기, 히트테스트·터치 파이프라인 우회) → 무효·오라우팅 두 클래스 모두 설명. 기존 제스처 폴백은 true 반환 시 도달 불가 = 죽은 코드 실증. "창 전환" 무효는 팝업이 아니라 회전-여파 컨텍스트가 독(회전 노드 6/6 대조) → 정착 게이트 + 재시도가 1차 해법. 설계 확정 = 클릭-사이클 에스컬레이션(`docs/DESIGN_20_CLICK_CYCLE.md`), 구현·실기기 [미검증]. 잔여 미지(3시도 전멸 시 세션 레벨 원인)는 TYPE_VIEW_CLICKED 포렌식으로 특정 후 스텝 되감기 재검토
-21. PROFILE 보정 생략으로 verify 측정값(residual 122~224)은 보고 전용 — 컨트롤 오버레이 오염이라 신뢰 낮음. → #12 설계에서 verify = "최저 신뢰 컴포넌트" 판정 (은폐·오염 양방향 실측), 사후 보정 단독 방어 기각 근거 (DESIGN_12 §2). 적응형 residual(글로우 은폐 대응)은 §5 측정 로깅 데이터 수집 후 v1.5
-22. 버블 오버레이 존재 시 피커發 파트너가 전체화면 낙착하는 **메커니즘 불명** (One UI WM 라우팅 추정) — 현재 경험 법칙(세션 중 버블 숨김)으로 해소. One UI 업데이트 시 재검증 필요
-23. P3-1 잔여: ~~BootReceiver 실부팅 복귀, specialUse FGS 의 BOOT_COMPLETED 시작 허용~~ → **2026-07-25 오후 5차 실부팅 검증 통과** (BOOT_COMPLETED 수신 로그·FGS 자동 기동·접근성 유지·버블 가시 전부 확인). 잔여 → **16차 전부 해소**: 제스처 무불만·오분류 0(시스템 표준 임계 확정), 타이머는 이론 최악 ≈70s 산정으로 90s 상향 (DEVICE_FACTS 16차)
-24. ~~P3-2 [미검증] 전체~~ → **2026-07-25 오후 4차 실기기 검증으로 전부 해소**: ① 드래그 해제 가정 **반증** (dispatchGesture 스냅백 2/2 vs 동일 기하 input swipe 성공 3/3) → **패널 finish 방식으로 재구현·E2E 성공** ② 클램프 가로/세로 실기기 정상 ③ DOWN 스냅샷 방어 **실패 실측** (OUTSIDE 선행 디스패치 → 재탭이 배치 오발화) → **풀스크린 스크림으로 구조 해결·E2E 확인** ④ 프리셋 6종 최초 롱프레스에 정상 렌더. 잔여 [미검증]: dismissSplit 인텐트 폴백(instance null 희귀 경로), "분할 없음" 시 2s 대기 후 토스트 체감
-25. 스크림 부산물 (해결·기록): 풀스크린 터치 가능 오버레이가 떠 있는 동안 하위 창이 a11y `getWindows()` 에서 가림-제외되고, 제거 직후 재구축이 **비원자적** (앱 창 먼저, 디바이더 나중) — `isSplitActive` false-negative 2/2 실측. dismiss 는 목표 조건 자체 폴링으로 해결. `beginSession` 의 `awaitWindowsSettled`(APPLICATION≥1 약한 게이트)도 같은 원리에 취약할 수 있음 — 배치 경로에서 유사 증상 재현 시 동일 패턴 적용. **10차 부수 관측**: broadcast 트리거 15세션(버블/스크림 창 미개입 경로)에서 창 목록發 증상 0건 — 취약 가설은 스크림·버블 창 존재 시나리오에 한정된 채 유지
-26. ~~P3-3 실기기 [미검증] 목록~~ → **2026-07-25 오후 7차 실기기 검증으로 전부 해소** (DEVICE_FACTS P3-3 절): ① 이관 — 구버전에 x/y 주입 후 업데이트 설치, 3키 무손실 이관+원본 삭제+버블 위치 복원 ② goAsync 실부팅 — 로그·FGS 기동·접근성 유지 (회귀 해소) ③ placement — OVERRIDE bottom 저장 → 무override 3회 전부 LAST_SUCCESS/BOTTOM 결정, 3회차 done residual=0 ④ corruption — 가비지 주입 후 서비스 기동, 손상 감지 로그+emptyPreferences 복구+무크래시, enabled 재기록 ⑤ 중지 레이스 — 탭+즉시 back(finish) 근사, 쓰기·stopService 완주 → **16차 물리 폴드 접기 실기 통과** (잔여 0). 부차 미해결: 손상 1차 감지가 주체 미상 초기 store 접근에서 발생 (결과는 동일한 정상 복구)
+### A — 사용자 물리 조작·#30 실기기 캠페인: ✅ 전량 소진, 잔여 0
 
-27. **[17차 신규 → 18차 원인·설계 확정 → 19차 실기기 종결 (2026-07-28 밤). ✅ 해결]** 최종 채택 = **축 A(파괴 제거) + #28**. **축 B(소환)는 기각·코드 제거.** 축 A 구현분: A1 `finish()` 격하 5곳 + A2 `pruneExtraPanelTasks`(MRU 1개 보존) + `domain/PanelTaskPolicy.kt`. 19차 실기기: **G4** 커버 해제 후 카드 생존 + 3/3 done · **G5** `보존 1 / 제거 1` 후 step3 성공 · **G6** 재설치 죽은 카드로 done · **G7** AOSP 강제 제거 함정 미발동(`RETAIN_IN_RECENTS` 상쇄 추정) · **G2 ❌** 소환 카드가 step3 를 깨뜨림. 축 B 기각 근거 2건 [확정]: ① base intent 오염(`NEW_DOCUMENT|MULTIPLE_TASK` 보존 → 피커 탭이 새 문서=전체화면으로 라우팅. 대조군 런처 카드 `flg=0x10000000` 은 정상) ② 전제 반증(카드 0 에서 5/5 done — `pm clear` 표본이 신규 설치 교란 배제. 피커는 앱 목록에서도 노드 제공 ⇒ DESIGN_27 §1.3 「만드는 경로 0개」 부정확). 제거 후 282 PASS + 실기기 3/3 무회귀. `PanelTaskPolicy.needsSummon` → **`hasPanelTask`** 개명·반전(용도 = #28 폴백 가드). **[미해결]** 17차 3전멸 원인 — 카드 0 가설 폐기, 재발 시 재조사. 이하 원 기록: step3 패널 소환 경로 부재: 피커 「FW Panel」 노드 = recents 태스크 카드. `finishAndRemoveTask`(커버 자동 해제 P4-3·dismissSplit·purgeStalePanelTasks·패널 자가 가드)가 카드 제거 시 배치 전체 불능 (node-not-found 3전멸 ×4 재현). purge 는 세션 시작마다 자충(살려둔 패널 태스크도 제거). 복구는 런처 경유 실행(수동 피커 탭)만 유효 — `am start` 직접 실행은 자가 가드가 다시 제거. → **설계 확정 `docs/DESIGN_27_PANEL_CARD.md`**: 구조 진단 = 카드를 지우는 경로 4개 / 만드는 경로 0개(생산 없는 소비). 축 A(파괴 억제) 단독은 **불충분** — 재설치·강제종료·수동 스와이프 등 앱이 통제 못 하는 소멸 경로가 남아 결함 클래스 존속. → **18차 adb 프로브(코드 무변경)로 판정 완료**: ① purge 자충 단일 로그 시퀀스 재현(카드 1→purge→0→`ENTRY_STEP_FAILED`) ② **G1 통과** — `finish()`(BACK)는 분할 해소하면서 카드 잔존, 피커 MRU 1번 재출현 ③ **G3 통과** — 액티비티 죽은 카드(`Activities=[]`) 탭도 `stage=side/bottom` 정상 낙착·taskId 재사용·전체화면 강탈 0 ⇒ **purge premise 반증**(그 근거는 singleTask 시절·버블 숨김 이전 실측) ④ 피커 `all_apps_button`/`search_button` 은 resource-id 라 로케일 무관이나 앱서랍 1페이지 부재·scrollable 0 → 후보 ③ 취약 확정. **주 수정 = 축 A(파괴 제거)** 로 전환, 축 B 는 카드 0 안전망(B0 `addAppTask()` 1순위). 잔여 프로브 G2·G4·G5·G6·G7
+물리 접기(A-1)·DRM 육안(A-2)·#30 W0(7/8, 1건 유도 불가)·W1(11/11) 전부 완료. 상세 = `docs/DEVICE_FACTS.md` 20·21·22·23차 절.
 
-28. **[17차 신규 — 18차 AOSP 확인 [확정] → 수정 완료(2026-07-28 밤)]** 수정분: `performDismissSplit` 폴백을 3분기로 확장 — `instance!=null → finish()` / `instance==null ∧ hasPanelTask() → 기존 인텐트 폴백` / `instance==null ∧ 패널 태스크 부재 → **폴백 생략**`(로그 + 토스트 "해제할 FoldWindow 패널을 찾지 못했습니다", settle 폴링 중복 토스트 방지 위해 조기 return — try/finally 안이라 버블 복원 정상). 판정은 `PanelTaskPolicy.needsSummon` 재사용(신규 도메인 함수 0). 부수로 헬퍼 2종 추출 — `panelTaskSnapshots(rawTasks: List<AppTask>? = null)` / `hasPanelTask()` (축 B 소환이 재사용). `EXTRA_FINISH_PANEL` KDoc 에 계약 명시(태스크 신설 가능 인텐트에 탑재 금지 · 소환 인텐트는 extras 무탑재). `pruneExtraPanelTasks` 동작·로그·호출 위치 불변 확인. 282 테스트 PASS. **희귀 경로라 실기기 재현은 인위적 유도 필요 [미검증]**. 이하 원 기록: `performDismissSplit` 인텐트 폴백의 base intent 오염: `FLAG_ACTIVITY_NEW_TASK` + `EXTRA_FINISH_PANEL` 조합이라 패널 태스크 **부재** 상태에서 이 경로를 타면 `EXTRA_FINISH_PANEL` 을 base intent 에 담은 태스크가 새로 생기고, 이후 피커 탭이 그 카드를 재실행하면 `onCreate` 가 즉시 종료 → **step3 영구 실패 루프**. 발생 조건은 희귀(`instance==null` ∧ 태스크 부재 ∧ 분할 활성 판정 통과)하나 자기 코드다. **AOSP 확인**: 죽은 카드 탭 → `startActivityFromRecents` → `task.intent` 재실행이고 `Task#setIntent` 은 **extras 를 그대로 보존** → 실재 확정. 수정 = 폴백 진입 전 패널 태스크 존재 확인, 없으면 폴백 생략(태스크 부재 = 해제할 우리 분할 없음) + 소환 인텐트는 extras 무탑재 계약 — DESIGN_27 §4. 재부팅 후 디스크 복원 경로의 extras 보존 여부는 [불명]
+### A'' — 결함 #31(홈 경유 래치 미해제): ✅ 22차에서 수정·재검증 완료
 
-## 결정 로그
+최종 해법 = 래치 2종 구분(`AutoTriggerLedger.latchSticky`, 순수 도메인) — 분할 해제가 건 래치는 sticky(홈으로 안 풀림), 자동 발화가 건 래치는 non-sticky(홈으로 풀림). 시간창 방식은 채택 안 함(ADR-2 위반). 실기기 4행 전부 통과, 상세 = `docs/DEVICE_FACTS.md` 22차 절.
+
+### B — 미발동·희귀 경로 [미검증] — 자연 발생 대기 또는 인위적 유도
+
+| # | 경로 | 상태 |
+|---|---|---|
+| B-1 | `performDismissSplit` "패널 태스크 부재" 분기(#28) | 유도 3후보 소진(20차) — 자연 발생 대기 확정 |
+| B-2 | dismissSplit 인텐트 폴백(P3-2, `instance==null`) | B-1 과 인접 조건, 같은 세션에서 함께 유도 대상 |
+| B-3 | 클릭 사이클 cycle-2(a11y)·스왑 제스처 사이클(#20) | 10차 이후 미발동. `mech` 로그 상시 계측 중 |
+| B-4 | 스왑 실패 시 회전×2 폴백(#19) | 누적 12+ 세션 미발동(PaneSwapper 가 항상 수렴) |
+| B-5 | `PanelTaskPolicy` MRU-first 순서 계약 | 공개 API 로 `lastActiveTime` 조회 불가 → 플랫폼 순서에 위임, 계약 자체가 [미검증] |
+| W2-7 | Shizuku 셸 타임아웃 실효(F3) | 인위 유도 곤란, 자연 발생 대기 |
+| W1-4 | 자동 트리거 실패 복구(BACK 주입 후 대상 앱 전면 복귀) | 유도 방법이 HOME 주입이라 복귀 스택 없음, 복귀 성공 사례 미관측 |
+
+### C — v1.5 후보 (v1 범위 밖, 결정 완료)
+
+- **#12 축적분**: BOTH_AXES_BARS 시 보정 생략(G1 드리프트 실측) · 적응형 residual(글로우 필러박스 블라인드 G5) · 비-16:9 콘텐츠 합치·캐시 실측 · flex 게이트2↔startArrange TOCTOU(이론상)
+- **P3-5 축적분**: 포그라운드 안정성 윈도(월렛 quick 카드 오염) · 재열기 멈칫 시 Done-후 분할 잔존(수동 해제로 복구, 키가드 게이트는 정당 사용례 훼손으로 기각) · 각도 대역 경계값 실측
+- **D17 열축(필러박스) 게이트** — 23차에서 「미구현」이 아니라 「미연결」로 판명: `LetterboxDetector.detectHybrid()` 는 이미 순흑 실패 시 적응형 폴백을 쓰지만, verify 가 부르는 `residualBars()`(`LetterboxDetector.kt:157`) 에만 그 폴백이 없다. 최소 수정 = 거기에 같은 폴백을 다는 것. v1 은 로그 보고만 한다는 DESIGN_12 §3.4/§7 결정은 유지. 상세 = `docs/DEVICE_FACTS.md` 23차 절
+- **#32 런처 아이콘 2→1 — 「진입점 소유권 이전」**: 앱 서랍 아이콘이 릴리스 2개(`OnboardingActivity` "FoldWindow" + `PanelActivity` "FW Panel") · 디버그 3개. **「합치기」는 불가능** — `pruneExtraPanelTasks` 가 `PanelActivity::class.java.name` 으로 태스크를 골라 `finishAndRemoveTask` 하고, `PanelActivity.onDestroy` 가 분할 해제 4경로를 덮는 유일한 관측점(sticky 래치의 근원)이며, finish 경로 5개 + finish 토큰 DoS 방어가 전부 이 컴포넌트를 전제한다. **성립 가능한 유일한 방향 = `OnboardingActivity` 의 LAUNCHER 를 제거해 `PanelActivity` 를 유일 진입점으로 남기는 것**(부수 이득: 2026-07-25 피커 오클릭 사고 원인이 구조적으로 소멸). **선행 조건 = 인과 확정** — 「카드 0 에서도 피커 앱 목록에 FW Panel 이 있다」의 근거가 `DEVICE_FACTS.md` 19차 절에 "MAIN/LAUNCHER 노출로 추정"이라고만 적혀 있다(원인 변수 미조작). 실기기 A/B 가 "LAUNCHER 때문이 아니다"를 내면 훨씬 싼 경로(Panel 쪽 LAUNCHER 만 제거)가 열린다. 라벨은 "FoldWindow" 개명 방향이며 셀렉터가 `contains` 부분 문자열이라(`SplitEntry.kt:518`) **디버그의 `ProbeActivity` LAUNCHER 필터 제거가 선행 필수**(무위험, 언제든 착수 가능 — 릴리스엔 그 선언 자체가 없고 프로브 실행 3종 모두 LAUNCHER 비의존)
+- **`probe/` 완전 삭제**: 매니페스트 격리(W1/S1)는 프로브 3종 선언을 디버그 소스셋으로 옮겼을 뿐이라 **`probe/` Kotlin 소스는 `main` 에 남아 릴리스 APK 에도 컴파일돼 들어간다**(`isMinifyEnabled = false`). 사라진 것은 도달 가능성이지 바이트코드가 아니다. 완전 삭제는 실화면 기반 `WindowGeometry` 측정(가로 분할 디바이더 두께·최소 페인 높이)이 프로브를 요구하므로 그 이후로 이월
+- **열린 질문 잔여**: #1 `rowStride` 축소의 역산 정밀도 영향 · #3 wavve 패키지명 · #5 `ADAPTIVE_*` 상수 실기기 재검증 · #6 셀렉터 다국어(EN) 안정성 · #14 BOTTOM 배치 시 스왑 생략 가능성 (번호는 아래 「열린 질문」 목록과 대응)
+
+### D — 미해결 (원인 미상, 재발 시 재조사)
+
+- **17차 step3 3전멸의 진짜 원인.** 19차에 「카드 0」 가설은 5/5 배치 성공으로 반증·폐기(`pm clear` 표본이 신규 설치 교란 배제). 재발 시 후보 = 피커 화면 상태·purge 타이밍·오염 카드 잔존. #29(유령 매치, 20차)는 시그니처가 다르므로(node-not-found ≠ 매치 후 dispatched=false) 동일시 금지 — 단 재조사 시 #29 의 bounds 필터가 증상을 node-not-found 로 바꿀 수 있음을 감안.
+
+---
+
+## 열린 질문 (번호는 코드 주석이 인용한다 — 재번호·삭제 금지)
+
+`.kt` 소스가 `PROGRESS.md 열린 질문 #N` 형태로 이 번호를 직접 인용한다(`DividerDragger.kt`#2, `SplitEntry.kt`#6·#18). 전부 해소됐어도 번호는 유지한다.
+
+1. `rowStride` 축소가 종횡비 역산 정밀도에 미치는 영향 — [미해결]
+2. 드래그 전략 → **SINGLE_STROKE 확정**(실기기: 단일 스와이프로 984→1236 정확 이동). `HOLD_THEN_MOVE` 는 `GestureDrags` 로 재구현돼 카드 드래그 진입 전용으로 잔존
+3. wavve 등 국내 OTT 패키지명 확인 필요 — [미해결]
+4. `minPaneHeight` 실측 → 세로 좌우분할 **181px** 확정. 가로 상하분할은 [미검증]
+5. `LetterboxDetector` v2 설계 → 구현 완료. `ADAPTIVE_*` 상수 실기기 재검증·순흑 조건 E 실측은 잔여
+6. Recents 분할 진입 셀렉터의 다국어 안정성 — 한국어만 검증. `SPLIT_MENU_TEXT_EN`·`ROTATE_DESC_EN` [미검증]
+7. `DEFAULT_MIN_MEASUREMENT_CONFIDENCE=0.25f` 튜닝 → 접근 자체 기각(11차 검토: 오염 conf 가 정상 ADAPTIVE 상한과 겹쳐 임계로 분리 불가) — "후보 자격" 게이트로 역할 격하, 채택은 합치 게이트가 결정
+8. `PaneSwapper` 셀렉터 → "창 전환" 실측 확정. 하단 배치 E2E 성공
+9. step 파트너 경로 → 피커 노드 탭이 1차 확정. `LAUNCH_ADJACENT` 는 분할 선택 상태를 파괴해 최후 폴백으로 강등
+10. `defaults.closedLoopCorrection` 토글 → 배선 완료. `aspectSource=PROFILE` 이면 무조건 보정 생략(오염 측정이 프로파일을 덮어쓰는 사고 대응)
+11. 대상 앱 라벨 조회 → `<queries>` 블록으로 실기기 정상 동작 확인
+12. 사전 실측 오염(컨트롤 오버레이/앰비언트 글로우) → **#12 해소 완결**: 2-샷 합치 게이트(`docs/DESIGN_12_MEASUREMENT_CONSENSUS.md`), 실기기 G1~G5 전부 통과
+13. 필러박스 맹점(과소 이동 시 `residualBars=0` 오판) → 열축 로직은 confirm 측정과 동일 기반, v1 은 `residualColumns` 로그 보고까지만(`verified` 의미론 반영은 v1.5). 23차: 오탐 원인은 "미구현"이 아니라 "미연결"로 판명(위 남은 작업 C 참조)
+14. BOTTOM 배치 최적화(상단 도킹 후 스왑 대신 하단 직접 드롭) — [미해결, v1.5 후보]
+15. step2 성공 조건 폴링 예산 → 실질 해소: 예산 분리 대신 "다음 시도의 목표 상태 선체크"로 늦은 정착을 흡수(회귀 E2E 실증). 타임아웃 값 무변경
+16. 넷플릭스(UNRESIZEABLE) 분기 자동화 → 완료 + 실기기 E2E 검증(6회). 감지 = privateFlags 필드 리플렉션 + 폴백 비트 1<<11
+17. 넷플릭스 재생-분할 관계 → 특성 규명 완료: 분할 페인 안에서 재생 시작=유지 / 재생 중 메뉴 진입=최소화 플레이어 팝업으로 분리. v1 지침 = "배치 후 재생"
+18. step2/3 성공 조건 오탐 → **완결.** 유튜브 DRAG 회귀 E2E 통과. `isSplitSelectTopPane` 임계(전폭≥90%, `EDGE_DOCK_TOLERANCE_PX=40`) 는 ground truth(`[0,0][2184,977]`, 도킹 0px)로 [검증]. 발견된 실버그 2종(유령 매치/성공 미인지)은 `SplitEntry` 수정 완료
+19. 회전 결과 페인 위치 비결정 — 원인 미상. 누적 TOP 10 / BOTTOM 2(상단 편향). 교정 체인 = `PaneSwapper`(수렴) → 회전×2 폴백([미발동], 위 B-4) → 실패 시 하단 유지+토스트
+20. 클릭-사이클 에스컬레이션 → 10차 Gate 1~3 통과로 주 경로 완결(15/15 done, `ENTRY_STEP_FAILED` 0). 잔여 = [미발동] 목록(위 B-3)
+21. PROFILE 보정 생략 시 verify 잔여값(122~224)은 보고 전용 — #12 설계에서 verify="최저 신뢰 컴포넌트" 판정, 사후 보정 단독 방어는 기각 근거로 확정
+22. 버블 오버레이 존재 시 피커發 파트너가 전체화면 낙착하는 메커니즘 불명(One UI WM 라우팅 추정) — 경험 법칙(세션 중 버블 숨김)으로 해소. One UI 업데이트 시 재검증 필요
+23. `BootReceiver` 실부팅 복귀 → 실부팅 검증 통과(BOOT_COMPLETED·FGS 자동 기동·접근성 유지·버블 가시)
+24. P3-2 확장 메뉴 [미검증] 전체 → 4차 실기기 검증으로 전부 해소(드래그 해제 반증→패널 finish 재구현, 클램프, 스크림 재탭=닫기만, 프리셋 렌더)
+25. 스크림 부산물(풀스크린 오버레이 존재 시 a11y 창 목록 가림-제외, 재구축 비원자적) — 해결·기록. dismiss 는 목표 조건 자체 폴링으로 해결
+26. P3-3 DataStore [미검증] 목록 → 7차+16차 실기기 검증으로 전부 해소(이관·goAsync 부팅·placement 복원·corruption 복구·중지 레이스)
+27. `#27` 패널 카드 결함 → 19차 종결. 채택 = 축 A(파괴 제거, `finish()` 격하 + `pruneExtraPanelTasks`) + `#28`. 기각 = 축 B(소환, base intent 오염으로 유해 판정). 상세 = `docs/DESIGN_27_PANEL_CARD.md`, `docs/DEVICE_FACTS.md` 17~19차 절
+28. `#28` base intent 오염(패널 태스크 부재 시 인텐트 폴백이 새 태스크에 extras 를 실어 영구 실패 루프 생성) → 수정 완료: 폴백 3분기화, 패널 태스크 부재 시 폴백 생략
+
+---
+
+## 결정 로그 (핵심만 — 세부는 git log / DEVICE_FACTS / DESIGN_* 참조)
 
 | 날짜 | 결정 | 근거 |
 |---|---|---|
-| Day 0 | Tier 1(접근성+오버레이) 경로 확정, Shizuku는 Phase 4 선택 | 디바이더 임의 비율 허용 확인 |
-| Day 0 | MediaProjection 재렌더링 경로 폐기 | DRM 차단, 지연/발열 |
-| Day 0 | 삼성 기본 「앱별 화면 비율」 대체 불가 판정 | 상시 고정이라 시청 시에만 쓸 수 없음 |
-| 2026-07-25 | P2-3 기본 경로 = Recents 폴백 확정 | #6 FAILS: `GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN` 이 분할 전/중 모두 false (실기기 3회) |
-| 2026-07-25 | DividerLocator 1차 경로 = `TYPE_SPLIT_SCREEN_DIVIDER` 핸들 중심 | #7 ✅: 분할 활성 중 핸들 68×221 노출. 페인 간 실간격 14px |
-| 2026-07-25 | LetterboxDetector v2 하이브리드로 확장 결정 | 유튜브 앰비언트 모드가 띠를 글로우로 채워 순흑 임계(0.97) 불성립 (screencap 실측 darkRatio 0.000) |
-| 2026-07-25 | ArrangeStateMachine: 검증 실패는 Failed가 아니라 `Done(verified=false)` | 드래그까지 성공한 배치를 측정 실패 때문에 버리지 않는다. verified=false로 노출해 조용한 실패 금지 원칙 유지 |
-| 2026-07-25 | ADR-5 보정은 정확히 1회, 이후 잔여값 보고하고 종료 | 무한 보정 루프 방지. 스크린샷 레이트 리밋(~1회/초)과도 정합 |
-| 2026-07-25 | Detector v2 폴백은 위아래 띠 모두 존재할 때만 유효 판정 | 한쪽만 어두운 UI 요소 오검출 방지. 전면 저디테일 장면은 MIN_CONTENT_FRACTION 가드로 거부 |
-| 2026-07-25 | kotlinx-serialization은 `data/` 에만 격리, domain 모델은 순수 데이터 클래스 + DTO 매핑 | domain 순수성 철칙(kotlin-stdlib only) 유지. DTO 중복 비용보다 회귀 방어선 가치가 큼 |
-| 2026-07-25 | assets srcDir을 `../config` 로 직결 | `config/window_profiles.json` SSOT를 복제 없이 APK에 탑재. 리포지토리 추적 파일 1개 유지 |
-| 2026-07-25 | 시드 JSON에서 `aspectSource=MEASURED` 는 aspect null 강제 | 시드 의미론 단순화. 측정값 캐싱은 Phase 3 DataStore에서 재검토 |
-| 2026-07-25 | 실측 채택 최소 신뢰도 0.25 (파라미터화, 기본값) | 순흑(≈1.0)·ADAPTIVE(≤0.6) 둘 다 통과 가능한 보수적 하한. 실기기 튜닝 대상 |
-| 2026-07-25 | Phase 2: Hilt 미도입, 수동 주입 유지 | 빌드에 Hilt 미설정. Phase 2 규모에 과잉. Phase 3에서 재검토 |
-| 2026-07-25 | 상하 전환(스왑) 실패 시 실제 페인 배치 기준으로 계획 재계산 후 드래그 | 레터박스 제거(핵심 가치)를 우선 보장. 위치 불일치는 최종 토스트로 고지 — 조용한 실패 아님 |
-| 2026-07-25 | step4 파트너 진입 = `LAUNCH_ADJACENT` 1차, 피커 노드 탭 폴백 | 로케일 무관 경로 우선. 둘 다 실기기 미검증이라 이중화 |
-| 2026-07-25 | `PanelActivity` MAIN/LAUNCHER 노출 수용 (라벨 "FW Panel") | 분할 파트너 피커 목록에 뜨려면 필요. 앱 서랍 오염은 Phase 3 재검토 |
-| 2026-07-25 | 순수 기하 로직을 `domain/PaneGeometry.kt` 로 추출 | ADR-4: JVM 테스트 표면 최대화. platform 은 얇은 매핑만 |
-| 2026-07-25 | 진입 레시피 = Recents 카드 **드래그**(3단계)로 전면 교체 | 메뉴 "분할 화면으로 열기"는 가로에서 **좌우 분할** 생성 (실측 반증). 드래그-투-탑만 상하 분할 |
-| 2026-07-25 | `DividerDragger` 기본 전략 = SINGLE_STROKE | 실측: 평범한 스와이프로 디바이더 정확 이동. willContinue 조합은 API 함정 다수 (DEVICE_FACTS 참조) |
-| 2026-07-25 | 파트너 배치 1차 = 피커 노드 탭, LAUNCH_ADJACENT 는 최후 폴백 | LAUNCH_ADJACENT 가 분할 선택 상태를 전체화면으로 파괴 (실측) |
-| 2026-07-25 | `PanelActivity` = launchMode 기본 + 멀티윈도우 이탈 시 `finishAndRemoveTask` 자가 가드 | singleTask/잔존 태스크가 피커 탭에서 전체화면 재사용돼 분할 파괴 (실측: 깜빡임 루프) |
-| 2026-07-25 | 측정 타이밍: 드래그 완료 후 600ms 정착 대기 + 매 드래그 직전 핸들 재조회 | 50ms 후 측정 시 잔여 218px 오측·스테일 핸들 허공 스와이프 (실측) |
-| 2026-07-25 | 검증 잔여는 `LetterboxDetector.residualBars`(상한 거부 없음)로 측정 | 완전 배치(띠 0)가 "측정 실패"로 오판되던 의미론 구멍 해소 |
-| 2026-07-25 | 타깃 결정 = 활성 창 1차, 이벤트 추적 폴백 | 오버레이 앱(sidegesturepad)이 이벤트 추적 오염 (실측) |
-| 2026-07-25 | 비리사이저블 앱(넷플릭스류) = 메뉴 경로 + "시계 방향으로 회전" 우회 분기 확정 | 드래그 레시피가 팝업으로 라우팅됨 (UNRESIZEABLE 선언, 실측). 회전 버튼으로 좌우→상하 전환 실측 성공 |
-| 2026-07-25 | Phase 2 는 DoD ①③④ 로 마감, ② 넷플릭스 분기는 이월 | 우회 경로 실측은 끝났고 자동화만 남음. 세션 컨텍스트 한계로 분리 |
-| 2026-07-25 | 진입 레시피를 `EntryRecipe` enum(DRAG 3단계/MENU 5단계)으로 분기, 감지 = `ApplicationInfo.privateFlags` 리플렉션 | DEVICE_FACTS 실측 근거(넷플릭스 = privateFlags UNRESIZEABLE 선언). 상수값도 리플렉션으로 읽어 AOSP 버전 변화 대비. 리플렉션 실패(비SDK 차단) 시 null → DRAG 기본값으로 안전 폴백 |
-| 2026-07-25 | step2/3 성공 조건을 `PaneGeometry` 도메인 판정으로 교체 | 팝업(프리폼) 오탐 실측(열린 질문 #18). 판정 로직을 domain 으로 옮겨 JVM 테스트 표면 확대(ADR-4) — 신규 판정 3종 13케이스 커버 |
-| 2026-07-25 | 상태 머신 무변경으로 MENU 5단계 수용 | `entryStepCount` 가 이미 파라미터화돼 있어 config 값만 교체. "머신은 N단계 중 k번째만 안다" 설계가 검증됨 |
-| 2026-07-25 오후 | UNRESIZEABLE 폴백 비트 = 1<<11 하드코딩 (상수 리플렉션 denied 시) | 실측: 상수는 max-target-o denied, 필드는 allowed. privateFlags=0x8c000910 비트 분해로 dumpsys 명칭 교차 검증 |
-| 2026-07-25 오후 | 넷플릭스 프로파일 = PROFILE 1.7778 고정 (MEASURED 폐기) | "DRM 이면 검게 나와 폴백" 가정 반증 — 분할/홈 UI 섞인 프레임이 고신뢰 오측(1.14/2.95) 생성 |
-| 2026-07-25 오후 | pre-measure 는 대상 페인 크롭으로만 스캔 | 전체 화면 스캔이 분할 상태에서 항상 오염됨 (실측 2회) |
-| 2026-07-25 오후 | aspectSource=PROFILE 이면 ADR-5 보정 생략 + `closedLoopCorrection` JSON 토글 배선 | 드래그 직후 재측정이 컨트롤 오버레이 오염(residual 122~224)으로 정확한 배치를 과축소 (실측 2회). 프로파일이 진실, 측정은 보고만 |
-| 2026-07-25 오후 | 세션 시작 시 `purgeStalePanelTasks()` | 프로세스 강제 종료로 자가 가드 미실행 시 잔존 태스크 카드가 피커 탭 무력화 → ENTRY_STEP_FAILED (실측). 자기 앱 태스크만 선별 제거라 안전 |
-| 2026-07-25 오후 | 스왑 실패 대응 = PaneSwapper 탭 재시도 3회 → 회전×2 폴백 → 하단 유지+토스트 | "창 전환" ACTION_CLICK 무효 2회 실측. 회전 노드 클릭은 6회 전부 동작해 신뢰 가능한 대체 수단 |
-| 2026-07-25 오후 | 세션 `dragTimeoutMs=12s` 오버라이드 (도메인 기본값 3s 불변) | 위치 교정 체인(스왑 3s+회전×2)이 Dragging 상태 안에서 실행돼 기본 예산으로 DRAG_TIMEOUT (실측) |
-| 2026-07-25 오후 2차 | 진입 스텝 재시도 = "목표 상태 선체크 우선" 설계 (타임아웃 증액 대신) | 유튜브 DRAG 회귀 실측: 드래그 성공 후 정착이 폴링 잔여(~370ms)를 초과하면 실패 판정 → 다음 시도가 성공을 몰라봄. 선체크가 늦은 정착을 흡수하면 실패 보고 지연 없이 해소. E2E 실증 |
-| 2026-07-25 오후 2차 | 셀렉터 매치는 유효 bounds 확보까지 불인정 (step2) | `structural-clickable-label` 이 bounds 조회 불가 유령 노드를 매치해 시도가 수 ms 만에 소진 (실측 2회). 빈 bounds 는 재폴링 계속 |
-| 2026-07-25 오후 2차 | structural 셀렉터에 크기 가드 (bounds ≤ 화면폭/10) | 유효 bounds 의 대형 오매치(카드 본체 중심 1092,833) → 오드래그로 세션 파괴 실측. 아이콘 ~90px vs 카드 수백 px |
-| 2026-07-25 오후 2차 | 버블 = 독립 specialUse FGS + TYPE_APPLICATION_OVERLAY, 접근성 서비스에 얹지 않음 | 접근성 꺼진 상태에서도 버블이 온보딩 유도 가능해야 함. Freecess 동결 근본 해결 겸함 (DEVICE_FACTS) |
-| 2026-07-25 오후 2차 | 배치 세션 중 버블 창 제거(removeView), 세션 종료 시 복원 | A/B 실측: 오버레이 존재 시 피커發 PanelActivity 전체화면 낙착 (ON 실패 2회 / OFF 즉시 성공). 숨김 소유자 = 액추에이터 세션 (모든 트리거 경로 커버) |
-| 2026-07-25 오후 2차 | `PANEL_LABEL_CANDIDATES` = "FW Panel" 단독 | "FoldWindow" 후보가 P3-4 온보딩 라벨과 충돌 — 피커 오클릭으로 분할-선택 파괴 실측 |
-| 2026-07-25 오후 2차 | 버블 오버레이엔 클래식 View, 온보딩엔 Compose | 오버레이 창에 Compose 는 lifecycle owner 함정. service/ 레이어라 Compose 규칙 비대상 |
-| 2026-07-25 오후 3차 | P3-2 메뉴 트리거 = 롱프레스 (탭=즉시 배치 유지), 온보딩은 메뉴 "설정" 항목으로 이동 | 원터치 배치가 핵심 가치 제안 — 탭에 메뉴를 얹으면 터치 수 증가 |
-| 2026-07-25 오후 3차 | 분할 해제 = 디바이더를 자기 패널 페인 쪽 가장자리로 드래그 + isSplitActive 폴링 | 전용 API 부재. 패널 쪽으로 접어야 시청 앱이 전체화면 복귀. 자기 페인 미발견 시 하단 폴백. [미검증 #24] |
-| 2026-07-25 오후 3차 | 프리셋 메뉴 = window_profiles.json SSOT 파싱 (하드코딩 복제 금지), 파싱 실패 시 섹션 생략 | SSOT 원칙. `PROFILES_ASSET_NAME` 상수를 WindowProfilesParser 로 이전해 공유 |
-| 2026-07-25 오후 3차 | 메뉴도 배치 트리거 전 반드시 창 제거 (`dismissMenu` 선행 + `setBubbleHiddenForArrange(true)` 에 포함) | 함정 #22 (오버레이 존재 시 피커發 파트너 전체화면 낙착) 가 메뉴 창에도 동일 적용된다고 가정 |
-| 2026-07-25 오후 4차 | 분할 해제 = **PanelActivity finish 방식** (디바이더 드래그 폐기) | 실측: dispatchGesture 는 dismiss 깊이에서 스냅백(2/2), 동일 기하 input swipe 는 성공(3/3) — 접근성 주입만 거부됨. 패널 finish 는 분할 해소+상대 앱 전체화면 복귀 실측. E2E "dismissSplit: 성공" |
-| 2026-07-25 오후 4차 | 확장 메뉴 = **풀스크린 투명 스크림** 창 (ACTION_OUTSIDE 폐기) | 실측: OUTSIDE 가 버블 DOWN 보다 선행 디스패치 → DOWN 스냅샷 방어 무력 (재탭→배치 오발화, 재롱프레스→재열림). 스크림은 경합 클래스를 구조적으로 제거. 재탭=닫기만 E2E 확인 |
-| 2026-07-25 오후 4차 | dismiss 진입 체크 = `isSplitActive` **자체를 2s 조건 폴링** (약한 freshness 게이트 불충분) | 실측: 스크림 제거 후 a11y 창 목록 재구축 비원자적 — APPLICATION≥1 게이트 통과 후에도 디바이더 미관측 false-negative 2/2. 목표 조건 직접 폴링으로 해결, E2E 통과 |
-| 2026-07-25 오후 6차 | P3-3 이관 = `SharedPreferencesMigration("bubble_prefs")`, 레거시 키 이름(`bubble_enabled`/`bubble_x`/`bubble_y`) **동결 계약** — 회귀 테스트로 고정 | 마이그레이션이 키 이름 그대로 이관 + 원본 파일 삭제. 이름이 어긋나면 기존 사용자 설정 유실. 직접 `getSharedPreferences` 호출은 리포지토리에서 0건으로 소거 (잔존 사용처 = 삭제된 파일 부활 버그) |
-| 2026-07-25 오후 6차 | placement 복원 우선순위 = override > **last-success** > profile > defaults > TOP. 저장은 Done ∧ effective==desired 만 | 마지막 실사용 선택이 정적 JSON 보다 사용자 의도에 가까움. 스왑 실패로 낙착한 위치(effective≠desired)를 저장하면 사용자가 고르지 않은 값이 기본값을 오염 (#19/#20 실측 존재). placementSource 로그로 어느 티어가 이겼는지 노출 |
-| 2026-07-25 오후 6차 | ProfileStore 쓰기 = `NonCancellable` + `ReplaceFileCorruptionHandler`→emptyPreferences. 측정 종횡비 캐싱은 P3-3 에서 **제외 유지** | 리뷰 실지적: 레거시 apply() 는 컴포넌트 종료 후에도 QueuedWork 로 반영 보장 — 코루틴 취소가 쓰기 유실/stopService 미호출 회귀를 만듦. corruptionHandler 부재는 부팅 크래시 루프 위험. 캐싱은 #12 신뢰도 필터 전엔 오염 고착 위험 (실측 사고 2회) |
-| 2026-07-25 오후 6차 | BootReceiver = goAsync + IO 코루틴, `finally { pendingResult.finish() }` | 메인 스레드 동기 IO 제거. 부팅 시점 조용한 실패 금지 의미론(로그만·크래시/토스트 금지)과 검증된 로그 시그니처는 불변. 실부팅 재검증 필요 (#26) |
-| 2026-07-25 저녁 8차 | #20 대응 = **클릭-사이클 에스컬레이션** (매 디스패치 직전 성공조건 선체크 + 검증 슬라이스 800ms 폴링 + 사이클별 메커니즘 전환: 피커 gesture→gesture→a11y / 스왑 a11y→gesture→gesture) + **step3 LAUNCH_ADJACENT 폴백 삭제** + PaneSwapper 정착 게이트(디바이더 bounds 2연속 동일). 구현 전 [미검증] | AOSP 소스: ACTION_CLICK true 는 isClickable 만 보장·performClick 결과 폐기·히트테스트 우회 (View.java 검증). 실측: 무효 클릭 전부 true 반환 → 기존 폴백 도달 불가. LAUNCH_ADJACENT 는 분할-선택 파괴 실측·구조 성공 0회·예산 ~0ms 발화·재시도 오염원. 검증 상수 무변경, 메커니즘 순서 = 데이터(1줄 롤백 레버). 상세 `docs/DESIGN_20_CLICK_CYCLE.md` |
-| 2026-07-25 저녁 10차 | **LAUNCH_ADJACENT 삭제 확정** + 클릭-사이클 설계 실기기 채택 확정 (피커 gesture-first·스왑 a11y-first 프로파일 유지, 롤백 레버 미사용) | Gate 1~3 실측: 15/15 done·ENTRY_STEP_FAILED 0·전략2 부재 회귀 0. cycle-1 회복 1회 실증 + FORENSIC 오착지 특정. 회전 여파 스왑 4/4 (과거 무효 컨텍스트 동형 전승). DEVICE_FACTS 10차 절 = SSOT |
-| 2026-07-25 저녁 11차 | #12 = **2-샷 합치 게이트** (pre 행축 × 진입 후 confirm 열축·페인 크롭, relΔ≤3% 합치 시만 MEASURED, 불합치·확인불가 = PRESET 폴백 + verify 보정 수렴). 임계 상향·대칭성 휴리스틱·verify 강화 단독·pre 2연속 전부 기각. 머신 무변경 (handleDragDividerTo 선두, realTargetY 선례). 토글 `defaults.requireMeasurementAgreement` 기본 true. aspectOverride 는 tier 0 승격 (측정이 사용자 "강제"를 이기는 인접 결함 수정, 보정도 생략). 캐싱 admission = 합치∧verified. **구현 완료 (qa PASS 182/182·머신 diff 0)** |
-| 2026-07-25 밤 11차 | #12 실기기 G1~G5 **전부 통과 — 합치 게이트 채택 확정**. 현장 수정 2건: `toPillarboxScan` sideMarginPct 0.005 + edgeMarginPct 0.12, `classifyAxis` minConfidence — 전부 **스캔 입력 범위** 수정이고 도메인 판정 상수(ADAPTIVE_* 4종)는 무변경 | 오염 = 상수가 아니라 입력 문제 (픽셀 물증: 최외곽 열 var 404~501 / 크롬 아이콘 luma 176~188·raw 소수 7자리 동일 재현 = 정적 물증). 수정 후 클린 3/3 SNAP_AGREE·사고 클래스 3종 차단·tier 0 정상. 함정 #7 준수 — 상수 대신 입력 정화. DEVICE_FACTS 11차 절 = SSOT | 오염 프레임 conf 0.60~0.97 실측 — 단일 프레임 점수는 "프레임이 영상인가"를 측정하지 않음. 오염원은 전부 일시적 ↔ 띠는 지속 → 시간·축·컨텍스트 분리가 유일하게 견고한 신호. 오탐 비용(보정 1회) ≪ 미탐 비용(오배치 고착, 1.6 사고 실증). 상세 `docs/DESIGN_12_MEASUREMENT_CONSENSUS.md` |
-| 2026-07-26 12차 | #12 §6 측정 캐싱 v1 = `AspectSource.CACHED` 티어 (MEASURED 아래·PRESET 위) + admission "합치∧verified∧레버" + 불합치 폴백도 cached 우선 + 무 TTL last-write-wins + 레버 `defaults.cacheMeasuredAspect`(부재=true). CACHED 세션은 confirm 미실행·자기 갱신 없음 | 캐시 = 같은 앱의 이중 검증된 사전값 — §3.5 의 PRESET "사전확률" 논증을 그대로 승계하되 정보량 우위, 오류 비용은 보정 1회로 동일(CACHED 도 closedLoopCorrection ON). requireAgreement=false 포함 confirm 미실행 세션은 구조적으로 저장 불가 — 단일 프레임 값 유입 차단(오염 고착 사고 2회 재발 방지). pre×캐시 합치로 confirm 샷 생략(+0.3s)은 G1~G5 검증 직후 새 채택 경로 부담으로 기각(v1.5 재고). qa PASS 204/204 결함 0 |
-| 2026-07-26 13차 | #12 §6 측정 캐싱 **실기기 검증 4항목 전부 통과 — v1 채택 확정** (코드·상수 무변경, 현장 수정 0건) | 10 세션 10/10 done. 저장 admission·CACHED 낙착(폴백/decision 양 지점)·자기 갱신 차단·레버 회귀 전부 로그+pb 물증. 원복 세션에서 사고 클래스 1.333 오염이 캐시 폴백으로 무해화 — §6 기대 효용 실전 재현. pre-null 유도법(세로 영상 immersive)·`cmd window user-rotation` 함정은 DEVICE_FACTS 13차 절 기록 |
-| 2026-07-26 14차 | P3-5 = placement 체인 **FLEX 티어**(OVERRIDE 다음·LAST_SUCCESS 앞) + 자동 트리거는 `startArrange(null,null)` 로 동일 티어 경유(자동·수동 단일 메커니즘) + FLEX 세션 last-success 저장 억제(종횡비 캐시는 직교라 유지) + 레버 `flexAutoTopPlacement`(부재=true) + 게이트 거부 시 disarm·로그만(토스트 없음) + 디바운스 800ms·진입당 1회 arm | 노트북 자세에선 하단 페인이 책상에 눕는 물리 — TOP 강제가 옳고 명시 override 만 예외. 자동화 결정값이 사용자 선호(last-success)를 오염 금지(P3-3 저장 조건 원칙 연장). 자동 스킵은 사용자 시작 행위가 아니라 조용한 실패 금지 비대상. 닫기 동작의 HALF_OPENED 일시 통과 오발화는 800ms 디바운스+display-off 게이트 2중 방어. UiContext 수용 불확실은 폴백 체인+기능 무력 폴백으로 흡수(크래시 금지) — 전부 실기기 검증 대상 |
-| 2026-07-28 15차 | UiContext = **3-인자 `createWindowContext(display, TYPE_ACCESSIBILITY_OVERLAY, null)` 채택** (서비스 자신·2-인자 전멸 실측). 구 2-인자 후보 삭제 | 에러 메시지가 해법 명시 — display 명시 연결만 UI 컨텍스트 성립. 실기기: 후보 ② 방출 수신, 격하 경로(전멸 시 무크래시)도 실증 |
-| 2026-07-28 15차 | 닫기 오발화 방어 = **힌지 각도 안정성 게이트** (시간 상수 증액 기각) + **FLEX 세션 자세-이탈 취소** 2층 | 닫기 체류 실측 ~2s(3표본) — 800ms 디바운스 반증, display-off 게이트는 닫는 중 화면 켜져 무력. 상수 증액은 느린 닫기 꼬리에 재차 뚫리는 타이밍 도박 → ADR-2 정신대로 조건 기반(각도 정지 = 속도 무관 신호). 멈칫 동반 느린 닫기는 게이트 통과 불가피 → 자세 이탈 = 의도 번복 신호로 진행 중 세션 취소 (기존 cancel 경로 재사용, 머신 무변경). 정상 닫기 2/2 차단 + 취소 1/1 + Done-후 유지 전부 실증 |
-| 2026-07-28 15차 | FLEX 라벨 의미론 확정 (qa CONDITIONAL 회신): FLEX = "위치를 자세가 자동 결정" — **트리거 출처 무관** (버블 탭 무override 포함). 취소·저장억제 대상 기준 = 이 라벨. OVERRIDE(명시 위치)만 불가침 | 위치 결정 근거가 물리 자세라면 근거 소멸(이탈) 시 취소가 정합. 사용자 "명시 선택"과 "알아서" 위임의 경계가 원칙적 보호선 — 14차 단일 메커니즘 결정의 연장 |
-| 2026-07-28 15차 | 재열기 멈칫(대역 내 ≥1.4s 정지) 오발화는 **수용**, 키가드 게이트 기각. Done 후 자동 되돌리기 없음 | 물리 신호만으론 정당한 "닫힌 채→노트북 자세로 열기"와 구분 불가. 키가드 게이트는 그 정당 사용례(잠긴 채 자세 잡고 얼굴 인식)를 죽임. 늦은 펴기 시 완주 분할 잔존은 수동 해제로 복구 — v1.5 재검토 |
-| 2026-07-28 P4 | Phase 4 스코프 = P4-2·P4-3·P4-4 즉시 구현, **P4-1 은 설계 문서+프로브(F1~F6) 선행 후 구현** (`docs/DESIGN_P41_FREEFORM.md`) | freeform 실행 메커니즘(One UI 8 이 셸 `--windowingMode` 를 수용하는지 등)이 전부 미측정 — 맹목 구현은 #12/#20 선례(설계→프로브→구현) 위반. 기기 미연결로 프로브는 다음 세션 이월 |
-| 2026-07-28 P4 | P4-3 발화 = `dismissSplit()` 미경유, `PanelActivity.instance` 직접 `finishAndRemoveTask()`. 자동 스킵/실패 = 로그만(토스트 금지) | dismissSplit 의 isSplitActive 2s 폴링은 커버 디스플레이 a11y 창 목록 상태가 미지수라 신뢰 불가. 패널 finish = 분할 해소 트리거는 실측 확정 사실(P3-2). 자동 트리거 스킵은 조용한 실패 금지 비대상(P3-5 flex 선례) |
-| 2026-07-28 P4 | P4-3 수동 dismissSplit × 커버 자동 해제 레이스 = 게이트 미추가 수용 | 양 경로가 동일한 패널 finish 로 수렴 — 이중 finish 무해. 발생 창도 "해제 메뉴 탭+600ms 내 완전 접기"로 극소. 세션 중 접기로 게이트에 막힌 닫힘 에피소드는 소진(재열기 전 패널 잔존) — v1 한계로 수용, 17차 관찰 |
-| 2026-07-28 P4 | P4-2 위젯 모드 = ui 전용 enum, 도메인 `PartnerMode{BLACK}` 비확장. 자막 위젯 v1 제외 | PartnerMode 는 JSON 프로파일 스키마 소속 — UI 표시 선호와 결합하면 시드 의미론 오염. 자막은 미디어 세션 의존 투기 구현이라 범위 밖 |
-| 2026-07-28 P4 | P4-4 = 자체 트램펄린 pinned shortcut(삼성 App Pair 포맷 비의존) + 전면 대기 = **머신 밖 사전 조건 폴링**(150ms/5s) + placement 는 기존 체인 재사용 | 삼성 App Pair 포맷은 비공개 런처 내부라 재현 불가. 사전 폴링을 머신 밖에 둬 상태 머신 무변경 원칙 유지. 새 placement 티어 금지(자동화 값이 사용자 선호 오염 금지 원칙 연장) |
-| 2026-07-28 P4-1 | 실행 경로 = **후보 A(Shizuku 셸 명령) 채택, 후보 B(binder/HiddenApiBypass) 기각** | 프로브 F2·F3 통과 — `am start --windowingMode 5` + `am task resize` 픽셀 정확 실측. hidden API 무접촉이 유지비용 최소 |
-| 2026-07-28 P4-1 | Shizuku 실행 = **UserService(AIDL) 방식**, `Shizuku.newProcess` 사용 금지 | `newProcess` 는 비공개 API — 버전 간 파손 위험. UserService 는 공개 지원 경로, shell uid 프로세스에서 `sh -c` 실행으로 동일 능력 |
-| 2026-07-28 P4-1 | `StackListParser` 를 **domain/ 에 배치** (셸 출력 파싱) | 문자열 파싱은 android 비의존 순수 로직 — JVM 테스트 표면 확대 원칙. 실기기 원문 46행 대조 10/10 + 원문 픽스처 테스트로 회귀 방어 |
-| 2026-07-28 P4-1 | 팝업 경로는 `ArrangeStateMachine` **비사용** — 단순 명령 + 검증 폴링 5단(창 출현→taskId→resize→bounds 검증) | 진입 스텝이 셸 명령 1개라 머신이 과잉(설계 문서 §4 미결 → 확정). 머신 무변경 원칙 유지. 각 단계 타임아웃 + 명시적 실패(ADR-2) |
-| 2026-07-28 18차 | #27 주 수정 = **축 A(파괴 제거)**. A1 `finishAndRemoveTask()` → **`finish()` 격하** 4곳(커버 해제·dismissSplit instance 경로·자가 가드·EXTRA_FINISH_PANEL). A2 `purgeStalePanelTasks` → **`pruneExtraPanelTasks`**(MRU 패널 태스크 1개 반드시 보존, 나머지만 제거) | **G1 실측**: BACK(=finish)가 분할을 해소하면서 카드를 남기고 피커 MRU 1번으로 재출현 — P3-2 가 확정한 해소 트리거는 애초에 finish 였고 `removeTask` 는 **어떤 실측에도 요구되지 않은 초과 동작**. **G3 실측**: 액티비티 죽은 카드(`Activities=[]`) 탭도 `stage=side/bottom` 정상 낙착·taskId 재사용·전체화면 강탈 0 ⇒ **purge premise 반증**(그 근거는 singleTask 시절·버블 숨김 이전). purge 비용은 단일 로그 시퀀스로 물증화(카드 1→purge→0→ENTRY_STEP_FAILED). 새 측정 근거를 DEVICE_FACTS 18차에 기록해 함정 #7 준수 |
-| 2026-07-28 18차 | #27 축 B(소환)는 **주 수정이 아니라 카드 0 안전망**으로 격하. 배치 = `beginSession` 말미 `dispatch(Start)` 직전, 머신 밖 사전 조건 폴링(P4-4 선례). 수단 순위 **B0 `ActivityManager.addAppTask()`** → B1 `makeTaskLaunchBehind` → B2 `EXTRA_PRELAUNCH_CARD` 1회성 소비 + `moveTaskToBack` → B3 피커 앱그리드. 레버 `defaults.panelCardPreflight`(부재=true, 소환만 제어) | 축 A 만으로는 앱이 통제 못 하는 소멸(재설치·강제종료·수동 스와이프·`isTrimmable=true` 시스템 트리밍)이 남아 결함 클래스 존속. B0 = AOSP javadoc *"recents entry … will exist without an activity"* — 액티비티 미시작이라 포그라운드 무접촉·자가 가드 무관, NEW_DOCUMENT+RETAIN_IN_RECENTS 필수. 소환 시점은 분할-선택 진입 **전**이어야 하며(LAUNCH_ADJACENT 파괴와 동일 클래스 위험) beginSession 배치가 구조적으로 위반 불가. 세션 스코프 가드 억제는 실패 시 전체화면 강탈이라 1회성 소비가 더 좁음. `onPause` 가 가드를 취소하는 성질에 기대는 구현은 ADR-2 위반이라 금지 |
-| 2026-07-28 18차 | #27 후보 ②(purge 를 Done 후로 이동) → **A2 로 대체 흡수**, ③(피커 앱그리드) **최후 폴백 유지** | ② 의 문제의식(자충)은 옳았으나 이동이 아니라 **범위 축소**가 정답 — G3 로 premise 자체가 반증됐으므로 "언제 지우나"가 아니라 "무엇을 남기나"가 축. ③ 은 `all_apps_button`·`search_button` 이 resource-id 라 로케일 무관(#6 우려 해소)이지만 앱서랍 1페이지에 FW Panel 부재·`scrollable` 노드 0 실측 → 페이징/검색 없이 도달 불가 |
-| 2026-07-28 18차 | 신규 함정 기록: **`!hasChild() && !getHasBeenVisible()` 이면 `autoRemoveFromRecents=false` 라도 recents 에서 강제 제거** (AOSP `Task#shouldAutoRemoveFromRecents`) | 소환 카드가 "한 번도 보인 적 없는" 상태로 finish 되면 manifest 설정과 무관하게 사라진다. B0(액티비티 미생성)는 비대상이지만 B1/B2 설계 시 필수 고려. recents 오버뷰엔 안 보이는데 분할 피커엔 보이는 실측 불일치도 이 플래그 취급 차이로 추정 |
-| 2026-07-28 18차(구현) | #27 축 B 소환 수단 = **B0 `addAppTask()` 배제, B1 `makeTaskLaunchBehind()` 채택**. 최종 플래그 `NEW_TASK\|NEW_DOCUMENT\|RETAIN_IN_RECENTS` + extras 무탑재. G2 프로브 대상도 B1 로 교체 | **컴파일 판정**: `addAppTask` 1번 인자가 `Activity` 인스턴스 요구 — `Argument type mismatch: actual type is ArrangerAccessibilityService, but 'android.app.Activity' was expected`. 호출부는 AccessibilityService 이고 **소환이 필요한 상황은 정의상 `PanelActivity.instance` 도 null** 이라 빌려올 Activity 가 존재하지 않음 = 구조적 불가. 리플렉션/hidden API 우회는 P4-1 의 "hidden API 무접촉이 유지비용 최소" 원칙과 충돌해 기각. B1 은 Q3(AOSP 확정)로 `onResume` 미호출 → 자가 가드 구조적 무발화, `NEW_DOCUMENT` 의 `autoRemoveRecents=true` 는 `RETAIN_IN_RECENTS` 로 상쇄. 설계 §2.2 Q5 가 능력만 보고 시그니처 제약을 누락한 사례 — 설계 문서 §3.2·§6 갱신 완료 |
-| 2026-07-28 18차(구현) | #27 v1 = 소환 실패해도 **세션 계속**, 사유는 `lastPanelCardOutcome` 으로 ENTRY_STEP_FAILED 토스트에만 병기. G7(소환 카드 미가시 finish → AOSP 강제 제거) 은 **가드 없이 재소환 자기치유에 위임** | 소환은 보험이지 전제가 아니다 — 카드가 다른 경로로 있을 수 있는데 소환 실패로 배치를 죽이면 안 된다(`FailureReason` 무확장 = 머신 밖 사전 조건이라는 설계 의미론 유지). G7 가드는 커버 해제·자가 가드와의 상호작용을 세션 스코프로 넓히게 되는데, 그 확장은 실패 시 전체화면 강탈 위험(§3.2 B2 논의와 동일 클래스) — 비용 대비 이득이 없다. 재소환은 다음 세션 `beginSession` 에서 비용 0(카드 존재 시 `already-present` 즉시 반환) |
-| 2026-07-28 19차 | #27 **축 B(소환) 기각·코드 제거**. 최종 v1 = 축 A + #28 + `PanelTaskPolicy`. 레버 `panelCardPreflight` 도 함께 제거, `needsSummon`→`hasPanelTask` 개명·반전 | **① 유해 실증(대조 실험)**: `makeTaskLaunchBehind` 카드는 base intent 가 `flg=0x18182000`(NEW_TASK\|MULTIPLE_TASK\|NEW_DOCUMENT\|RETAIN)이라 피커 탭 시 **새 문서=전체화면**으로 라우팅 → 자가 가드 3회 → `ENTRY_STEP_FAILED`. 동일 세션 대조군인 런처 형태 카드(`flg=0x10000000`)는 정상 분할 낙착·`done residual=0`. **#28 과 동일 결함 클래스(대상만 extras→flags)** — 소환은 그 함정을 스스로 밟았다 **② 전제 반증**: 카드 0 에서 배치 **5/5 done**(uninstall 재설치 3 + `pm clear` 2 — 후자가 "신규 설치라 피커에 노출" 교란 배제). 피커는 recents 카드가 아닌 **앱 목록**에서도 「FW Panel」을 제공 ⇒ DESIGN_27 §1.3 「만드는 경로 0개」가 부정확. 전제가 죽고 구현이 해로운 안전망은 유지 비용만 남는다. 제거 후 282 PASS + 실기기 3/3 무회귀. DEVICE_FACTS 19차 절 = SSOT |
-| 2026-07-28 19차 | #27 축 A **채택 확정** (G4·G5·G6·G7 전부 통과) | 17차 결함 시나리오가 재현되지 않음 — 커버 자동 해제 후 **카드 생존** ∧ 이어진 3연속 배치 3/3 done ∧ 전부 `already-present`(소환 불필요) ∧ `node-not-found` 0. prune 은 오염 카드만 제거하고 MRU 보존(`보존 1 / 제거 1`), 재설치 죽은 카드(`Activities=[]`)도 정상 낙착 — 18차 G3 premise 반증을 실사용 경로에서 재확인. G7 함정은 `RETAIN_IN_RECENTS` 로 미발동 관측 |
-| 2026-07-28 16차 | 버블 숨김 안전 타이머 30s→**90s** | 이론 최악 세션(MENU 5스텝×3시도×3s + 디바이더 4s + 드래그 12s + verify) ≈70s > 30s. 조기 복원 = 세션 중 오버레이 재출현 = 함정 #22 자충수. 워치독 비대칭(늦은 복원 무해/이른 복원 유해) + 실측 최장 12s. 제스처 임계는 시스템 표준 유지 확정 (16차 무불만·오분류 0) |
-| 2026-07-31 | **문서 정리**: `PROMPTS/`(6종)·`docs/PHASE_RUNBOOK.md`·`docs/CAMPAIGN_19_PANEL_CARD.md` 제거 (복원 = git 이력) | 목적 소진 — 프롬프트 시퀀스·페이즈 런북은 Phase 0~4 전체 완료로 무용(디버깅 체크리스트는 `DEVICE_VERIFICATION_RUNBOOK.md` §5 공통 함정이 대체), 19차 캠페인 절차서는 #27 종결로 1회성 소진(결과 SSOT = DEVICE_FACTS 19차 절 유지). **유지 판정**: `IMPROVEMENT_PLAN`·`CODE_REVIEW`·`DESIGN_*` 4종·`probe_report*` 3종은 소스 KDoc·테스트·DEVICE_FACTS 가 참조(측정 근거 = 함정 #7)하므로 삭제 불가 |
+| Day 0 | Tier 1(접근성+오버레이) 확정, Shizuku 는 Phase 4 선택 | 디바이더 임의 비율 허용 확인 |
+| Day 0 | MediaProjection 재렌더링 · 삼성 「앱별 화면 비율」 대체 모두 폐기 | DRM 차단/발열, 상시 고정이라 시청 시에만 못 씀 |
+| 2026-07-25 | 진입 레시피 = Recents 카드 **드래그** 3단계(메뉴 경로는 좌우 분할만 생성해 폐기) | 실측 반증 |
+| 2026-07-25 | `DividerDragger` = SINGLE_STROKE, 페인 대상 크롭 pre-measure, `aspectSource=PROFILE` 시 보정 생략 | 실측: 단일 스와이프 정확 이동 / 전체 화면 스캔 오염 / 컨트롤 오버레이가 재측정을 과축소 |
+| 2026-07-25 | UNRESIZEABLE(넷플릭스) = MENU 레시피(좌우 분할 후 "시계 방향 회전") 분기, 감지 = privateFlags 리플렉션 + 폴백 비트 1<<11 | 드래그 레시피가 팝업으로 라우팅됨(실측) |
+| 2026-07-25 | `PanelActivity` = launchMode 기본 + 멀티윈도우 이탈 시 자가 가드 finish, MAIN/LAUNCHER 노출 수용(라벨 "FW Panel") | 잔존 태스크가 피커 탭에서 전체화면 재사용(실측). 피커 노출 필요조건 |
+| 2026-07-25 오후 | 세션 시작 시 `purgeStalePanelTasks()`(후에 `pruneExtraPanelTasks` 로 대체, #27) | 강제종료 후 잔존 카드가 피커를 무력화(실측) |
+| 2026-07-25 오후2차 | 진입 스텝 재시도 = "목표 상태 선체크 우선"(타임아웃 증액 대신) | 늦은 정착이 실패로 오판되는 것을 다음 시도가 흡수 |
+| 2026-07-25 오후2차 | 버블 = 독립 specialUse FGS + `TYPE_APPLICATION_OVERLAY`, 배치 세션 중 제거·종료 시 복원 | 오버레이 존재 시 피커發 파트너가 전체화면 낙착(A/B 실측) |
+| 2026-07-25 오후3차 | 분할 해제 = 패널 finish(디바이더 드래그 아님) + `isSplitActive` 자체 폴링, 메뉴 = 풀스크린 스크림 | dispatchGesture 는 dismiss 깊이에서 스냅백(실측) / ACTION_OUTSIDE 디스패치 순서 경합(실측) |
+| 2026-07-25 오후6차 | placement 복원 = override > last-success > profile > defaults > TOP, 저장은 Done ∧ effective==desired 만 | 마지막 실사용 선택이 정적 JSON 보다 사용자 의도에 가까움 |
+| 2026-07-25 저녁8차 | `#20` 클릭-사이클 에스컬레이션(선체크+800ms 검증 슬라이스+사이클별 메커니즘 전환) + `LAUNCH_ADJACENT` 폴백 삭제 | AOSP 소스: `ACTION_CLICK=true` 는 히트테스트 우회(실측 무효 클릭 전부 true 반환) |
+| 2026-07-25 밤11차 | `#12` 측정 합치 게이트(pre 행축 × confirm 열축, 불합치 시 PRESET 폴백) | 오염 프레임 단일 샷 conf 로는 "띠"와 "일시적 UI" 구분 불가. 오탐 비용≪미탐 비용 |
+| 2026-07-26 12차 | `#12` §6 측정 캐싱(`AspectSource.CACHED`, admission=합치∧verified∧레버) | 같은 앱의 이중 검증된 사전값. 단일 프레임 유입은 캐시 오염 사고 재발 방지 위해 구조적 차단 |
+| 2026-07-27~28 15차 | FoldingFeature 자동 배치 = 힌지 각도 안정성 게이트 1층 + FLEX 세션 자세-이탈 취소 2층(시간 상수 증액 기각) | 완전 닫기 체류 시간 실측 2.1/1.95/1.2s 가 800ms 디바운스를 초과(설계 가정 반증) |
+| 2026-07-28 P4 | P4-3 발화 = `dismissSplit()` 미경유, 패널 직접 `finishAndRemoveTask()` | 커버 디스플레이에서 `isSplitActive` 창 목록 신뢰 불가 |
+| 2026-07-28 P4-1 | 팝업 실행 = Shizuku UserService(AIDL), `Shizuku.newProcess` 금지, 상태 머신 비사용(단순 명령+검증 폴링) | `newProcess` 는 비공개 API. 진입 스텝 1개라 머신 과잉 |
+| 2026-07-28 18~19차 | `#27` 주 수정 = 축 A(`finish()` 격하 + `pruneExtraPanelTasks` MRU 1개 보존). 축 B(소환)는 기각·제거 | G1/G3 가 purge 의 원 근거를 반증, 소환 카드는 base intent 오염으로 유해(G2) |
+| 2026-07-29 | 개선 웨이브 W0~W7(23항목) 채택·완주 | 전체 코드 리뷰 대응. 계획·리뷰 문서는 반영 후 폐기(사유는 각 `.kt` KDoc 인라인) |
+| 2026-07-31 20차 | `#29` MENU 피커 유령(0-bounds) 매치 수정(`findPanelPickerNode` bounds 필터) | 잔존 카드의 0-bounds 유령 노드가 DFS 앞에서 매치됨(베이스라인 대조로 기존 결함 확정) |
+| 2026-07-31 | `#30` 전체화면 자동 트리거 = 긍정 술어(`FullscreenWindowJudge`, "APP 창이 화면≥99% 덮고 상단 스트립 가리는 비-APP 창 0") + 패키지 단위 에피소드 래치(`AutoTriggerLedger`, 시간창 아님) | 부정 술어는 자기 분할을 몰입으로 오판정(D8). 해제→재진입 간격은 사용자 페이스라 시간창 크기를 원리상 정할 수 없음(D2) |
+| 2026-08-01 22차 | `#31` 최종 해법 = 래치 2종 구분(sticky/non-sticky) | 1차 수정(홈을 해제 신호로 재허용)이 분할-해제 전환 중 노출되는 런처 이벤트로 P-1 루프를 회귀시킴 — 시간창은 D2 로 이미 기각 |
+| 2026-08-01 23차 | D17 열축 게이트는 신규 판별자 불요, `residualBars()` 에 적응형 폴백만 연결하면 됨(v1.5) | 앰비언트 조명이 띠 휘도를 52~60 으로 올려 순흑 임계(darkLuma≤24) 미달 — `detectHybrid()`/`ADAPTIVE_MAX_BAR_LUMA=90` 는 이미 이 범위를 덮음 |
+| 2026-08-01 | `#32` 런처 진입점 통합 = 「합치기」 불가, 「소유권 이전」만 가능. L2(A/B 인과 확정) 선행 후 착수 | `PanelActivity` 가 finish 경로 5개·sticky 래치·prune 판정 전부의 유일 전제. 위 남은 작업 C 참조 |
+| 2026-07-31 | 문서 정리: `PROMPTS/`·`docs/PHASE_RUNBOOK.md`·`docs/CAMPAIGN_19_PANEL_CARD.md` 제거(git 이력으로 복원 가능) | Phase 0~4 완료로 목적 소진 |
+| 2026-08-01 | AAA 품질 캠페인 = 개편 → **읽기 전용 비평가에 "모든 수치 주장 재계산" 의무** → 조준 수정 루프 | 지배적 결함 클래스가 "주석의 수치가 거짓"이었다. 코드를 읽는 비평만으로는 안 잡히고, 실행 계산을 강제해야 드러난다(위 캠페인 절) |
+| 2026-08-01 | 메뉴 커밋 액션 = **3결과 모델**(즉시 / 복원까지 이연 / onDestroy 폐기). 버리지도 즉시 재생도 하지 않는다 | 자동 배치 세션 중 재생되면 busy 토스트가 세션을 오염(함정 #22 계열). "정확히 1회 실행" 계약은 세 경우 모두에서 유지 |
+| 2026-08-01 | 버블 메뉴에 `setOnLongClickListener` 추가(a11y 전용 경로) | 커스텀 터치 리스너의 롱프레스 검출은 접근성 서비스가 합성하지 못한다 — TalkBack 사용자에게 메뉴 도달 경로가 **아예 없었다**. 터치 리스너가 DOWN 을 소비하므로 터치 경로는 무변화 |
+
+---
+
+## 개발 환경 함정 (실측 누적)
+
+- Git Bash 에서 `gradlew` 는 `JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` 프리픽스 필수 — 없으면 `installDebug` 가 조용히 실패해 구버전 APK 로 검증하게 됨(실제 40분 소모 사례).
+- `screencap` 은 폴드에서 `-d <display-id>` 필수(생략 시 경고 2줄이 PNG 에 섞임). 내부 화면 id·커버 id 는 `dumpsys SurfaceFlinger --display-id`.
+- adb 롱프레스 시뮬레이션은 `input swipe x y x y 1200`(700ms 는 경계 실패).
+- Git Bash 가 `/sdcard/...` 인자를 로컬 경로로 변환해 파괴 — 원격 명령은 통째 인용, `adb pull` 은 `MSYS_NO_PATHCONV=1` 프리픽스.
+- 재설치 후 접근성 서비스 재활성화 필수(CLAUDE.md 함정 #6). 동일 값으로 재설정하면 no-op — 서비스 재기동 로그를 보려면 `none` 으로 토글 후 재설정.
+- 회전은 `adb shell cmd window user-rotation lock 1(가로)/0(세로)` 로 고정(물리 회전과 WM 관점 동일, 재현성 높음) — `user-rotation lock` 잔재가 남으면 FoldingFeature 판정이 물리 자세와 무관하게 나오므로 검증 전 `cmd window user-rotation free` 확인.
+
+## 실기기 검증 절차 (상시 사용 명령)
+
+```bash
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+./gradlew :app:installDebug
+# 재설치 후 접근성 재활성화 필수 (함정 #6). probe 병행 시 콜론으로 연결
+adb shell settings put secure enabled_accessibility_services \
+  dev.dj.foldwindow/dev.dj.foldwindow.service.ArrangerAccessibilityService
+# 유튜브 가로 전체화면 재생 상태에서 (⚠ -n 필수 — 액션만으로는 implicit broadcast 제한으로 수신 안 됨):
+adb shell am broadcast -a dev.dj.foldwindow.ARRANGE -n dev.dj.foldwindow/.service.ArrangeTriggerReceiver --es placement top
+# 하단 배치: --es placement bottom / 종횡비 강제: --ef aspect 1.7778 / 취소: --ez cancel true
+```
+
+상세 절차(세션 구성·로그 캡처·공통 함정)는 `docs/DEVICE_VERIFICATION_RUNBOOK.md`.
