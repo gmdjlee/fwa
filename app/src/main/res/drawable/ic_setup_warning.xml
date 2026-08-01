@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 온보딩 주의 카드/차단 사유 문구에 쓰는 라운드 경고 삼각형.
+     팁 카드와 시각적으로 확실히 구분하기 위한 유일한 "경고" 글리프다.
+
+     [D2] 삼각형 면의 fillAlpha 0.4 는 errorContainer 위에서 1.67:1 로 사라졌다.
+     0.7 로는 2.61:1 에 그쳐 0.85 를 쓴다 — 라이트 errorContainer 3.30:1 /
+     다크 errorContainer 3.64:1 / 라이트 background(차단 사유 줄) 3.77:1.
+
+     [F2] 느낌표를 같은 tint 의 별도 면(alpha 1.0)으로 얹으니 삼각형(0.85)과 1.27:1 이라
+     사실상 사라졌다. 색을 더 벌릴 여지가 없으므로 도형-바탕(figure-ground)으로 뒤집는다:
+     막대와 점을 삼각형 path 의 서브패스로 넣고 evenOdd 로 "구멍"을 뚫어 배경이 비치게 한다.
+     느낌표 대비 = 삼각형 대비 배경 = 위의 3.30 / 3.64 / 3.77:1 그대로.
+     바깥 윤곽 기하와 alpha 는 그대로라 컨테이너 대비도 변하지 않는다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillAlpha="0.85"
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M10.3,3.6 A2,2 0 0 1 13.7,3.6 L21.4,17.9 A2,2 0 0 1 19.7,20.9 H4.3 A2,2 0 0 1 2.6,17.9 Z M12,8.4 A1.1,1.1 0 0 1 13.1,9.5 V13.6 A1.1,1.1 0 0 1 10.9,13.6 V9.5 A1.1,1.1 0 0 1 12,8.4 Z M10.8,16.6 A1.2,1.2 0 1 1 13.2,16.6 A1.2,1.2 0 1 1 10.8,16.6 Z" />
+</vector>

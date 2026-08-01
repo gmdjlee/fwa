@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 온보딩 「Shizuku」 권한 아이콘. 옅은 방패(권한 상승) + 뚫린 열쇠 구멍.
+
+     [D12] 광학 폭 14.8 → 16.4, 높이 19.2 → 18.0 (권한 글리프 4종 통일).
+     [D2] 방패의 fillAlpha 0.4 는 아이콘 배경 대비 1.80:1 로 사라졌다 → 0.7
+     (미허용 3.07:1 / 허용 3.71:1, 다크 3.77:1).
+
+     [F3] 열쇠 구멍을 같은 tint 의 별도 면(alpha 1.0)으로 얹으면 방패(0.7)와 1.52~1.86:1 로
+     구분되지 않는다. ic_setup_warning 과 같은 처방 — 구멍을 방패 path 의 서브패스로 넣고
+     evenOdd 로 뚫어 아이콘 배경이 비치게 한다. 구멍 대비 = 방패 대비 배경 = 위의 3.07 /
+     3.71 / 3.77:1.
+     주의: evenOdd 는 겹친 서브패스를 다시 채운다(짝수 교차). 그래서 기둥의 둥근 윗머리를
+     직선으로 바꿔 원(아래끝 y=11.5)과 겹치지 않게 했다(기둥 시작 y=11.6). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillAlpha="0.7"
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,3 L20.2,5.6 V11.8 C20.2,16.2 16.9,19.5 12,21 C7.1,19.5 3.8,16.2 3.8,11.8 V5.6 Z M10.1,9.6 A1.9,1.9 0 1 1 13.9,9.6 A1.9,1.9 0 1 1 10.1,9.6 Z M11,11.6 H13 V15.4 A1,1 0 0 1 11,15.4 Z" />
+</vector>

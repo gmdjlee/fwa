@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 온보딩 「알림」 권한 아이콘. 두툼한 라운드 벨(반타원 돔 + 라운드 밑단 + 반원 추).
+
+     [D12] 광학 폭 13.2 → 16.0 (권한 글리프 4종을 16~17 로 통일). 돔을 정원 대신 가로로 넓은
+     반타원(rx 6.8 / ry 5.6)으로 바꿔 높이는 그대로 두고 폭만 키웠다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.2,9 A6.8,5.6 0 0 1 18.8,9 V14.3 L20,16.6 A0.95,0.95 0 0 1 19.15,18 H4.85 A0.95,0.95 0 0 1 4,16.6 L5.2,14.3 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.6,19 H14.4 A2.4,2.4 0 0 1 9.6,19 Z" />
+</vector>

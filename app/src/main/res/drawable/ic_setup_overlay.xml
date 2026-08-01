@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 온보딩 「다른 앱 위에 표시」 권한 아이콘.
+     옅은 앱 창 위에 버블(원)이 모서리를 물고 떠 있는 형태 = "다른 앱 위에".
+     ic_bubble.xml 과 동일한 소프트 라운드 톤(굵은 면, 헤어라인 스트로크 없음).
+
+     [D12] 세로로 쌓이는 권한 글리프 4종의 광학 폭을 16~17 로 통일 — 이 아이콘은 19.6 로 가장
+     컸다. 창을 16.5×14 → 14×12 로 줄여 잉크량도 함께 낮춘다(최종 광학 폭 17.0).
+     [D2] 창의 fillAlpha 0.4 는 아이콘 배경 대비 1.80:1 로 형태가 사라졌다 → 0.7
+     (미허용 상태 3.07:1 / 허용 상태 3.71:1, 다크 3.77:1). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 아래 깔린 앱 창 (3.4..17.4 × 7..19) -->
+    <path
+        android:fillAlpha="0.7"
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.9,7 H14.9 A2.5,2.5 0 0 1 17.4,9.5 V16.5 A2.5,2.5 0 0 1 14.9,19 H5.9 A2.5,2.5 0 0 1 3.4,16.5 V9.5 A2.5,2.5 0 0 1 5.9,7 Z" />
+    <!-- 위에 떠 있는 버블 (중심 17,6.6 / r 3.4) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13.6,6.6 A3.4,3.4 0 1 1 20.4,6.6 A3.4,3.4 0 1 1 13.6,6.6 Z" />
+</vector>
