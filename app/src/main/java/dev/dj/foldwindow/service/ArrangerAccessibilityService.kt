@@ -13,6 +13,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
+import dev.dj.foldwindow.R
 import dev.dj.foldwindow.data.ProfileStore
 import dev.dj.foldwindow.data.ProfilesParseResult
 import dev.dj.foldwindow.data.WindowProfilesParser
@@ -449,7 +450,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         if (!geometry.matchesScreen(screen)) {
             Log.w(TAG, "startArrange: 화면 기하 불일치 — screen=${screen.width}x${screen.height} " +
                        "expected=${geometry.usableWidth}x${geometry.usableHeight} (v1 미지원)")
-            if (!triggerSource.isAuto) toast("이 화면 방향/디스플레이는 아직 지원하지 않습니다")
+            if (!triggerSource.isAuto) toast(getString(R.string.arrange_unsupported_screen))
             return
         }
 
@@ -458,7 +459,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         // machineState 는 dismissSplit 경로에서 Idle 이라 종전 두 조건만으로는 잡히지 않는다.
         if (machineState != ArrangeState.Idle || sessionInFlight || dismissInFlight) {
             Log.w(TAG, "startArrange: 이미 배치 진행 중 (state=$machineState dismissInFlight=$dismissInFlight)")
-            if (!triggerSource.isAuto) toast("이미 배치 진행 중")
+            if (!triggerSource.isAuto) toast(getString(R.string.arrange_busy))
             return
         }
 
@@ -466,7 +467,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val target = activePkg ?: lastForegroundPkg
         if (target == null) {
             Log.w(TAG, "startArrange: 대상 앱(포그라운드 패키지)을 찾지 못함")
-            if (!triggerSource.isAuto) toast("대상 앱을 찾지 못했습니다")
+            if (!triggerSource.isAuto) toast(getString(R.string.arrange_no_target))
             return
         }
         Log.i(
@@ -489,7 +490,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             } catch (e: Exception) {
                 // 조용한 실패 금지: 예측하지 못한 예외도 사용자에게 드러낸다.
                 Log.e(TAG, "beginSession 중 예외", e)
-                toast("배치 실패: 내부 오류")
+                toast(getString(R.string.arrange_internal_error))
                 cleanupSession()
             } finally {
                 sessionInFlight = false
@@ -513,7 +514,8 @@ class ArrangerAccessibilityService : AccessibilityService() {
     fun dismissSplit() {
         if (machineState != ArrangeState.Idle || sessionInFlight) {
             Log.w(TAG, "dismissSplit: 배치 진행 중 (state=$machineState) — 무시")
-            toast("배치 진행 중")
+            // 사용자 입장에서 startArrange 의 busy 가드와 같은 상황이라 같은 문구를 쓴다.
+            toast(getString(R.string.arrange_busy))
             return
         }
         if (dismissInFlight) {
@@ -530,7 +532,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             } catch (e: Exception) {
                 // 조용한 실패 금지: 예측하지 못한 예외도 사용자에게 드러낸다.
                 Log.e(TAG, "performDismissSplit 중 예외", e)
-                toast("분할 해제 실패: 내부 오류")
+                toast(getString(R.string.arrange_internal_error))
             } finally {
                 dismissInFlight = false
             }
@@ -574,7 +576,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         } ?: false
         if (!active) {
             Log.i(TAG, "dismissSplit: 분할 화면이 아님")
-            toast("분할 화면이 아닙니다")
+            toast(getString(R.string.arrange_dismiss_not_split))
             return
         }
 
@@ -586,7 +588,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             // 없으면 이 분할은 우리가 배치한 것이 아니므로(다른 앱/시스템이 만든 분할) 손대지 않는다.
             if (actualVideoPaneRect(packageName, screen) == null) {
                 Log.w(TAG, "dismissSplit: 자기 패널 페인 미발견 — FoldWindow 분할이 아님으로 판단, 중단")
-                toast("FoldWindow 분할이 아닙니다")
+                toast(getString(R.string.arrange_dismiss_not_ours))
                 return
             }
 
@@ -627,7 +629,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
                     "dismissSplit: PanelActivity.instance null ∧ 패널 태스크 부재 — " +
                         "인텐트 폴백 생략(#28 base intent 오염 방지)",
                 )
-                toast("해제할 FoldWindow 패널을 찾지 못했습니다")
+                // 사용자 입장에서는 위 "우리 분할이 아님" 과 결과·대처가 동일하다(직접 해제).
+                // 두 원인의 구분은 바로 위 Log.w 가 유지한다.
+                toast(getString(R.string.arrange_dismiss_not_ours))
                 // 해제 액션 자체를 아무것도 태우지 않았으므로 아래 settle 폴링은 반드시 타임아웃
                 // 될 뿐 아니라 위 토스트와 중복·혼란만 준다 — 여기서 실패를 확정하고 return 한다.
                 // try/finally 안이므로 버블 재표시는 finally 에서 정상 실행된다.
@@ -643,10 +647,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
             if (settled) {
                 Log.i(TAG, "dismissSplit: 성공")
-                toast("분할 해제 완료")
             } else {
                 Log.w(TAG, "dismissSplit: 타임아웃 — 분할 해제 확인 실패")
-                toast("분할 해제 실패: 시간 초과")
+                toast(getString(R.string.arrange_dismiss_timeout))
             }
         } finally {
             FloatingLauncherService.instance?.setBubbleHiddenForArrange(false)
@@ -678,7 +681,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     fun startPopup() {
         if (machineState != ArrangeState.Idle || sessionInFlight) {
             Log.w(TAG, "startPopup: 이미 배치 진행 중 (state=$machineState)")
-            toast("이미 배치 진행 중")
+            toast(getString(R.string.arrange_busy))
             return
         }
         if (popupInFlight) {
@@ -687,7 +690,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
         if (!ShizukuShell.isReady()) {
             Log.w(TAG, "startPopup: Shizuku 미가용")
-            toast("Shizuku 를 사용할 수 없습니다")
+            toast(getString(R.string.arrange_popup_shizuku_unavailable))
             return
         }
 
@@ -695,7 +698,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val target = activePkg ?: lastForegroundPkg
         if (target == null) {
             Log.w(TAG, "startPopup: 대상 앱(포그라운드 패키지)을 찾지 못함")
-            toast("대상 앱을 찾지 못했습니다")
+            toast(getString(R.string.arrange_no_target))
             return
         }
         Log.i(TAG, "startPopup: target=$target source=${if (activePkg != null) "active-window" else "event-tracked"}")
@@ -709,7 +712,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             } catch (e: Exception) {
                 // 조용한 실패 금지: 예측하지 못한 예외도 사용자에게 드러낸다.
                 Log.e(TAG, "performStartPopup 중 예외", e)
-                toast("팝업 배치 실패: 내부 오류")
+                toast(getString(R.string.arrange_internal_error))
             } finally {
                 popupInFlight = false
             }
@@ -730,11 +733,11 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val component = runCatching { packageManager.getLaunchIntentForPackage(target)?.component }.getOrNull()
         if (component == null) {
             Log.w(TAG, "startPopup: 런치 컴포넌트를 찾지 못함 (target=$target)")
-            toast("앱을 실행할 수 없습니다")
+            toast(getString(R.string.arrange_popup_launch_unavailable))
             return
         }
 
-        // argv 로 직접 전달되므로(F3+F4+S2+S3) 셸 파싱이 없다 — 컴포넌트 클래스명에 올 수 있는
+        // argv 로 직접 전달되므로 셸 파싱이 없다 — 컴포넌트 클래스명에 올 수 있는
         // '$'(예: YouTube Shell$HomeActivity, DEVICE_FACTS.md 「P4-1 프로브 F1~F6」)도 셸 변수
         // 치환 대상이 아니므로 원천적으로 무해하다. 구 `sh -c` + 작은따옴표 인용 방식은 폐기됐다.
         val startResult = ShizukuShell.exec(
@@ -743,7 +746,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         )
         if (startResult == null) {
             Log.w(TAG, "startPopup: am start 실행 실패 (Shizuku exec 응답 없음)")
-            toast("팝업 실행 실패")
+            toast(getString(R.string.arrange_popup_start_failed))
             return
         }
         Log.i(TAG, "startPopup: am start result=$startResult")
@@ -756,7 +759,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         } ?: false
         if (!windowAppeared) {
             Log.w(TAG, "startPopup: ${POPUP_WINDOW_POLL_TIMEOUT_MS}ms 내 대상 창 미관측")
-            toast("팝업 배치 실패: 창을 찾지 못함")
+            toast(getString(R.string.arrange_popup_window_missing))
             return
         }
 
@@ -764,7 +767,9 @@ class ArrangerAccessibilityService : AccessibilityService() {
         val taskId = stackListOutput?.let { StackListParser.taskIdFor(it, target) }
         if (taskId == null) {
             Log.w(TAG, "startPopup: taskId 조회 실패 (target=$target)")
-            toast("팝업 배치 실패: 태스크를 찾지 못함")
+            // 아래 resize 실패/검증 실패와 사용자 입장의 결과·대처가 동일하다(창을 직접 조절).
+            // 세 원인의 구분은 각 Log.w 가 유지한다.
+            toast(getString(R.string.arrange_popup_resize_failed))
             return
         }
 
@@ -777,7 +782,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         )
         if (resizeResult == null) {
             Log.w(TAG, "startPopup: am task resize 실행 실패 (taskId=$taskId)")
-            toast("팝업 배치 실패: 크기 조정 실패")
+            toast(getString(R.string.arrange_popup_resize_failed))
             return
         }
 
@@ -793,7 +798,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
         } else {
             // 명시적 실패 상태(ADR-2) — 조용히 넘어가지 않고 잔여 상태를 그대로 보고한다.
             Log.w(TAG, "startPopup: ${POPUP_VERIFY_TIMEOUT_MS}ms 내 bounds 일치 확인 실패 (taskId=$taskId)")
-            toast("팝업 배치 실패")
+            toast(getString(R.string.arrange_popup_resize_failed))
         }
     }
 
@@ -882,7 +887,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
     fun startArrangeWhenForeground(targetPkg: String) {
         if (machineState != ArrangeState.Idle || sessionInFlight) {
             Log.w(TAG, "startArrangeWhenForeground: 이미 배치 진행 중 (state=$machineState)")
-            toast("이미 배치 진행 중")
+            toast(getString(R.string.arrange_busy))
             return
         }
         if (foregroundAwaitInFlight) {
@@ -915,7 +920,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
                         "startArrangeWhenForeground: ${SHORTCUT_FOREGROUND_TIMEOUT_MS}ms 내 대상 전면 " +
                             "미도달 — 배치 취소 (target=$targetPkg)",
                     )
-                    toast("대상 앱이 전면으로 오지 않아 배치를 취소했습니다")
+                    toast(getString(R.string.arrange_shortcut_foreground_timeout))
                 }
             } finally {
                 foregroundAwaitInFlight = false
@@ -2344,12 +2349,15 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         when (state) {
             is ArrangeState.Done -> {
-                // [F9 v1 대응, 계획서 §F9] verified=true 는 "잔여가 허용치 이내" 를 보장하지
+                // verified=true 는 "잔여가 허용치 이내" 를 보장하지
                 // 않는다 — 보정 비활성(closedLoopCorrection=false) 또는 이미 1회 보정한 뒤에도
                 // 잔여값을 그대로 보고하는 경로가 있다(ArrangeStateMachine.reduceVerifying).
                 // 필드 개명(verified 의미 재정의)은 리듀서·기존 테스트 전반에 영향을 주므로
-                // v1.5 로 미루고, v1 은 사용자에게 보이는 메시지에서만 허용치 초과 여부를 구분한다.
+                // v1.5 로 미루고, v1 은 보고 단계에서만 허용치 초과 여부를 구분한다.
                 val residual = state.finalResidualPx ?: 0
+                // [message] 는 **진단용 문자열**이다 — 사용자에게 띄우지 않고 아래 자동 세션
+                // Log.i 에만 들어간다(잔여 px·보정 횟수는 개발자용 값이다). 사용자용 문구는
+                // 바로 아래 [userMessage] 가 따로 만든다.
                 val message = if (state.verified) {
                     buildString {
                         append("배치 완료 · 잔여 ${residual}px")
@@ -2362,6 +2370,20 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 } else {
                     "배치 완료 · 검증 불가(측정 실패)"
                 }
+                // 사용자용 문구. 깔끔한 성공(검증됨 ∧ 허용치 이내 ∧ 요청한 위치)은 null —
+                // 창이 눈앞에서 바뀐 직후에 "됐습니다" 토스트를 덮는 것은 알림이 아니라 소음이다.
+                // 무언가 어긋났을 때만, px 가 아니라 사용자의 말로 알린다.
+                val userMessage: String? = when {
+                    effectivePlacement != desiredPlacement -> getString(
+                        when (effectivePlacement) {
+                            Placement.TOP -> R.string.arrange_done_placement_top
+                            Placement.BOTTOM -> R.string.arrange_done_placement_bottom
+                        },
+                    )
+                    !state.verified -> getString(R.string.arrange_done_unverified)
+                    residual > arrangeConfig.residualTolerancePx -> getString(R.string.arrange_done_residual_over)
+                    else -> null
+                }
                 Log.i(
                     TAG,
                     "arrange done: verified=${state.verified} residual=${state.finalResidualPx} " +
@@ -2369,9 +2391,10 @@ class ArrangerAccessibilityService : AccessibilityService() {
                         "tolerance=${arrangeConfig.residualTolerancePx} trigger=$triggerSource",
                 )
                 // [#30 D19] 자동 세션은 사용자가 요청한 적이 없는 동작이라 진단 문구를 LENGTH_LONG
-                // 토스트로 띄우면 방해다 — 같은 내용을 Log.i 로만 남긴다.
+                // 토스트로 띄우면 방해다 — 같은 내용을 Log.i 로만 남긴다. 수동 세션도 어긋난 것이
+                // 없으면(userMessage == null) 토스트를 띄우지 않는다 — 진단 상세는 위 Log.i 가 유지한다.
                 if (!triggerSource.isAuto) {
-                    toast(message)
+                    if (userMessage != null) toast(userMessage)
                 } else {
                     Log.i(TAG, "auto arrange result (토스트 억제): $message")
                 }
@@ -2422,7 +2445,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
             is ArrangeState.Failed -> {
                 Log.i(TAG, "arrange failed: reason=${state.reason} trigger=$triggerSource")
                 if (!triggerSource.isAuto) {
-                    toast("배치 실패: ${failureReasonKo(state.reason)}")
+                    toast(failureReasonKo(state.reason))
                     return
                 }
 
@@ -2444,13 +2467,13 @@ class ArrangerAccessibilityService : AccessibilityService() {
                 if (state.reason == FailureReason.CANCELLED) {
                     // 무고지는 안 된다(화면이 실제로 바뀌었다 되돌아가는 중이다) — "실패"가 아닌
                     // 사실만 짧게 알린다.
-                    Toast.makeText(this, "자동 배치를 취소했습니다", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.arrange_auto_cancelled), Toast.LENGTH_SHORT).show()
                     return
                 }
 
                 // [#30 D19] 자동 세션은 사용자가 요청한 적이 없으므로 진단 문구 대신 짧은 사실
                 // 통보만 한다 — 그래도 무고지는 안 된다(화면이 실제로 바뀌었다 되돌아가는 중이다).
-                Toast.makeText(this, "자동 배치에 실패했습니다", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.arrange_auto_failed), Toast.LENGTH_SHORT).show()
 
                 val pkg = s?.targetPackage ?: return
                 // [#30 D3] 연속 실패 서킷브레이커 — maxFailStreak 도달 시 게이트 11 이 이 부팅
@@ -2478,15 +2501,22 @@ class ArrangerAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun failureReasonKo(reason: FailureReason): String = when (reason) {
-        FailureReason.SPLIT_CHECK_TIMEOUT -> "분할 상태 확인 시간 초과"
-        FailureReason.ENTRY_STEP_FAILED -> "분할 진입 단계 실패"
-        FailureReason.ENTRY_TIMEOUT -> "분할 진입 시간 초과"
-        FailureReason.DIVIDER_NOT_FOUND -> "디바이더를 찾지 못함"
-        FailureReason.DRAG_FAILED -> "디바이더 이동 실패"
-        FailureReason.DRAG_TIMEOUT -> "디바이더 이동 시간 초과"
-        FailureReason.CANCELLED -> "사용자 취소"
-    }
+    /**
+     * 실패 사유를 **사용자가 할 수 있는 일**이 담긴 문구로 옮긴다. 단계명(진입/드래그)·타임아웃
+     * 같은 내부 어휘는 쓰지 않는다 — 그 진단값은 [reportTerminal] 의 `Log.i("arrange failed: ...")`
+     * 가 그대로 유지하므로 조용한 실패가 되지 않는다.
+     */
+    private fun failureReasonKo(reason: FailureReason): String = getString(
+        when (reason) {
+            FailureReason.SPLIT_CHECK_TIMEOUT -> R.string.arrange_fail_split_check_timeout
+            FailureReason.ENTRY_STEP_FAILED -> R.string.arrange_fail_entry_step
+            FailureReason.ENTRY_TIMEOUT -> R.string.arrange_fail_entry_timeout
+            FailureReason.DIVIDER_NOT_FOUND -> R.string.arrange_fail_divider_not_found
+            FailureReason.DRAG_FAILED -> R.string.arrange_fail_drag
+            FailureReason.DRAG_TIMEOUT -> R.string.arrange_fail_drag_timeout
+            FailureReason.CANCELLED -> R.string.arrange_fail_cancelled
+        },
+    )
 
     private fun Placement.toKoreanLabel(): String = when (this) {
         Placement.TOP -> "상단"
@@ -2721,7 +2751,7 @@ class ArrangerAccessibilityService : AccessibilityService() {
 
         /**
          * [P4-1] [ShizukuShell.exec] 개별 셸 명령(am start/am stack list/am task resize) 타임아웃.
-         * F3+F4+S2+S3 리팩터 이후 이 값은 **원격**([ShellExecUserService.run])의
+         * AIDL 이 argv 배열 + 타임아웃 인자로 바뀐 이후 이 값은 **원격**([ShellExecUserService.run])의
          * `Process.waitFor(timeoutMs, ...)` 데드라인으로 그대로 전달된다 — 실효 타임아웃은
          * 원격에서만 걸린다(클라이언트 쪽 `withTimeoutOrNull` 은 블로킹 바인더 호출을 취소하지
          * 못하기 때문). 클라이언트 쪽 예산은 이 값에 여유분이 더해져 더 크게 잡히므로 원격이

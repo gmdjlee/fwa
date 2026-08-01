@@ -40,7 +40,7 @@ class PairShortcutActivity : ComponentActivity() {
 
         val service = ArrangerAccessibilityService.instance
         if (service == null) {
-            Toast.makeText(this, getString(R.string.toast_pair_accessibility_off), Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.arrange_accessibility_off), Toast.LENGTH_LONG).show()
             // FLAG_ACTIVITY_NEW_TASK: 이 트램펄린은 자기 전용 taskAffinity 로 떠 있다 — 플래그가
             // 없으면 OnboardingActivity 가 이 트램펄린의 태스크에 얹혀 태스크 위생이 깨진다
             // (FloatingLauncherService.launchOnboarding 과 동일 근거).

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.widget.Toast
+import dev.dj.foldwindow.R
 import dev.dj.foldwindow.domain.Placement
 
 /**
@@ -28,7 +29,7 @@ class ArrangeTriggerReceiver : BroadcastReceiver() {
         if (service == null) {
             // 조용한 실패 금지: 서비스 미연결을 로그 + 토스트로 드러낸다.
             Log.w(TAG, "arranger service not connected — 접근성 서비스를 켠 뒤 다시 시도하세요")
-            Toast.makeText(context, "접근성 서비스가 꺼져 있습니다", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, context.getString(R.string.arrange_accessibility_off), Toast.LENGTH_LONG).show()
             return
         }
 

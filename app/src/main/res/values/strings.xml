@@ -12,13 +12,57 @@
     <string name="arranger_service_label">FoldWindow 배치</string>
     <string name="arranger_service_desc">현재 보고 있는 앱을 감지해 화면을 분할하고, 영상 종횡비에 맞춰 화면 위/아래 남는 공간을 한쪽으로 모아줍니다. 화면 캡처·창 정보 조회·터치 제스처 권한을 사용하며, 수집한 정보는 기기 밖으로 전송하지 않습니다.</string>
 
+    <!-- ArrangerAccessibilityService / ArrangeTriggerReceiver 사용자 메시지.
+         원칙: 사용자의 말로 "무슨 일이 일어났는지" + 할 수 있는 일이 있으면 그것까지.
+         잔여 px·단계명 같은 진단값은 사용자에게 보이지 않고 Log 에만 남는다. -->
+    <!-- PairShortcutActivity 와 FloatingLauncherService(버블 탭 / 메뉴 항목) 도 이 문자열을
+         공유한다. 구 toast_pair_accessibility_off·toast_accessibility_off 는 같은 사실을 조금씩
+         다르게 말하던 중복이라 삭제하고 여기로 통합했다 — 세 경로 모두 토스트 직후 실제로
+         설정(온보딩)을 열므로 "할 일" 까지 말해 주는 이 문구가 맞다. -->
+    <string name="arrange_accessibility_off">접근성 서비스가 꺼져 있습니다 — 설정에서 켜 주세요</string>
+    <string name="arrange_busy">배치를 진행하고 있습니다 — 잠시만 기다려 주세요</string>
+    <string name="arrange_no_target">배치할 앱을 찾지 못했습니다 — 영상 앱을 연 뒤 다시 눌러 주세요</string>
+    <string name="arrange_unsupported_screen">이 화면 상태에서는 아직 배치할 수 없습니다 — 기기를 펼친 뒤 다시 시도해 주세요</string>
+    <string name="arrange_internal_error">예기치 못한 오류로 중단했습니다 — 자세한 내용은 로그에 기록했습니다</string>
+    <string name="arrange_shortcut_foreground_timeout">앱이 열리기를 기다리다 배치를 취소했습니다 — 앱이 뜬 뒤 버블을 눌러 주세요</string>
+
+    <!-- 배치 결과. 깔끔한 성공(검증됨 ∧ 허용치 이내 ∧ 요청한 위치)은 화면 자체가 결과라 토스트를
+         띄우지 않는다 — 아래는 "무언가 어긋났을 때"만 쓴다. -->
+    <string name="arrange_done_placement_top">요청한 위치로 옮기지 못해 위쪽에 배치했습니다</string>
+    <string name="arrange_done_placement_bottom">요청한 위치로 옮기지 못해 아래쪽에 배치했습니다</string>
+    <string name="arrange_done_unverified">배치했지만 결과를 확인하지 못했습니다 — 화면을 확인해 주세요</string>
+    <string name="arrange_done_residual_over">여백을 완전히 없애지 못했습니다 — 경계선을 직접 끌어 조절해 주세요</string>
+
+    <!-- 배치 실패 사유(domain/FailureReason 1:1) -->
+    <string name="arrange_fail_split_check_timeout">화면 상태를 확인하지 못했습니다 — 잠시 후 다시 시도해 주세요</string>
+    <string name="arrange_fail_entry_step">화면 분할을 시작하지 못했습니다 — 다시 시도하거나 직접 분할한 뒤 눌러 주세요</string>
+    <string name="arrange_fail_entry_timeout">화면 분할이 제때 끝나지 않았습니다 — 다시 시도해 주세요</string>
+    <string name="arrange_fail_divider_not_found">분할 경계선을 찾지 못했습니다 — 분할을 해제하고 다시 시도해 주세요</string>
+    <string name="arrange_fail_drag">영상 비율에 맞추지 못했습니다 — 경계선을 직접 끌어 조절해 주세요</string>
+    <string name="arrange_fail_drag_timeout">비율 조정이 제때 끝나지 않았습니다 — 다시 시도해 주세요</string>
+    <string name="arrange_fail_cancelled">배치를 취소했습니다</string>
+
+    <!-- 자동 배치(#30 D19): 사용자가 요청한 적 없는 동작이라 짧은 사실 통보만 한다 -->
+    <string name="arrange_auto_cancelled">자동 배치를 취소했습니다</string>
+    <string name="arrange_auto_failed">자동 배치에 실패했습니다 — 버블을 눌러 다시 시도해 주세요</string>
+
+    <!-- 분할 해제 -->
+    <string name="arrange_dismiss_not_split">분할 화면이 아니라 해제할 것이 없습니다</string>
+    <string name="arrange_dismiss_not_ours">FoldWindow로 해제할 수 있는 분할이 아닙니다 — 직접 해제해 주세요</string>
+    <string name="arrange_dismiss_timeout">분할 해제를 확인하지 못했습니다 — 화면이 그대로면 다시 시도해 주세요</string>
+
+    <!-- 팝업(freeform) 모드 -->
+    <string name="arrange_popup_shizuku_unavailable">Shizuku를 사용할 수 없습니다 — Shizuku 앱을 실행하고 권한을 허용해 주세요</string>
+    <string name="arrange_popup_launch_unavailable">이 앱은 팝업으로 열 수 없습니다</string>
+    <string name="arrange_popup_start_failed">팝업을 열지 못했습니다 — Shizuku 연결을 확인해 주세요</string>
+    <string name="arrange_popup_window_missing">팝업 창이 열리지 않았습니다 — 다시 시도해 주세요</string>
+    <string name="arrange_popup_resize_failed">팝업 크기를 영상 비율에 맞추지 못했습니다 — 창 모서리를 끌어 조절해 주세요</string>
+
     <!-- P3-1: FloatingLauncherService 알림/토스트 -->
     <string name="floating_notification_channel_name">FoldWindow 버블</string>
     <string name="floating_notification_title">FoldWindow 버블 실행 중</string>
     <string name="floating_notification_text">탭하여 설정 열기</string>
     <string name="bubble_content_description">FoldWindow 배치 버블</string>
-    <string name="toast_accessibility_off">접근성 서비스가 꺼져 있습니다</string>
-    <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
 
     <!-- P3-2: 버블 확장 메뉴(롱프레스) -->
     <string name="bubble_menu_place_top">위로 배치</string>
@@ -41,8 +85,7 @@
     <string name="toast_export_accessibility_off">접근성 서비스를 먼저 켜 주세요</string>
     <string name="toast_export_target_not_found">대상 앱을 식별하지 못했습니다</string>
     <string name="toast_pin_shortcut_unsupported">이 런처는 바로가기 고정을 지원하지 않습니다</string>
-    <string name="toast_pair_accessibility_off">접근성 서비스가 꺼져 있습니다 — 설정에서 켜 주세요</string>
-    <string name="toast_pair_app_not_found">앱을 찾을 수 없습니다 (제거됨?)</string>
+    <string name="toast_pair_app_not_found">연결된 앱이 삭제되어 열 수 없습니다 — 이 바로가기를 지워 주세요</string>
 
     <!-- P3-4: OnboardingActivity -->
     <string name="onboarding_title">FoldWindow 시작하기</string>
@@ -51,11 +94,8 @@
     <string name="onboarding_permission_overlay_desc">화면 위에 버블을 띄우기 위해 필요합니다.</string>
     <string name="onboarding_permission_accessibility_title">접근성 서비스</string>
     <string name="onboarding_permission_accessibility_desc">화면을 분할하고 영상 비율에 맞춰 재배치하기 위해 필요합니다.</string>
-    <string name="onboarding_permission_notification_title">알림 (선택)</string>
     <string name="onboarding_permission_notification_desc">버블 실행 중 상태 알림을 표시합니다. 버블 동작에 필수는 아닙니다.</string>
-    <string name="onboarding_permission_shizuku_title">Shizuku (선택)</string>
     <string name="onboarding_permission_shizuku_desc">팝업 모드에 필요합니다. Shizuku 앱 설치·활성화 후 권한을 허용하세요.</string>
-    <string name="onboarding_action_grant">권한 설정으로 이동</string>
     <string name="onboarding_action_granted">허용됨</string>
     <string name="onboarding_action_required">권한 필요</string>
     <string name="onboarding_bubble_start">버블 시작</string>
@@ -69,4 +109,11 @@
     <string name="onboarding_guide_netflix_title">넷플릭스 주의</string>
     <string name="onboarding_guide_netflix">넷플릭스 등 일부 앱은 먼저 버블로 배치한 뒤 페인 안에서 재생을 시작하세요. 재생 중에 배치하면 영상이 별도 팝업으로 분리됩니다.</string>
     <string name="onboarding_guide_reenable">앱을 업데이트하면 접근성 서비스가 꺼집니다. 이 화면에서 다시 켜 주세요.</string>
+
+    <!-- 아래는 아직 개편되지 않은 표면의 기존 문자열이다. 해당 표면 커밋에서 교체된다. -->
+    <string name="toast_accessibility_off">접근성 서비스가 꺼져 있습니다</string>
+    <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
+    <string name="onboarding_permission_notification_title">알림 (선택)</string>
+    <string name="onboarding_permission_shizuku_title">Shizuku (선택)</string>
+    <string name="onboarding_action_grant">권한 설정으로 이동</string>
 </resources>
