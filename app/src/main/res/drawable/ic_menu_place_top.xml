@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P5: "위로 배치". 둥근 화면 프레임 + 위쪽 절반 채움. ic_bubble 과 같은 둥근 사각형 계열 글리프.
+     색은 런타임에 ImageView.imageTintList 로 입힌다(여기 흰색은 틴트 기준값).
+
+     ⚠ [D6] **이 파일이 메뉴 아이콘 세트의 기준 도형이다.** 새 아이콘을 추가하거나 고칠 때는
+     아래 두 규격 중 하나를 그대로 쓴다(22dp 로 렌더되므로 프레임 크기·반경이 조금만 어긋나도
+     왼쪽 정렬 열에서 들쭉날쭉하게 보인다):
+       · 윤곽(stroked) 프레임 : 경로 박스 3.8 → 20.2, 반경 2.2, strokeWidth 1.6
+       · 채움(filled)  프레임 : 경로 박스 4.6 → 19.4, 반경 1.4
+         (= 윤곽 규격에서 사방 0.8 안쪽. 같은 크기라도 채운 도형이 더 커 보이는 것을 보정한다) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M6,3.8 H18 A2.2,2.2 0 0 1 20.2,6 V18 A2.2,2.2 0 0 1 18,20.2 H6 A2.2,2.2 0 0 1 3.8,18 V6 A2.2,2.2 0 0 1 6,3.8 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.6,6.2 H16.4 A1.4,1.4 0 0 1 17.8,7.6 V11.4 H6.2 V7.6 A1.4,1.4 0 0 1 7.6,6.2 Z" />
+</vector>

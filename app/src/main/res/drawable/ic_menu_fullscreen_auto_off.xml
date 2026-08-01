@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P5: "전체화면 자동 배치: 꺼짐". on 버전과 같은 화면 프레임이지만 채우지 않고 윤곽선만 —
+     "대기 중" 을 나타낸다.
+
+     [D9] on 버전과의 유일한 차이는 프레임의 채움/윤곽이다. 프레임은 가족 윤곽 규격
+     (ic_menu_place_top KDoc: 3.8 → 20.2, 반경 2.2, strokeWidth 1.6), 삼각형 경로는 on 버전의
+     두 번째 서브패스와 문자 단위로 동일하다 — 토글할 때 삼각형이 미동도 하지 않아야
+     "같은 것의 상태가 바뀌었다"로 읽힌다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M6,3.8 H18 A2.2,2.2 0 0 1 20.2,6 V18 A2.2,2.2 0 0 1 18,20.2 H6 A2.2,2.2 0 0 1 3.8,18 V6 A2.2,2.2 0 0 1 6,3.8 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.58,9.43 L14.08,11.29 A0.8,0.8 0 0 1 14.08,12.71 L10.58,14.57 A0.8,0.8 0 0 1 9.4,13.87 L9.4,10.13 A0.8,0.8 0 0 1 10.58,9.43 Z" />
+</vector>

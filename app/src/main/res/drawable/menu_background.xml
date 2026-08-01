@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- P3-2 버블 확장 메뉴 배경. bubble_background 와 톤을 맞춘 반투명 딥 세이지 + 둥근 모서리. -->
+<!-- P3-2 버블 확장 메뉴 배경. bubble_background 와 톤을 맞춘 반투명 딥 세이지 + 둥근 모서리.
+     P5 폴리시: 코너 반경을 20dp → 24dp 로 키우고(내부 항목 리플 마스크는 D18 에서 이 값 −
+     컨테이너 패딩 6dp = 18dp 로 동심 정렬했다), 그림자는
+     이 드로어블이 아니라 컨테이너 뷰의 elevation 으로 준다 — 메뉴 내용은 풀스크린 스크림의
+     자식이라 부모가 그림자를 그려 줄 공간이 충분하다(버블과 달리 루트 뷰가 아니다). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="#E63E5A4B" />
-    <corners android:radius="20dp" />
+    <corners android:radius="24dp" />
     <stroke
         android:width="1dp"
         android:color="#33A9C7B5" />

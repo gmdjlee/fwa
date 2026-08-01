@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P5: "설정". 톱니 대신 둥근 슬라이더 3줄 — 유기적 톤(가는 헤어라인 금지, 스타디움 형태)을
+     유지하면서 "조절" 의미를 준다.
+
+     [D7] 종전에는 트랙과 노브가 **같은 굵기**(둘 다 1.8 단위)여서 22dp 로 렌더하면 슬라이더가
+     아니라 더하기 기호 세 개로 읽혔다. 이제 굵기 대비가 실린다:
+       · 트랙 : 두께 1.2 (반경 0.6 스타디움), x 3.8 → 20.2 = 가족 규격 폭
+       · 노브 : 폭 2.6 (반경 1.3), 높이 5.2 — 트랙의 4.3배 두께
+
+     [F6] **트랙 1.2 는 의도된 값이다**(가늘어진 것이 아니다). path 데이터로 재검산:
+     `M4.4,6.8 H19.6 A0.6,0.6 … V8.0` → 8.0 − 6.8 = 1.2, x 는 4.4 − 0.6 → 19.6 + 0.6 = 3.8 → 20.2.
+     노브 높이는 직선 2.6 + 양끝 캡 2×1.3 = 5.2 이므로 두께비는 5.2 / 1.2 = 4.33배 — 이 대비가
+     D7 의 요점이라 트랙을 굵히면 그대로 무너진다. "헤어라인 금지" 에도 걸리지 않는다:
+     메뉴 아이콘 렌더 크기 22dp 기준 1.2 × 22/24 = **1.1dp** 로, 1dp 하한 위다.
+     노브 위치도 1/3 · 2/3 · 1/2 로 엇갈린다(종전에도 엇갈렸지만 굵기가 같아 보이지 않았다).
+     세로 잉크 범위는 4.8 → 19.2 로 뷰포트 중심 12 에 정확히 대칭이다.
+
+     [D6] 왼쪽 끝이 4.5 → 3.8 로 내려와 세트의 다른 아이콘과 같은 열에 선다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 트랙 3줄 (cy = 7.4 / 12.0 / 16.6) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.4,6.8 H19.6 A0.6,0.6 0 0 1 19.6,8 H4.4 A0.6,0.6 0 0 1 4.4,6.8 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.4,11.4 H19.6 A0.6,0.6 0 0 1 19.6,12.6 H4.4 A0.6,0.6 0 0 1 4.4,11.4 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.4,16 H19.6 A0.6,0.6 0 0 1 19.6,17.2 H4.4 A0.6,0.6 0 0 1 4.4,16 Z" />
+    <!-- 노브 3개 (cx = 9.3 / 14.7 / 12.0 ≒ 1/3, 2/3, 1/2) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8,6.1 A1.3,1.3 0 0 1 10.6,6.1 V8.7 A1.3,1.3 0 0 1 8,8.7 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13.4,10.7 A1.3,1.3 0 0 1 16,10.7 V13.3 A1.3,1.3 0 0 1 13.4,13.3 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.7,15.3 A1.3,1.3 0 0 1 13.3,15.3 V17.9 A1.3,1.3 0 0 1 10.7,17.9 Z" />
+</vector>

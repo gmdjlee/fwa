@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P5: "분할 해제". 프레임을 통째로 채워 "한 화면으로 되돌린다"를 나타낸다 —
+     place_top / place_bottom / dismiss_split 이 반쪽 / 반쪽 / 전체 로 한 가족을 이룬다.
+
+     [D6] 종전 주석은 "place_top/place_bottom 과 같은 프레임" 이라고 했지만 사실이 아니었다:
+     경로 박스가 3.4→20.6(가족 규격은 3.8→20.2), 반경이 2.6(가족 규격 2.2)이라 왼쪽 정렬된
+     열에서 이 아이콘만 0.4 밖으로 튀어나와 있었다. 지금은 ic_menu_place_top KDoc 의
+     **채움 프레임 규격(4.6 → 19.4, 반경 1.4)** 을 그대로 따른다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6,4.6 H18 A1.4,1.4 0 0 1 19.4,6 V18 A1.4,1.4 0 0 1 18,19.4 H6 A1.4,1.4 0 0 1 4.6,18 V6 A1.4,1.4 0 0 1 6,4.6 Z" />
+</vector>

@@ -77,12 +77,43 @@
     <string name="floating_notification_title">FoldWindow 버블 실행 중</string>
     <string name="floating_notification_text">탭하여 설정 열기</string>
     <string name="bubble_content_description">FoldWindow 배치 버블</string>
+    <!-- [F1] 버블 롱클릭(= 확장 메뉴 열기) 접근성 액션 라벨. 스크린리더가 "길게 누르기: 메뉴 열기"
+         로 읽는다. 터치 롱프레스는 커스텀 검출이라 접근성 서비스가 합성할 수 없어, 이 액션이
+         스크린리더 사용자의 유일한 메뉴 도달 경로다. -->
+    <string name="bubble_menu_long_click_label">메뉴 열기</string>
+    <!-- 접근성 서비스 OFF 안내는 arrange_accessibility_off 로 통합됐다(위 주석 참고). -->
+    <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
 
     <!-- P3-2: 버블 확장 메뉴(롱프레스) -->
     <string name="bubble_menu_place_top">위로 배치</string>
     <string name="bubble_menu_place_bottom">아래로 배치</string>
     <string name="bubble_menu_dismiss_split">분할 해제</string>
     <string name="bubble_menu_settings">설정</string>
+
+    <!-- P5 폴리시: 메뉴 섹션 라벨 + 토글 행 접근성 안내.
+         [D12] "두 번 탭하면 …" 안내 문구는 걷어냈다. 토글 행이 이제 접근성 트리에서 체크 가능
+         노드(isCheckable/isChecked)이고 ACTION_CLICK 에 자체 라벨(끄기/켜기)을 달기 때문에,
+         스크린리더가 조작 방법을 스스로 안내한다 — 문구를 남겨 두면 같은 안내가 두 번 나간다.
+         상태(켜짐/꺼짐)는 isChecked 와 겹치더라도 문자열에 남긴다: 리더 버전에 따라 체크 상태
+         발화가 생략될 수 있어, 겹치는 쪽이 빠지는 쪽보다 낫다. -->
+    <string name="menu_section_aspect">화면 비율</string>
+    <string name="bubble_menu_fullscreen_auto_cd_on">전체화면 자동 배치, 켜짐</string>
+    <string name="bubble_menu_fullscreen_auto_cd_off">전체화면 자동 배치, 꺼짐</string>
+    <!-- [D12] 토글 행 ACTION_CLICK 라벨. 스크린리더가 "두 번 탭하여 <라벨>" 로 읽는다. -->
+    <string name="bubble_menu_action_turn_off">끄기</string>
+    <string name="bubble_menu_action_turn_on">켜기</string>
+
+    <!-- [D11] 메뉴 오버레이 접근성. 스크림은 화면 전체를 덮는 클릭 가능 뷰라 TalkBack 순회의
+         첫 노드가 된다 — 라벨이 없으면 "레이블 없음" 으로 읽힌다. 창 제목은
+         accessibilityPaneTitle 로 걸어 메뉴가 뜬 사실 자체를 알린다. -->
+    <string name="bubble_menu_scrim_cd">메뉴 닫기</string>
+    <string name="bubble_menu_pane_title">FoldWindow 메뉴</string>
+
+    <!-- [D12] 메뉴 항목으로 세션이 실제로 시작됐음을 알리는 스크린리더 전용 발화.
+         시각 사용자에게는 화면이 바뀌는 것 자체가 피드백이지만, 그것이 보이지 않으면
+         메뉴가 닫히고 아무 말도 없는 것으로 끝난다. -->
+    <string name="bubble_announce_arrange_started">배치를 시작합니다</string>
+    <string name="bubble_announce_split_dismissing">분할을 해제합니다</string>
 
     <!-- #30: 전체화면 재생 자동 배치 사용자 토글(기본 OFF). 라벨은 "현재 상태"를 보여주고
          탭하면 반대 값으로 뒤집는다 — 켜는 표면과 끄는 표면이 같은 자리에 있어야 한다(D16). -->
@@ -158,8 +189,4 @@
     <string name="onboarding_required_done">필수 설정 완료</string>
     <string name="onboarding_required_expand">보기</string>
     <string name="onboarding_required_collapse">접기</string>
-
-    <!-- 아래는 아직 개편되지 않은 표면의 기존 문자열이다. 해당 표면 커밋에서 교체된다. -->
-    <string name="toast_accessibility_off">접근성 서비스가 꺼져 있습니다</string>
-    <string name="toast_overlay_permission_required">오버레이 권한이 필요합니다</string>
 </resources>

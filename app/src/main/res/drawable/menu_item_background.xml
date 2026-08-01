@@ -1,15 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- P3-2 메뉴 항목 배경. 눌림 상태에서만 옅은 하이라이트를 준다. -->
-<selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_pressed="true">
+<!-- P3-2 메뉴 항목 배경 (P5 폴리시). 종전의 state_pressed selector 를 RippleDrawable 로 교체해
+     누른 지점에서 퍼지는 리플을 준다. 서비스 컨텍스트에서는 ?attr/selectableItemBackground 가
+     해석되지 않으므로(테마 없는 bare Context) 직접 정의한다.
+     mask 항목이 리플을 컨테이너 톤에 맞는 둥근 사각형 안쪽으로 가둔다. 별도 content 레이어를
+     두지 않아 평상시 배경은 완전 투명이다.
+
+     [D18] 반경 14dp → 18dp. 동심원 규칙: 내부 반경 = 외부 반경 − 그 사이 패딩이다.
+     컨테이너(menu_background) 24dp − FloatingLauncherService.MENU_CONTAINER_PADDING_DP 6dp = 18dp.
+     14dp 는 그 어느 쪽과도 맞지 않아, 첫/마지막 행의 리플이 컨테이너 모서리 안쪽에서
+     제 나름의 곡률로 따로 놀았다. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40A9C7B5">
+    <item android:id="@android:id/mask">
         <shape android:shape="rectangle">
-            <solid android:color="#33FFFFFF" />
-            <corners android:radius="8dp" />
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="18dp" />
         </shape>
     </item>
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="@android:color/transparent" />
-        </shape>
-    </item>
-</selector>
+</ripple>
