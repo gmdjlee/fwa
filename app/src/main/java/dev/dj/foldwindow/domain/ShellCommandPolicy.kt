@@ -4,8 +4,8 @@ package dev.dj.foldwindow.domain
  * P4-1 Shizuku 셸 실행([dev.dj.foldwindow.service.ShellExecUserService])이 shell UID(2000)
  * 권한으로 수행할 명령의 허용 목록.
  *
- * [IMPROVEMENT_PLAN_2026-07-29.md §F3+F4+S2+S3] AIDL 을 `sh -c` 문자열 전달에서 argv 배열
- * 전달로 전환하면서 셸 파싱 자체가 사라졌다 — 즉 **이 목록의 목적은 "셸 인젝션 방어"가 아니다**
+ * AIDL 이 `sh -c` 문자열 전달에서 argv 배열 전달로 바뀌면서 셸 파싱 자체가 사라졌다 —
+ * 즉 **이 목록의 목적은 "셸 인젝션 방어"가 아니다**
  * (애초에 인젝션할 셸이 없다). 목적은 **shell UID 권한의 최소화**다: 앱 내 어떤 코드 경로가
  * 실수로든 오남용되든 `ShellExecUserService.run` 을 호출할 수 있는 이상, 실제로 필요한 3종
  * (`am start` / `am stack list` / `am task resize`,

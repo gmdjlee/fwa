@@ -29,17 +29,19 @@ data class WindowBox(val bounds: IntRect, val isApplication: Boolean)
  * 전폭 시스템 바가 없다"는 형태로 쓴다. 부수 효과로 판정에 `packageName` 이 전혀 필요 없어져
  * `root` 노드 조회(IPC)가 0회가 되고, 평가 1회당 바인더 왕복이 `windows` 1회로 묶인다(설계서 D12).
  *
- * 실측 3표본에서 이 규칙이 내는 값(설계서 §2.1 표, 전부 검증 완료):
- * - `docs/probe_report_fullscreen.md` 가로 몰입 재생 → FULLSCREEN
- * - `docs/probe_report.md` 세로 비몰입(엣지투엣지) → NOT_FULLSCREEN (전폭 `0,0,1968,89` 존재)
- * - `docs/probe_report_split.md` 분할 활성 → NOT_FULLSCREEN (최대 페인 폭 977 = 49.6%)
+ * 실측 3표본에서 이 규칙이 내는 값(설계서 §2.1 표, 전부 검증 완료. 원본 덤프 =
+ * docs/DEVICE_FACTS.md 「Phase 0 프로브 원본 측정」):
+ * - 가로 몰입 재생 → FULLSCREEN (APP `0,0,2184,1968` = 화면 100%, 상단 전폭 바 없음)
+ * - 세로 비몰입(엣지투엣지) → NOT_FULLSCREEN (전폭 상태바 `0,0,1968,89` 존재)
+ * - 분할 활성 → NOT_FULLSCREEN (최대 페인 폭 977 = 49.6%)
  */
 object FullscreenWindowJudge {
 
     /**
      * 상단 스트립 높이 = 화면 높이 × 이 비율. 이 스트립과 교차하는 창만 "상단 시스템 바 후보"다.
      *
-     * 근거(설계서 §4): 실측 상태바 높이 89px(`docs/probe_report.md` B절 `0,0,1968,89`) ÷ 화면 높이는
+     * 근거(설계서 §4): 세로 비몰입 프로브 실측 상태바 `0,0,1968,89` = 높이 89px
+     * (docs/DEVICE_FACTS.md 「Phase 0 프로브 원본 측정」 런 ① B절) ÷ 화면 높이는
      * 가로에서 89/1968 = 4.52%, 세로에서 89/2184 = 4.07%. 여유를 포함해 6%.
      * 픽셀 상수가 아니라 비율인 이유는 CLAUDE.md 함정 #2(좌표 하드코딩 금지) — 방향/DPI 가 바뀌면
      * 화면 높이가 바뀐다.
@@ -49,9 +51,9 @@ object FullscreenWindowJudge {
     /**
      * "화면을 통째로 덮는다" 판정 하한(가로·세로 각 축 비율).
      *
-     * 근거(설계서 §4): 실측 전체화면 창 `0,0,2184,1968` = 정확히 100%
-     * (`docs/probe_report_fullscreen.md`). 반대편 군집인 분할 페인은 최대 977/1968 = 49.6%
-     * (`docs/probe_report_split.md`)라 두 군집 간격이 절반 이상 벌어져 있다. 0.99 는 기존
+     * 근거(설계서 §4): 가로 몰입 프로브 실측 전체화면 창 `0,0,2184,1968` = 정확히 100%.
+     * 반대편 군집인 분할 페인은 최대 977/1968 = 49.6%(분할 활성 프로브)라 두 군집 간격이
+     * 절반 이상 벌어져 있다(docs/DEVICE_FACTS.md 「Phase 0 프로브 원본 측정」). 0.99 는 기존
      * `WindowGeometry.matchesScreen` 의 ±1% 허용오차와 같은 눈금이다.
      */
     const val FULL_COVER_MIN_FRACTION = 0.99f
@@ -60,9 +62,10 @@ object FullscreenWindowJudge {
      * 상단 시스템 바로 인정할 최소 폭 비율. 토스트·볼륨패널·자기 버블처럼 상단 스트립과 우연히
      * 교차하는 소형 창을 **구조적으로** 배제한다(설계서 D10).
      *
-     * 근거(설계서 §4): 실측 상태바 폭 = 화면 폭 100%(`docs/probe_report.md` B절 `0,0,1968,89`).
-     * 배제해야 할 최대 폭은 systemui 소형 창 214px/1968 = 10.9%(`docs/probe_report_split.md` B절
-     * `381,89,595,145`)와 런처 우측 창 53px = 2.7%(`docs/probe_report.md` B절 `1915,235,1968,564`).
+     * 근거(설계서 §4): 실측 상태바 폭 = 화면 폭 100%(세로 비몰입 프로브 `0,0,1968,89`).
+     * 배제해야 할 최대 폭은 systemui 소형 창 214px/1968 = 10.9%(분할 활성 프로브 `381,89,595,145`)
+     * 와 런처 우측 창 53px = 2.7%(세로 비몰입 프로브 `1915,235,1968,564`). 원본 덤프는 전부
+     * docs/DEVICE_FACTS.md 「Phase 0 프로브 원본 측정」.
      * 두 군집 사이 어디에 두어도 결과가 같으므로 여유를 크게 잡아 80%.
      * 자기 버블(TYPE_SYSTEM, ~126px — DEVICE_FACTS.md P3-1)도 같은 필터에서 죽는다.
      */

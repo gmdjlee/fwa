@@ -13,13 +13,21 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * T1 (docs/IMPROVEMENT_PLAN_2026-07-29.md §T1): `ScreenshotSampler`(Bitmap → 도메인 모델 변환)의
- * 회귀 안전망. `domain/LetterboxDetectorTest` 는 이미 만들어진 [dev.dj.foldwindow.domain.LetterboxScan]
+ * `ScreenshotSampler`(Bitmap → 도메인 모델 변환)의 회귀 안전망.
+ *
+ * **이 파일이 존재하는 이유**: `toLetterboxScan`/`toPillarboxScan` 은 `Bitmap` 만 걸쳐 있을 뿐
+ * 본질은 순수 산술이고 **모든 측정의 입력**인데, 아래 두 축의 대응이 어긋나면 종횡비 역산이
+ * **조용히** 깨진다 — `toLetterboxScan: scaledWidth = w / rowStride`(entries 축 = 행) ↔
+ * `toPillarboxScan: scaledHeight = h / colStride`(entries 축 = 열).
+ * 주석은 이 위험을 경고하고 있었으나 이를 지키는 테스트가 없었다(도메인 커버리지의 유일한 공백).
+ *
+ * `domain/LetterboxDetectorTest` 는 이미 만들어진 [dev.dj.foldwindow.domain.LetterboxScan]
  * 을 입력으로 순수 로직만 검증하지만, 여기서는 **실제 `android.graphics.Bitmap` 픽셀 연산**
  * (`getPixels`/`setPixels`, stride, margin coerceIn) 을 Robolectric 으로 구동해 그 경계까지 검증한다.
  *
- * P4(getPixels stride 최적화, W7)가 이 파일을 건드리기 **전에** 깔아두는 안전망이다(P-2 원칙) —
- * 이 웨이브(W4)에서는 `ScreenshotSampler.kt`/`LetterboxDetector.kt` 프로덕션 로직을 일절 바꾸지 않는다.
+ * 도입 시점 원칙: 측정 파이프라인은 실기기 검증 이력이 가장 두꺼운 경로이므로 **안전망을 먼저
+ * 깔고 나서** 손댄다. 그래서 이 테스트는 `getPixels` stride 최적화보다 **한 웨이브 앞서** 들어왔고,
+ * 도입 당시 `ScreenshotSampler.kt`/`LetterboxDetector.kt` 프로덕션 로직은 일절 바꾸지 않았다.
  *
  * compileSdk=36 은 Robolectric 4.14.1 이 아직 android-all jar 를 제공하지 않아 `@Config(sdk=[34])`
  * 로 고정한다(CLAUDE.md 함정 #7 대상 아님 — 테스트 실행 환경 설정일 뿐, 실기기 측정값이 아니다).

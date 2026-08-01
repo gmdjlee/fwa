@@ -6,12 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * [ShellCommandPolicy] 의 허용 목록 판정 검증 (W2, docs/IMPROVEMENT_PLAN_2026-07-29.md
- * §F3+F4+S2+S3 / docs/CODE_REVIEW_2026-07-29.md S2).
+ * [ShellCommandPolicy] 의 허용 목록 판정 검증.
  *
- * 배경: argv 전환으로 셸 파싱 자체가 사라졌으므로(S3 해소) 이 정책의 목적은 "인젝션 방어"가
- * 아니라 shell UID(2000) 권한의 최소화(S2 해소)다. 이 파일은 "실제로 필요한 3종 외에는 전부
- * 거부한다"는 경계를 못 박는다.
+ * 배경: AIDL 이 argv 배열 전달로 바뀌면서 셸 파싱 자체가 사라졌으므로 이 정책의 목적은
+ * "인젝션 방어"가 아니라 **shell UID(2000) 권한의 최소화**다. 허용 목록이 없던 시절에는
+ * 이 앱의 어떤 코드 경로든(향후 버그·오남용 포함) uid 2000 권한의 임의 명령 실행을 얻어
+ * 최소 권한 원칙을 위반했다. 이 파일은 "실제로 필요한 3종 외에는 전부 거부한다"는 경계를
+ * 못 박는다.
  */
 class ShellCommandPolicyTest {
 

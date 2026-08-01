@@ -17,9 +17,9 @@
 >    실행되지 않는다**(이벤트 최전방 선차단 포함). 즉 W0 미측정 상태로 병합해도 기존 동작 회귀가 0 이다.
 > 2. **신호원 중립 설계다.** W0 가 술어(`FullscreenWindowJudge`)를 반증하면 판정기 구현체만 교체하면
 >    되고 정책·게이트·래치·서비스 배선은 재사용된다(`FullscreenSignal` 3값 인터페이스).
-> 3. **판정 규칙은 이미 실측 3표본으로 검증됐다.** `docs/probe_report.md`(세로 비몰입) ·
->    `probe_report_fullscreen.md`(가로 몰입) · `probe_report_split.md`(분할 활성) 전부에 대해 규칙이
->    올바른 값을 낸다(§2.1 표). W0 가 확인할 것은 *존재 여부*가 아니라 *경계 상태*(일시정지·컨트롤
+> 3. **판정 규칙은 이미 실측 3표본으로 검증됐다.** Phase 0 프로브 런 ①(세로 비몰입) ·
+>    런 ③(가로 몰입) · 런 ②(분할 활성) 전부에 대해 규칙이 올바른 값을 낸다(§2.1 표. 원본 덤프 =
+>    `docs/DEVICE_FACTS.md` 「Phase 0 프로브 원본 측정」). W0 가 확인할 것은 *존재 여부*가 아니라 *경계 상태*(일시정지·컨트롤
 >    표시·가로 상하 분할·셰이드)다.
 > 4. **미측정 위험은 전부 fail-safe 방향이다.** 미디어 게이트가 One UI 에서 죽으면(R5) 기능이 조용히
 >    미발화할 뿐 오발화하지 않는다. 술어가 플리커하면(D9) 래치가 진입당 1회로 묶는다.
@@ -160,15 +160,16 @@ windows 가 비어 있으면            → UNKNOWN
 그 외                             → NOT_FULLSCREEN
 ```
 
-**이 규칙이 실측 3표본에서 내는 값** (전부 검증 완료)
+**이 규칙이 실측 3표본에서 내는 값** (전부 검증 완료. 근거 덤프 = `docs/DEVICE_FACTS.md`
+「Phase 0 프로브 원본 측정」 — 런 ① 세로 비몰입 / 런 ② 분할 활성 / 런 ③ 가로 몰입)
 
 | 상태 | 근거 | (a) 전체덮음 | (b) 상단 전폭 비-APP | 판정 |
 |---|---|---|---|---|
-| 유튜브 가로 몰입 재생 | `probe_report_fullscreen.md:46` `APPLICATION 0,0,2184,1968` | ✓ | 없음 | **FULLSCREEN** ✓ |
-| 세로 비몰입 (엣지투엣지) | `probe_report.md:49-50` (APP 0,0,1968,2184 + `SYSTEM 0,0,1968,89`) | ✓ | 있음(폭 100%) | **NOT_FULLSCREEN** ✓ |
-| 분할 활성 | `probe_report_split.md:48,50` (페인 991,0,… / 0,0,977,…) | ✗ | — | **NOT_FULLSCREEN** ✓ |
-| systemui 소형 창 | `probe_report_split.md:49` `381,89,595,145` (폭 10.9%) | — | 폭 미달 → 무시 | 영향 없음 ✓ **D10 해결** |
-| 런처 우측 SYSTEM 창 | `probe_report.md:48` `1915,235,1968,564` (폭 2.7%) | — | 폭 미달 → 무시 | 영향 없음 ✓ |
+| 유튜브 가로 몰입 재생 | 런 ③ B절 `APPLICATION 0,0,2184,1968` | ✓ | 없음 | **FULLSCREEN** ✓ |
+| 세로 비몰입 (엣지투엣지) | 런 ① B절 (APP 0,0,1968,2184 + `SYSTEM 0,0,1968,89`) | ✓ | 있음(폭 100%) | **NOT_FULLSCREEN** ✓ |
+| 분할 활성 | 런 ② B절 (페인 991,0,… / 0,0,977,…) | ✗ | — | **NOT_FULLSCREEN** ✓ |
+| systemui 소형 창 | 런 ② B절 `381,89,595,145` (폭 10.9%) | — | 폭 미달 → 무시 | 영향 없음 ✓ **D10 해결** |
+| 런처 우측 SYSTEM 창 | 런 ① B절 `1915,235,1968,564` (폭 2.7%) | — | 폭 미달 → 무시 | 영향 없음 ✓ |
 | 알림 셰이드 | 전폭 상단 비-APP 창 | — | 있음 | **NOT_FULLSCREEN** ✓ |
 | 자기 버블(TYPE_SYSTEM, ~126px) | DEVICE_FACTS.md:174 | — | 폭 미달 → 무시 | 영향 없음 ✓ |
 
@@ -409,7 +410,7 @@ if (fullscreenPolicy.isArmed) { fullscreenPolicy.disarm(); Log.i(TAG, "…reason
 | `AUTO_RECOVERY_TIMEOUT_MS` | `2_500L` | 서비스 companion | **[미검증]** BACK 주입 후 대상 앱 포그라운드 복귀 대기. 실측 E2E 전환 시간(4.2~4.7s 세션 중 1스텝) 대비 여유값 |
 | `AutoTriggerLedger.DEFAULT_MAX_FAIL_STREAK` | `2` | `AutoTriggerLedger` | **[미검증]** 실기기 실패 클래스(#27 17차 4연속 전멸, #29 MENU menuStep4 3attempt 전멸)가 재현성 있음을 근거로 보수적으로 2회. 3회 이상 시도할 근거 없음 |
 | `TOP_STRIP_FRACTION` | `0.06f` | `FullscreenWindowJudge` | 실측 상태바 높이 89px / 화면 1968px(가로) = 4.52%, /2184px(세로) = 4.07%. 여유 포함 6%. **비율로 계산(함정 #2)** |
-| `TOP_BAR_MIN_WIDTH_FRACTION` | `0.80f` | `FullscreenWindowJudge` | 실측 상태바 폭 = 화면 폭 100%(`probe_report.md:49`). 배제 대상 최대 폭 = systemui 소형 창 214px/1968 = 10.9%(`probe_report_split.md:49`), 런처 우측 창 53px = 2.7%. 80% 는 두 군집 사이 어디에 두어도 동일 결과이나 여유를 크게 잡음 |
+| `TOP_BAR_MIN_WIDTH_FRACTION` | `0.80f` | `FullscreenWindowJudge` | 실측 상태바 폭 = 화면 폭 100%(런 ① `0,0,1968,89`). 배제 대상 최대 폭 = systemui 소형 창 214px/1968 = 10.9%(런 ② `381,89,595,145`), 런처 우측 창 53px = 2.7%. 80% 는 두 군집 사이 어디에 두어도 동일 결과이나 여유를 크게 잡음 |
 | `FULL_COVER_MIN_FRACTION` | `0.99f` | `FullscreenWindowJudge` | 실측 전체화면 창 `0,0,2184,1968` = 정확히 100%. 분할 페인 최대 = 977/1968 = 49.6%. `geometry.matchesScreen` 의 ±1% 허용오차와 같은 눈금 |
 
 ---
@@ -433,9 +434,9 @@ if (fullscreenPolicy.isArmed) { fullscreenPolicy.disarm(); Log.i(TAG, "…reason
 
 ### `app/src/test/java/dev/dj/foldwindow/domain/FullscreenWindowJudgeTest.kt`
 14. `empty window list yields UNKNOWN`
-15. `real fullscreen dump yields FULLSCREEN` — `probe_report_fullscreen.md` 3창 그대로(sidegesturepad 2 + APP 0,0,2184,1968 / screen 2184×1968)
-16. `real portrait non-immersive dump yields NOT_FULLSCREEN` — `probe_report.md` 7창 그대로(전폭 `0,0,1968,89` 존재)
-17. `real split dump yields NOT_FULLSCREEN` — `probe_report_split.md` 7창 그대로 (**D8**)
+15. `real fullscreen dump yields FULLSCREEN` — 런 ③(가로 몰입) 3창 그대로(sidegesturepad 2 + APP 0,0,2184,1968 / screen 2184×1968)
+16. `real portrait non-immersive dump yields NOT_FULLSCREEN` — 런 ①(세로 비몰입) 7창 그대로(전폭 `0,0,1968,89` 존재)
+17. `real split dump yields NOT_FULLSCREEN` — 런 ②(분할 활성) 7창 그대로 (**D8**)
 18. `narrow systemui window intersecting top strip is ignored` — `381,89,595,145` 를 fullscreen 덤프에 추가해도 `FULLSCREEN` 유지 (**D10**). 경계: 폭 = `screen.width*0.80 - 1` → 무시, `*0.80` → `NOT_FULLSCREEN`
 19. `top strip boundary` — 상단 바 `top = height*0.06` → 교차 판정, `top = height*0.06 + 1` → 무시
 20. `application window covering 98 percent is not full cover` — `FULL_COVER_MIN_FRACTION` 경계 (0.99 미만 → `NOT_FULLSCREEN`)

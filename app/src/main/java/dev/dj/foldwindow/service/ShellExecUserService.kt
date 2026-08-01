@@ -11,10 +11,17 @@ import java.util.concurrent.TimeUnit
  * 일반 Android `<service>` 컴포넌트가 아니므로 AndroidManifest 등록이 필요 없다(Shizuku 표준
  * UserService 규약). **인자 없는 생성자 필수**.
  *
- * [IMPROVEMENT_PLAN_2026-07-29.md §F3+F4+S2+S3] 이전에는 `sh -c` 문자열로 위임했으나, 지금은
- * argv 를 [ProcessBuilder] 로 직접 실행한다 — 셸 파싱이 없으므로 인용/이스케이프 문제 자체가
- * 사라진다. 대신 [ShellCommandPolicy] 허용 목록으로 shell UID(2000) 권한의 사용 범위를
- * 제한한다(목적은 "인젝션 방어"가 아니라 "권한 최소화" — [ShellCommandPolicy] KDoc 참고).
+ * **AIDL 이 `String run(String command)` + `sh -c` 에서 `String run(in String[] argv, long
+ * timeoutMs)` 로 바뀐 이유**: 셸 파싱이 사라지면 인용/이스케이프 문제 자체가 소멸한다 —
+ * 작은따옴표로 `$` 확장을 막던 패턴(예: YouTube `Shell$HomeActivity`)이 "패키지매니저에서 온
+ * 값이니 안전"이라는 전제에 의존하고 있었는데, argv 전달은 그 전제를 아예 필요 없게 만든다.
+ * 대신 [ShellCommandPolicy] 허용 목록으로 shell UID(2000) 권한의 사용 범위를 제한한다
+ * (목적은 "인젝션 방어"가 아니라 "권한 최소화" — [ShellCommandPolicy] KDoc 참고).
+ *
+ * ⚠ AIDL 시그니처를 또 바꾼다면 `versionCode` 를 반드시 올려라 —
+ * `Shizuku.UserServiceArgs.version(BuildConfig.VERSION_CODE)` 가 UserService 프로세스 재생성을
+ * 결정하므로, 시그니처가 바뀌었는데 버전이 같으면 **구 바이너리가 재사용돼 `AbstractMethodError`**
+ * 가 난다.
  *
  * 표준 출력/표준 에러를 [ProcessBuilder.redirectErrorStream] 로 한 스트림에 합쳐 "종료코드\n출력"
  * 형태로 반환한다 — 실패 사유를 호출자가 그대로 로그에 남길 수 있게 한다(조용한 실패 금지).

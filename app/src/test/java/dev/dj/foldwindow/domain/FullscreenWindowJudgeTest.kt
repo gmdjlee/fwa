@@ -6,33 +6,34 @@ import org.junit.Test
 /**
  * [FullscreenWindowJudge] 의 긍정 술어 검증 (docs/DESIGN_30_FULLSCREEN_AUTO.md §5 의 14~20번).
  *
- * 14~17 번은 **실기기 프로브 리포트의 B절 창 목록을 그대로 옮긴 앵커 테스트**다 — 설계 전체가
- * 이 3표본 위에 서 있으므로(설계서 §2.1 표) 좌표를 임의로 고치면 안 된다. 출처:
- * - `docs/probe_report_fullscreen.md` (2026-07-25 00:23:39, 가로 몰입 재생, 2184×1968)
- * - `docs/probe_report.md` (2026-07-25 00:08:57, 세로 비몰입 엣지투엣지, 1968×2184)
- * - `docs/probe_report_split.md` (2026-07-25 00:14:50, 분할 활성, 1968×2184 — D절 해상도 기준)
+ * 14~17 번은 **Phase 0 실기기 프로브 3런의 B절 창 목록을 그대로 옮긴 앵커 테스트**다 — 설계
+ * 전체가 이 3표본 위에 서 있으므로(설계서 §2.1 표) 좌표를 임의로 고치면 안 된다.
+ * 원본 덤프 = docs/DEVICE_FACTS.md 「Phase 0 프로브 원본 측정」. 출처:
+ * - 런 ③ 가로 몰입 재생 (2026-07-25 00:23:39, 2184×1968)
+ * - 런 ① 세로 비몰입 엣지투엣지 (2026-07-25 00:08:57, 1968×2184)
+ * - 런 ② 분할 활성 (2026-07-25 00:14:50, 1968×2184 — D절 해상도 기준)
  *
- * `isApplication` 은 각 리포트 B절 **type 열이 APPLICATION 인가**로 환원했다.
+ * `isApplication` 은 각 런 B절 **type 열이 APPLICATION 인가**로 환원했다.
  * 18~20 번은 상수 경계 검증이라 합성 입력을 쓴다.
  */
 class FullscreenWindowJudgeTest {
 
     // ── 실측 앵커 ────────────────────────────────────────────────
 
-    /** `docs/probe_report_fullscreen.md` D절: 2184 × 1968 (LANDSCAPE) */
+    /** 런 ③(가로 몰입) D절: 2184 × 1968 (LANDSCAPE) */
     private val fullscreenScreen = IntRect(0, 0, 2184, 1968)
 
-    /** `docs/probe_report.md` / `docs/probe_report_split.md` D절: 1968 × 2184 (PORTRAIT) */
+    /** 런 ①(세로 비몰입) · 런 ②(분할 활성) D절: 1968 × 2184 (PORTRAIT) */
     private val portraitScreen = IntRect(0, 0, 1968, 2184)
 
-    /** `docs/probe_report_fullscreen.md` B절 창 3개 (유튜브 가로 몰입 재생) */
+    /** 런 ③ B절 창 3개 (유튜브 가로 몰입 재생) */
     private fun fullscreenDump(): List<WindowBox> = listOf(
         other(2117, 507, 2184, 1530), // UNKNOWN(-1) com.samsung.android.sidegesturepad
         other(0, 460, 67, 1530), //     UNKNOWN(-1) com.samsung.android.sidegesturepad
         app(0, 0, 2184, 1968), //       APPLICATION com.google.android.youtube
     )
 
-    /** `docs/probe_report.md` B절 창 7개 (세로 비몰입 — 전폭 상태바 `0,0,1968,89` 존재) */
+    /** 런 ① B절 창 7개 (세로 비몰입 — 전폭 상태바 `0,0,1968,89` 존재) */
     private fun portraitNonImmersiveDump(): List<WindowBox> = listOf(
         other(1917, 1134, 1968, 1646), // UNKNOWN(-1) com.samsung.android.sidegesturepad
         other(0, 1208, 51, 1701), //      UNKNOWN(-1) com.samsung.android.sidegesturepad
@@ -44,9 +45,9 @@ class FullscreenWindowJudgeTest {
     )
 
     /**
-     * `docs/probe_report_split.md` B절 창 7개 (분할 활성).
+     * 런 ② B절 창 7개 (분할 활성).
      *
-     * 주의: `381,89,595,145`(com.android.systemui 소형 창)는 리포트 B절 type 열이 **APPLICATION**
+     * 주의: `381,89,595,145`(com.android.systemui 소형 창)는 원본 B절 type 열이 **APPLICATION**
      * 이다 — 설계서 §2.1 표는 이 창을 산문에서 "systemui 소형 창"으로 부르며 (b) 열에서 폭 미달로
      * 무시된다고 적었지만, 실제 type 이 APPLICATION 이므로 여기서는 (a) 열에서 "전체 덮음 아님"
      * 으로 걸린다. 어느 쪽이든 최종 판정과 D10 결론은 동일하다.
@@ -159,7 +160,7 @@ class FullscreenWindowJudgeTest {
 
     // ── 헬퍼 ────────────────────────────────────────────────────
 
-    /** 리포트 B절 type 열이 APPLICATION 인 창 */
+    /** 프로브 B절 type 열이 APPLICATION 인 창 */
     private fun app(left: Int, top: Int, right: Int, bottom: Int) =
         WindowBox(IntRect(left, top, right, bottom), isApplication = true)
 
